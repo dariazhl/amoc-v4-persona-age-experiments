@@ -57,11 +57,11 @@ class PerSentenceGraph:
             if edge.source_node in adjacency and edge.dest_node in adjacency:
                 adjacency[edge.source_node].add(edge.dest_node)
                 adjacency[edge.dest_node].add(edge.source_node)
-        object.__setattr__(self, '_adjacency', adjacency)
+        object.__setattr__(self, "_adjacency", adjacency)
 
         # Compute degrees
         degrees = {n: len(neighbors) for n, neighbors in adjacency.items()}
-        object.__setattr__(self, '_node_degrees', degrees)
+        object.__setattr__(self, "_node_degrees", degrees)
 
         # Build NetworkX graph for connectivity queries
         G = nx.Graph()
@@ -69,7 +69,7 @@ class PerSentenceGraph:
             G.add_node(node)
         for edge in self.active_edges:
             G.add_edge(edge.source_node, edge.dest_node, edge=edge)
-        object.__setattr__(self, '_nx_graph', G)
+        object.__setattr__(self, "_nx_graph", G)
 
     @property
     def is_connected(self) -> bool:
@@ -141,6 +141,7 @@ class PerSentenceGraphBuilder:
         self._explicit_nodes: Set["Node"] = set()
         self._carryover_nodes: Set["Node"] = set()
         self._pending_edges: List["Edge"] = []
+        self._sentence_index: Optional[int] = None
 
     def set_explicit_nodes(self, nodes: List["Node"]) -> "PerSentenceGraphBuilder":
         """
@@ -178,6 +179,12 @@ class PerSentenceGraphBuilder:
             for edge in node.edges:
                 if not edge.active:
                     continue
+                if (
+                    edge.created_at_sentence is not None
+                    and self._sentence_index is not None
+                ):
+                    if edge.created_at_sentence > self._sentence_index:
+                        continue
 
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
@@ -226,6 +233,7 @@ class PerSentenceGraphBuilder:
         - Only edges with BOTH endpoints active are included
         - The result is guaranteed connected (or empty)
         """
+        self._sentence_index = sentence_index
         active_nodes = self._explicit_nodes | self._carryover_nodes
 
         # Filter edges: only those where BOTH endpoints are active
@@ -273,8 +281,7 @@ def build_per_sentence_graph(
     )
 
     return (
-        builder
-        .set_explicit_nodes(explicit_nodes)
+        builder.set_explicit_nodes(explicit_nodes)
         .compute_carryover_nodes()
         .build(sentence_index)
     )

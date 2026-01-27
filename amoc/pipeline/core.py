@@ -32,26 +32,27 @@ def _sanitize_filename_component(component: str, max_len: int = 80) -> str:
 
 
 class AMoCv4:
-    GENERIC_RELATION_LABELS = {
-        "has_property",
-        "is_type_of",
-        "is_part_of",
-        "related_to",
-        "has_attribute",
-        "is_a",
-        "appears",
-        "contains",
-        "includes",
-        "include",
-        "contain",
-        "part_of",
-        "associated_with",
-        "is associated with",
-        "|eot id|",
-        "refers to",
-        "is an",
-        "is mentioned in",
-    }
+    GENERIC_RELATION_LABELS = {}
+    # GENERIC_RELATION_LABELS = {
+    #     "has_property",
+    #     "is_type_of",
+    #     "is_part_of",
+    #     "related_to",
+    #     "has_attribute",
+    #     "is_a",
+    #     "appears",
+    #     "contains",
+    #     "includes",
+    #     "include",
+    #     "contain",
+    #     "part_of",
+    #     "associated_with",
+    #     "is associated with",
+    #     "|eot id|",
+    #     "refers to",
+    #     "is an",
+    #     "is mentioned in",
+    # }
 
     ENFORCE_ATTACHMENT_CONSTRAINT = False
     ACTIVATION_MAX_DISTANCE = 2
@@ -871,6 +872,20 @@ class AMoCv4:
                 return orig_text
             cleaned = re.sub(r"<[^>]+>", " ", candidate)
             cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+            # Filter out common LLM meta-responses about pronoun resolution
+            llm_meta_patterns = [
+                r"(?i)the text does not contain pronouns?",
+                r"(?i)there are no pronouns? to replace",
+                r"(?i)no pronouns? (?:to replace|found|present|in (?:the|this) (?:text|sentence))",
+                r"(?i)does not (?:have|contain) (?:any )?pronouns?",
+                r"(?i)without (?:any )?pronouns?",
+                r"(?i)pronouns? (?:have been |are |were )?(?:already )?replaced",
+            ]
+            for pattern in llm_meta_patterns:
+                if re.search(pattern, cleaned):
+                    # LLM returned a meta-response, use original text
+                    return orig_text
 
             # Pick the candidate sentence with the highest content-word overlap
             # with the original to avoid prompt echoes in the header.
@@ -1974,6 +1989,7 @@ class AMoCv4:
             token.lemma_ not in self.spacy_nlp.Defaults.stop_words
         )
 
+    # get the explicit node
     def get_senteces_text_based_nodes(
         self, previous_sentences: List[Span], create_unexistent_nodes: bool = True
     ) -> Tuple[List[Node], List[str]]:

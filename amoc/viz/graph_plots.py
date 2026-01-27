@@ -571,7 +571,30 @@ def plot_amoc_triplets(
 
     fig, ax = plt.subplots(figsize=(22, 18))
 
-    node_colors = ["#a0cbe2" if node in blue_nodes else "#ffe8a0" for node in G.nodes()]
+    # Build sets for node categorization
+    inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
+    explicit_node_set = set(explicit_nodes) if explicit_nodes else set()
+    salient_node_set = set(salient_nodes) if salient_nodes else set()
+
+    # Node colors: prioritize explicit/salient > inactive > default
+    # Explicit/Salient (blue_nodes): bright blue #a0cbe2
+    # Active (not in blue_nodes): bright yellow #ffe8a0
+    # Inactive: faded gray #d0d0d0
+    node_colors = []
+    node_alphas = []
+    for node in G.nodes():
+        if node in inactive_node_set:
+            # Inactive nodes: gray and faded
+            node_colors.append("#d0d0d0")
+            node_alphas.append(0.5)
+        elif node in blue_nodes:
+            # Explicit/salient nodes: bright blue
+            node_colors.append("#a0cbe2")
+            node_alphas.append(1.0)
+        else:
+            # Other active nodes: bright yellow
+            node_colors.append("#ffe8a0")
+            node_alphas.append(1.0)
 
     pos: Dict[str, Tuple[float, float]] = {}
     nodes = list(G.nodes())
@@ -893,15 +916,41 @@ def plot_amoc_triplets(
         if not collision_found:
             break
 
-    nx.draw_networkx_nodes(
-        G,
-        pos,
-        node_size=3800,
-        node_color=node_colors,
-        linewidths=2.0,
-        edgecolors="black",
-        ax=ax,
-    )
+    # Draw inactive nodes first (underneath) with faded appearance
+    inactive_in_graph = [n for n in G.nodes() if n in inactive_node_set]
+    active_in_graph = [n for n in G.nodes() if n not in inactive_node_set]
+
+    # Draw inactive nodes with faded colors and reduced opacity
+    if inactive_in_graph:
+        inactive_colors = ["#d0d0d0" for _ in inactive_in_graph]
+        nx.draw_networkx_nodes(
+            G,
+            pos,
+            nodelist=inactive_in_graph,
+            node_size=3800,
+            node_color=inactive_colors,
+            linewidths=1.5,
+            edgecolors="#999999",
+            alpha=0.4,
+            ax=ax,
+        )
+
+    # Draw active nodes on top with full opacity
+    if active_in_graph:
+        active_colors = [
+            "#a0cbe2" if node in blue_nodes else "#ffe8a0"
+            for node in active_in_graph
+        ]
+        nx.draw_networkx_nodes(
+            G,
+            pos,
+            nodelist=active_in_graph,
+            node_size=3800,
+            node_color=active_colors,
+            linewidths=2.0,
+            edgecolors="black",
+            ax=ax,
+        )
 
     reciprocals: set[Tuple[str, str]] = {
         (u, v) for u, v in G.edges() if (v, u) in G.edges()
@@ -920,19 +969,32 @@ def plot_amoc_triplets(
     structural_edge_colors = []
     structural_edge_widths = []
 
+    # Track edges involving inactive nodes for faded rendering
+    inactive_edges = []
+    inactive_edge_colors = []
+    inactive_edge_widths = []
+
     for u, v in G.edges():
         status = edge_status.get((u, v), "normal")
         is_active = (u, v) in active_edge_set
+        # Check if either endpoint is inactive
+        involves_inactive = u in inactive_node_set or v in inactive_node_set
 
         if status == "structural":
             structural_edges.append((u, v))
-            structural_edge_colors.append("green")
-            structural_edge_widths.append(2.5)
+            structural_edge_colors.append("green" if not involves_inactive else "#90c090")
+            structural_edge_widths.append(2.5 if not involves_inactive else 1.5)
 
         elif status == "implicit":
             implicit_edges.append((u, v))
             implicit_edge_colors.append("#999999" if not is_active else "#666699")
             implicit_edge_widths.append(1.0)
+
+        elif involves_inactive:
+            # Edges involving inactive nodes: faded gray
+            inactive_edges.append((u, v))
+            inactive_edge_colors.append("#cccccc")
+            inactive_edge_widths.append(0.8)
 
         else:
             normal_edges.append((u, v))
@@ -986,6 +1048,21 @@ def plot_amoc_triplets(
             ax=ax,
         )
 
+    # Draw edges involving inactive nodes with faded appearance
+    if inactive_edges:
+        nx.draw_networkx_edges(
+            G,
+            pos,
+            edgelist=inactive_edges,
+            edge_color=inactive_edge_colors,
+            width=inactive_edge_widths,
+            arrows=True,
+            arrowsize=12,
+            alpha=0.4,
+            connectionstyle="arc3,rad=0.0",
+            ax=ax,
+        )
+
     def _label_offset(u: str, v: str) -> Tuple[float, float]:
         x1, y1 = pos[u]
         x2, y2 = pos[v]
@@ -1013,21 +1090,23 @@ def plot_amoc_triplets(
             continue
         lx, ly = _label_offset(u, v)
         label_text = edge_labels[(u, v)]
-        is_implicit = edge_status.get((u, v)) == "implicit"
 
         status = edge_status.get((u, v), "normal")
+        # Check if edge involves an inactive node
+        involves_inactive = u in inactive_node_set or v in inactive_node_set
 
         if status == "implicit":
             ax.text(
                 lx,
                 ly,
                 "(implicit)",
-                fontsize=12,
+                fontsize=12 if not involves_inactive else 10,
                 fontstyle="italic",
-                color="#666699",
+                color="#666699" if not involves_inactive else "#aaaaaa",
+                alpha=1.0 if not involves_inactive else 0.5,
                 ha="center",
                 va="center",
-                bbox=dict(facecolor="white", edgecolor="none", pad=0.2, alpha=0.8),
+                bbox=dict(facecolor="white", edgecolor="none", pad=0.2, alpha=0.8 if not involves_inactive else 0.4),
             )
 
         elif status == "structural":
@@ -1035,12 +1114,27 @@ def plot_amoc_triplets(
                 lx,
                 ly,
                 _pretty_text(label_text),
-                fontsize=12,  # 👈 bigger
-                fontweight="bold",  # 👈 emphasized
-                color="green",
+                fontsize=12 if not involves_inactive else 10,
+                fontweight="bold" if not involves_inactive else "normal",
+                color="green" if not involves_inactive else "#90c090",
+                alpha=1.0 if not involves_inactive else 0.5,
                 ha="center",
                 va="center",
-                bbox=dict(facecolor="white", edgecolor="green", pad=0.25),
+                bbox=dict(facecolor="white", edgecolor="green" if not involves_inactive else "#90c090", pad=0.25, alpha=1.0 if not involves_inactive else 0.4),
+            )
+
+        elif involves_inactive:
+            # Edge labels for edges involving inactive nodes: faded gray
+            ax.text(
+                lx,
+                ly,
+                _pretty_text(label_text),
+                fontsize=10,
+                color="#999999",
+                alpha=0.5,
+                ha="center",
+                va="center",
+                bbox=dict(facecolor="white", edgecolor="none", pad=0.2, alpha=0.4),
             )
 
         else:
@@ -1055,16 +1149,34 @@ def plot_amoc_triplets(
                 bbox=dict(facecolor="white", edgecolor="none", pad=0.2),
             )
 
-    node_labels = {n: _pretty_text(n) for n in G.nodes()}
-    nx.draw_networkx_labels(
-        G,
-        pos,
-        labels=node_labels,
-        font_size=11,
-        font_weight="bold",
-        font_color="black",
-        ax=ax,
-    )
+    # Draw labels separately for active and inactive nodes
+    active_labels = {n: _pretty_text(n) for n in G.nodes() if n not in inactive_node_set}
+    inactive_labels = {n: _pretty_text(n) for n in G.nodes() if n in inactive_node_set}
+
+    # Draw active node labels (bold, black)
+    if active_labels:
+        nx.draw_networkx_labels(
+            G,
+            pos,
+            labels=active_labels,
+            font_size=11,
+            font_weight="bold",
+            font_color="black",
+            ax=ax,
+        )
+
+    # Draw inactive node labels (lighter, gray)
+    if inactive_labels:
+        nx.draw_networkx_labels(
+            G,
+            pos,
+            labels=inactive_labels,
+            font_size=10,
+            font_weight="normal",
+            font_color="#777777",
+            alpha=0.6,
+            ax=ax,
+        )
 
     def _normalize_title_line(text: str, max_len: int = 220) -> str:
         # Avoid extremely long headers (e.g., if a full prompt leaks in) that

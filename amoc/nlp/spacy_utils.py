@@ -49,16 +49,16 @@ def get_content_words_from_sent(nlp, sent: Span) -> List[Token]:
     }
 
     for tok in sent:
-        # --- EXISTENTIAL SUBJECT OVERRIDE ---
-        if (
-            tok.dep_ == "nsubj"
-            and tok.head.pos_ == "VERB"
-            and tok.head.lemma_ in EXISTENTIAL_VERBS
-            and tok.pos_ in {"NOUN", "PROPN"}
-            and tok.lemma_ not in nlp.Defaults.stop_words
-        ):
-            content_words.append(tok)
-            continue
+        # # --- EXISTENTIAL SUBJECT OVERRIDE ---
+        # if (
+        #     tok.dep_ == "nsubj"
+        #     and tok.head.pos_ == "VERB"
+        #     and tok.head.lemma_ in EXISTENTIAL_VERBS
+        #     and tok.pos_ in {"NOUN", "PROPN"}
+        #     and tok.lemma_ not in nlp.Defaults.stop_words
+        # ):
+        #     content_words.append(tok)
+        #     continue
 
         # --- ORIGINAL AMoC LOGIC ---
         if (
@@ -69,6 +69,18 @@ def get_content_words_from_sent(nlp, sent: Span) -> List[Token]:
             content_words.append(tok)
 
     return content_words
+
+
+def get_verb_with_adverbs(verb: str) -> str:
+    adverbs = [
+        tkn.lemma_
+        for tkn in verb.children
+        if tkn.dep_ == "advmod" and tkn.pos_ == "ADV" and tkn.lemma_ not in {"not"}
+    ]
+
+    if adverbs:
+        return f"{verb.lemma_}({' '.join(adverbs)})"
+    return verb.lemma_
 
 
 def get_concept_lemmas(nlp, concept: str) -> List[str]:
