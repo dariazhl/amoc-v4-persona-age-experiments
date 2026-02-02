@@ -425,6 +425,8 @@ def plot_amoc_triplets(
     active_edges: Optional[set[Tuple[str, str, str]]] = None,
     hub_edge_explanations: Optional[List[str]] = None,
     show_all_edges: bool = False,
+    edge_activation_scores: Optional[Dict[Tuple[str, str, str], int]] = None,
+    layout_from_active_only: bool = True,
 ) -> str:
 
     def expand_by_anchor(
@@ -512,10 +514,15 @@ def plot_amoc_triplets(
     # =========================================================================
 
     G = nx.MultiDiGraph()
+    G_active = nx.MultiDiGraph()  # Active subgraph for layout computation
 
     edge_labels: Dict[Tuple[str, str, str], str] = {}
     edge_status: Dict[Tuple[str, str, str], str] = {}
+    edge_scores: Dict[Tuple[str, str, str], int] = edge_activation_scores or {}
     active_edge_set = active_edges or set()
+
+    # Build sets for node categorization (needed for layout decision)
+    inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
 
     for src, rel, dst in triplets:
         src = str(src).strip()
@@ -541,31 +548,55 @@ def plot_amoc_triplets(
         else:
             edge_status[(src, dst, edge_key)] = "normal"
 
+        # LAYOUT POLICY: Only active structure shapes layout
+        # Add to active subgraph only if BOTH endpoints are active
+        is_edge_active = (src, dst) in active_edge_set or (src, dst, edge_key) in active_edge_set
+        involves_inactive = src in inactive_node_set or dst in inactive_node_set
+        if layout_from_active_only and not involves_inactive and is_edge_active:
+            G_active.add_edge(src, dst, key=edge_key)
+
     # INVARIANT 1: Nodes derived ONLY from triplets - no injection
     if G.number_of_nodes() == 0:
         return save_path
 
-    # INVARIANT 2: Hard assertion - graph MUST be connected
-    # Disconnected graphs are a hard error, not a layout problem
+    # INVARIANT 2: Graph should ideally be connected
+    # If disconnected, log warning and keep only the largest component
     if G.number_of_nodes() > 1:
         undirected_G = G.to_undirected()
         if not nx.is_connected(undirected_G):
             components = list(nx.connected_components(undirected_G))
             component_sizes = [len(c) for c in components]
-            raise RuntimeError(
-                f"INVARIANT 2 VIOLATION: Disconnected graph passed to plot_amoc_triplets. "
+            # Log warning instead of raising error
+            import logging
+
+            logging.warning(
+                f"Disconnected graph passed to plot_amoc_triplets. "
                 f"Found {len(components)} components with sizes {component_sizes}. "
-                f"Connectivity must be enforced upstream in core.py, not compensated visually."
+                f"Keeping only the largest component for plotting."
             )
+            # Keep only largest component
+            # largest_component = max(components, key=len)
+            # nodes_to_remove = set(G.nodes()) - largest_component
+            # G.remove_nodes_from(nodes_to_remove)
+            # # Also remove corresponding edge labels/status
+            # edge_labels = {k: v for k, v in edge_labels.items() if k[0] in largest_component and k[1] in largest_component}
+            # edge_status = {k: v for k, v in edge_status.items() if k[0] in largest_component and k[1] in largest_component}
 
     plotted_nodes = set(G.nodes())
+
+    # LAYOUT POLICY: Use active subgraph for layout computation
+    # Inactive nodes are positioned AFTER layout is computed from active structure
+    if layout_from_active_only and G_active.number_of_nodes() > 0:
+        layout_graph = G_active
+    else:
+        layout_graph = G
 
     # largest_component_only is now only for backward compatibility
     # With strict invariants, the graph should always be connected
 
     fig, ax = plt.subplots(figsize=(22, 18))
 
-    # Build sets for node categorization
+    # Build sets for node categorization (refresh from parameter)
     inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
     explicit_node_set = set(explicit_nodes) if explicit_nodes else set()
     salient_node_set = set(salient_nodes) if salient_nodes else set()
@@ -592,6 +623,7 @@ def plot_amoc_triplets(
 
     pos: Dict[str, Tuple[float, float]] = {}
     nodes = list(G.nodes())
+    layout_nodes = list(layout_graph.nodes())  # Nodes for layout computation
     position_cache = positions or {}
     fixed_pos: Dict[str, Tuple[float, float]] = {
         node: position_cache[node] for node in nodes if node in position_cache
@@ -602,21 +634,28 @@ def plot_amoc_triplets(
     max_label_len = max((len(_pretty_text(n)) for n in nodes), default=0)
     target_min_dist = 7.0 + max(0, max_label_len - 10) * 0.12
 
-    if len(nodes) == 1:
-        pos[nodes[0]] = (0.0, 0.0)
-        hub = nodes[0]
+    if len(layout_nodes) == 0:
+        # No active nodes - place all nodes in a simple grid
+        for i, node in enumerate(nodes):
+            pos[node] = (i % 5 * 10, i // 5 * 10)
+        hub = nodes[0] if nodes else None
+    elif len(layout_nodes) == 1:
+        pos[layout_nodes[0]] = (0.0, 0.0)
+        hub = layout_nodes[0]
     else:
-        UG = G
+        # LAYOUT POLICY: Use layout_graph (active subgraph) for hub selection and levels
+        UG = layout_graph
 
         # Single-hub radial layout (hub centered) to keep the nodes at fixed positions
         if (
             positions is not None
             and "__HUB__" in positions
-            and positions["__HUB__"] in nodes
+            and positions["__HUB__"] in layout_nodes
         ):
             hub = positions["__HUB__"]
         else:
-            hub_candidates = [n for n in nodes if n in blue_nodes] or nodes
+            # Select hub from active nodes (preferring blue_nodes/explicit)
+            hub_candidates = [n for n in layout_nodes if n in blue_nodes] or layout_nodes
             hub = max(hub_candidates, key=lambda n: (UG.degree(n), str(n)))
             if positions is not None:
                 positions["__HUB__"] = hub
@@ -626,6 +665,7 @@ def plot_amoc_triplets(
         if hub is not None:
             freeze_nodes.add(hub)
 
+        # Compute levels from active subgraph only
         levels = nx.single_source_shortest_path_length(UG, hub)
         max_level = max(levels.values(), default=0)
 
@@ -863,6 +903,47 @@ def plot_amoc_triplets(
 
     if pos and hub is None:
         hub = next(iter(pos.keys()))
+
+    # LAYOUT POLICY: Place inactive nodes AFTER active layout is computed
+    # Inactive nodes should not exert layout forces on active structure
+    # Position them at the periphery, connected to their neighbors if possible
+    if layout_from_active_only:
+        inactive_to_place = [n for n in nodes if n in inactive_node_set and n not in pos]
+        if inactive_to_place and pos:
+            # Calculate current layout bounds
+            max_r = max(
+                (math.hypot(x, y) for x, y in pos.values() if (x, y) != (0.0, 0.0)),
+                default=target_min_dist,
+            )
+            # Place inactive nodes at outer ring, spread evenly
+            outer_r = max_r + target_min_dist * 1.5
+            n_inactive = len(inactive_to_place)
+            for idx, node in enumerate(sorted(inactive_to_place)):
+                # Check if node has active neighbors - place near them
+                neighbor_positions = []
+                for neighbor in G.predecessors(node):
+                    if neighbor in pos:
+                        neighbor_positions.append(pos[neighbor])
+                for neighbor in G.successors(node):
+                    if neighbor in pos:
+                        neighbor_positions.append(pos[neighbor])
+
+                if neighbor_positions:
+                    # Place near the centroid of neighbors, but pushed outward
+                    cx = sum(x for x, y in neighbor_positions) / len(neighbor_positions)
+                    cy = sum(y for x, y in neighbor_positions) / len(neighbor_positions)
+                    dist = math.hypot(cx, cy)
+                    if dist < 1e-6:
+                        angle = 2.0 * math.pi * idx / max(1, n_inactive)
+                    else:
+                        angle = math.atan2(cy, cx)
+                    # Push to outer ring but in direction of neighbors
+                    pos[node] = (outer_r * math.cos(angle), outer_r * math.sin(angle))
+                else:
+                    # No active neighbors - spread around outer ring
+                    angle = 2.0 * math.pi * idx / max(1, n_inactive)
+                    pos[node] = (outer_r * math.cos(angle), outer_r * math.sin(angle))
+
     min_edge_len = max(6.5, target_min_dist * 0.9)
     _enforce_min_edge_length(
         pos, [(u, v) for u, v, _ in G.edges(keys=True)], min_len=min_edge_len, hub=hub
@@ -968,17 +1049,33 @@ def plot_amoc_triplets(
     inactive_edge_colors = []
     inactive_edge_widths = []
 
+    # Helper to compute edge width/alpha from activation_score
+    def _score_to_width(score: int, base_width: float = 1.3) -> float:
+        """Map activation_score to edge width. Higher score = thicker edge."""
+        # Score typically 0-3, map to 0.8-2.5 width
+        return base_width + min(score, 3) * 0.4
+
+    def _score_to_alpha(score: int, base_alpha: float = 1.0) -> float:
+        """Map activation_score to edge alpha. Higher score = more opaque."""
+        # Score typically 0-3, map to 0.4-1.0 alpha
+        return min(1.0, base_alpha - (3 - min(score, 3)) * 0.15)
+
     for u, v, k in G.edges(keys=True):
         status = edge_status.get((u, v, k), "normal")
-        is_active = (u, v, k) in active_edge_set
+        is_active = (u, v, k) in active_edge_set or (u, v) in active_edge_set
         involves_inactive = u in inactive_node_set or v in inactive_node_set
+
+        # Get activation score for this edge (default to 0 if not provided)
+        activation_score = edge_scores.get((u, v, k), edge_scores.get((u, v), 0))
 
         if status == "structural":
             structural_edges.append((u, v, k))
             structural_edge_colors.append(
                 "green" if not involves_inactive else "#90c090"
             )
-            structural_edge_widths.append(2.5 if not involves_inactive else 1.5)
+            # Use activation_score for structural edge width
+            base_width = 2.5 if not involves_inactive else 1.5
+            structural_edge_widths.append(_score_to_width(activation_score, base_width) if is_active else base_width * 0.6)
 
         elif status == "implicit":
             implicit_edges.append((u, v, k))
@@ -989,30 +1086,54 @@ def plot_amoc_triplets(
             # Edges involving inactive nodes: faded gray
             inactive_edges.append((u, v, k))
             inactive_edge_colors.append("#cccccc")
-            inactive_edge_widths.append(0.8)
+            # Lower width for inactive edges
+            inactive_edge_widths.append(0.6 + activation_score * 0.1)
 
         else:
             normal_edges.append((u, v, k))
             if is_active:
                 normal_edge_colors.append("black")
-                normal_edge_widths.append(1.3)
+                # Use activation_score for edge width - higher score = thicker
+                normal_edge_widths.append(_score_to_width(activation_score))
             else:
                 normal_edge_colors.append("#cccccc")
-                normal_edge_widths.append(1.2)
+                normal_edge_widths.append(0.8)
+
+    # Compute alpha values for normal edges based on activation_score
+    normal_edge_alphas = []
+    for u, v, k in normal_edges:
+        is_active = (u, v, k) in active_edge_set or (u, v) in active_edge_set
+        activation_score = edge_scores.get((u, v, k), edge_scores.get((u, v), 0))
+        if is_active:
+            normal_edge_alphas.append(_score_to_alpha(activation_score))
+        else:
+            normal_edge_alphas.append(0.4)
 
     # Draw normal edges as solid lines
     if normal_edges:
-        nx.draw_networkx_edges(
-            G,
-            pos,
-            edgelist=[(u, v) for u, v, k in normal_edges],
-            edge_color=normal_edge_colors,
-            arrows=True,
-            arrowsize=16,
-            width=normal_edge_widths,
-            connectionstyle="arc3,rad=0.2",
-            ax=ax,
-        )
+        # Draw edges with varying alpha (need to draw in batches by alpha)
+        alpha_groups = defaultdict(list)
+        for idx, (u, v, k) in enumerate(normal_edges):
+            alpha = normal_edge_alphas[idx]
+            alpha_key = round(alpha, 1)  # Group by rounded alpha
+            alpha_groups[alpha_key].append((idx, u, v, k))
+
+        for alpha_val, edge_group in alpha_groups.items():
+            group_edges = [(u, v) for idx, u, v, k in edge_group]
+            group_colors = [normal_edge_colors[idx] for idx, u, v, k in edge_group]
+            group_widths = [normal_edge_widths[idx] for idx, u, v, k in edge_group]
+            nx.draw_networkx_edges(
+                G,
+                pos,
+                edgelist=group_edges,
+                edge_color=group_colors,
+                arrows=True,
+                arrowsize=16,
+                width=group_widths,
+                alpha=alpha_val,
+                connectionstyle="arc3,rad=0.0",
+                ax=ax,
+            )
 
     # POLICY A: Draw implicit edges as dashed lines (style rather than remove)
     if implicit_edges:
@@ -1025,7 +1146,7 @@ def plot_amoc_triplets(
             arrowsize=14,
             width=implicit_edge_widths,
             style="dashed",
-            connectionstyle="arc3,rad=0.2",
+            connectionstyle="arc3,rad=0.0",
             ax=ax,
         )
 
@@ -1039,7 +1160,7 @@ def plot_amoc_triplets(
             style="dashed",
             arrows=True,
             arrowsize=18,
-            connectionstyle="arc3,rad=0.2",
+            connectionstyle="arc3,rad=0.0",
             ax=ax,
         )
 

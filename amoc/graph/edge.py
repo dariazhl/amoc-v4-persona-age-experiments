@@ -34,6 +34,9 @@ def _maybe_embed(text: str) -> Optional["np.ndarray"]:
 
 
 class Edge:
+    # Default activation score for new edges
+    DEFAULT_ACTIVATION_SCORE: int = 3
+
     def __init__(
         self,
         source_node: Node,
@@ -42,12 +45,20 @@ class Edge:
         forget_score: int,
         active: bool = True,
         created_at_sentence: Optional[int] = None,
+        activation_score: Optional[int] = None,
     ) -> None:
         self.source_node: Node = source_node
         self.dest_node: Node = dest_node
         self.active: bool = active
         self.label: str = label
         self.forget_score: int = forget_score
+        # activation_score: sentence-local activation counter (distinct from forget_score)
+        # Edges are activated when asserted/inferred; decays when inactive
+        self.activation_score: int = (
+            activation_score if activation_score is not None else self.DEFAULT_ACTIVATION_SCORE
+        )
+        # origin_sentence: the sentence where this edge was first created (immutable)
+        self.origin_sentence: Optional[int] = created_at_sentence
         self.similarity_threshold = 0.8
         self.embedding: Optional["np.ndarray"] = _maybe_embed(label)
         self.created_at_sentence: Optional[int] = created_at_sentence
@@ -57,6 +68,34 @@ class Edge:
         self.forget_score -= 1
         if self.forget_score <= 0:
             self.active = False
+
+    def deactivate(self) -> None:
+        """Deactivate edge (sentence-local reset)."""
+        self.active = False
+
+    def activate(self, reset_score: bool = True) -> None:
+        """Activate edge and optionally reset activation_score."""
+        self.active = True
+        if reset_score:
+            self.activation_score = self.DEFAULT_ACTIVATION_SCORE
+
+    def decay_activation(self) -> None:
+        """Decay activation_score by 1 for inactive edges."""
+        if not self.active:
+            self.activation_score -= 1
+
+    def is_property_edge(self) -> bool:
+        """
+        Check if this edge connects a concept to a property (attribute edge).
+        Attribute edges should only attach in their origin sentence.
+        """
+        from amoc.graph.node import NodeType
+        src_type = self.source_node.node_type
+        dst_type = self.dest_node.node_type
+        return (
+            (src_type == NodeType.CONCEPT and dst_type == NodeType.PROPERTY)
+            or (src_type == NodeType.PROPERTY and dst_type == NodeType.CONCEPT)
+        )
 
     def is_similar(self, other_edge: "Edge") -> bool:
         a = (self.label or "").strip().lower()
@@ -82,7 +121,8 @@ class Edge:
         return hash((self.source_node, self.dest_node, self.label))
 
     def __str__(self) -> str:
-        return f"{self.source_node.get_text_representer()} --{self.label} ({'active' if self.active else 'inactive'})--> {self.dest_node.get_text_representer()} ({self.forget_score})"
+        status = 'active' if self.active else 'inactive'
+        return f"{self.source_node.get_text_representer()} --{self.label} ({status}, act={self.activation_score})--> {self.dest_node.get_text_representer()} (forget={self.forget_score})"
 
     def __repr__(self) -> str:
         return self.__str__()

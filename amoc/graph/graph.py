@@ -3,6 +3,7 @@ from amoc.graph.node import NodeType, NodeSource
 from amoc.graph.edge import Edge
 from collections import deque
 from typing import List, Set, Dict, Optional, Tuple
+import re
 
 
 class Graph:
@@ -106,6 +107,158 @@ class Graph:
                     other_edge.active = True
                     return True
         return False
+
+    def deactivate_all_edges(self) -> None:
+        """
+        Deactivate all edges at the start of a new sentence.
+        This implements the "cumulative memory, sentence-local activation" rule.
+        Edges remain in memory but are marked inactive until reactivated.
+        """
+        for edge in self.edges:
+            edge.deactivate()
+
+    def reactivate_memory_edges_within_distance(
+        self,
+        explicit_nodes: Set[Node],
+        max_distance: int,
+        current_sentence: int,
+    ) -> Set[Edge]:
+        """
+        Reactivate memory edges that are within max_distance of explicit sentence nodes.
+
+        Property/attribute edges are only reactivated if current_sentence matches
+        their origin_sentence (attributes attach only in their origin sentence).
+
+        Returns the set of reactivated edges.
+        """
+        if not explicit_nodes or max_distance < 1:
+            return set()
+
+        # BFS to find nodes within distance
+        reachable_nodes: Dict[Node, int] = {n: 0 for n in explicit_nodes}
+        queue: deque = deque(explicit_nodes)
+        visited_edges: Set[Edge] = set()
+        reactivated: Set[Edge] = set()
+
+        while queue:
+            node = queue.popleft()
+            dist = reachable_nodes[node]
+
+            if dist >= max_distance:
+                continue
+
+            for edge in node.edges:
+                if edge in visited_edges:
+                    continue
+                visited_edges.add(edge)
+
+                # Check if property edge should be reactivated
+                # Property edges only attach in their origin sentence
+                if edge.is_property_edge():
+                    if edge.origin_sentence != current_sentence:
+                        continue  # Skip - property edges don't reattach
+
+                # Reactivate the edge
+                edge.activate(reset_score=True)
+                reactivated.add(edge)
+
+                # Continue BFS to neighbors
+                neighbor = (
+                    edge.dest_node if edge.source_node == node else edge.source_node
+                )
+                if neighbor not in reachable_nodes:
+                    reachable_nodes[neighbor] = dist + 1
+                    queue.append(neighbor)
+
+        return reactivated
+
+    def decay_inactive_edges(self) -> None:
+        """
+        Decay activation_score by 1 for all inactive edges.
+        Called at the end of each sentence processing.
+        """
+        for edge in self.edges:
+            edge.decay_activation()
+
+    def get_active_subgraph(
+        self, activation_threshold: int = 0
+    ) -> Tuple[Set[Node], Set[Edge]]:
+        """
+        Get the active subgraph for layout computation.
+
+        Only active structure shapes layout - inactive nodes/edges
+        must not exert layout forces.
+
+        Args:
+            activation_threshold: Minimum activation_score for edge inclusion.
+                                  0 means only currently active edges.
+
+        Returns:
+            Tuple of (active_nodes, active_edges) where:
+            - active_edges: Edges that are active AND have activation_score > threshold
+            - active_nodes: Nodes connected by active_edges
+        """
+        active_edges: Set[Edge] = set()
+        active_nodes: Set[Node] = set()
+
+        for edge in self.edges:
+            if edge.active and edge.activation_score > activation_threshold:
+                active_edges.add(edge)
+                active_nodes.add(edge.source_node)
+                active_nodes.add(edge.dest_node)
+
+        return active_nodes, active_edges
+
+    def get_active_triplets_with_scores(
+        self,
+    ) -> List[Tuple[str, str, str, bool, int]]:
+        """
+        Get triplets from active edges with their activation scores.
+
+        Returns list of (source_text, label, dest_text, is_active, activation_score)
+        for use in plotting with variable thickness/alpha.
+        """
+        triplets = []
+        for edge in self.edges:
+            triplets.append((
+                edge.source_node.get_text_representer(),
+                edge.label,
+                edge.dest_node.get_text_representer(),
+                edge.active,
+                edge.activation_score,
+            ))
+        return triplets
+
+    @staticmethod
+    def canonicalize_relation_label(label: str) -> str:
+        """
+        Canonicalize relation labels before edge creation.
+        Removes parser prefixes/artifacts and normalizes format.
+        """
+        if not label or not isinstance(label, str):
+            return ""
+
+        # Strip whitespace
+        label = label.strip()
+
+        # Remove common parser prefixes/artifacts
+        prefixes_to_remove = [
+            "nsubj:", "dobj:", "pobj:", "prep:", "amod:", "advmod:",
+            "ROOT:", "VERB:", "NOUN:", "ADJ:", "dep:", "compound:",
+            "agent:", "xcomp:", "ccomp:", "aux:", "auxpass:",
+        ]
+        for prefix in prefixes_to_remove:
+            if label.lower().startswith(prefix.lower()):
+                label = label[len(prefix):]
+
+        # Remove trailing punctuation and artifacts
+        label = re.sub(r'[^\w\s]$', '', label)
+        label = label.strip()
+
+        # Normalize whitespace
+        label = re.sub(r'\s+', ' ', label)
+
+        return label.lower()
 
     def bfs_from_activated_nodes(self, activated_nodes: List[Node]) -> Dict[Node, int]:
         distances = {}

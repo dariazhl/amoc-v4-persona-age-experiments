@@ -32,27 +32,32 @@ def _sanitize_filename_component(component: str, max_len: int = 80) -> str:
 
 
 class AMoCv4:
-    GENERIC_RELATION_LABELS = {}
-    # GENERIC_RELATION_LABELS = {
-    #     "has_property",
-    #     "is_type_of",
-    #     "is_part_of",
-    #     "related_to",
-    #     "has_attribute",
-    #     "is_a",
-    #     "appears",
-    #     "contains",
-    #     "includes",
-    #     "include",
-    #     "contain",
-    #     "part_of",
-    #     "associated_with",
-    #     "is associated with",
-    #     "|eot id|",
-    #     "refers to",
-    #     "is an",
-    #     "is mentioned in",
-    # }
+    # Generic relations to filter out - these are too vague to be useful
+    # NOTE: Simple "is" and "be" are KEPT because the AMoC paper uses them
+    # (e.g., "knight - is - brave" in Figure 7)
+    GENERIC_RELATION_LABELS = {
+        "has_property",
+        "is_type_of",
+        "is_part_of",
+        "related_to",
+        "has_attribute",
+        "is_a",
+        "appears",
+        "contains",
+        "includes",
+        "include",
+        "contain",
+        "part_of",
+        "associated_with",
+        "is associated with",
+        "|eot id|",
+        "refers to",
+        "is an",
+        "is mentioned in",
+        "involves",
+        "has_relation",
+        "relates_to",
+    }
 
     ENFORCE_ATTACHMENT_CONSTRAINT = False
     ACTIVATION_MAX_DISTANCE = 2
@@ -443,6 +448,12 @@ class AMoCv4:
         edge_forget: int,
         created_at_sentence: Optional[int] = None,
     ) -> Optional[Edge]:
+        # Canonicalize relation label before edge creation
+        # Removes parser prefixes/artifacts and normalizes format
+        label = Graph.canonicalize_relation_label(label)
+        if not label:
+            return None
+
         # STRICT MODE: enforce structural connectivity guarantee
         if self.strict_attachament_constraint and self.graph.edges:
             # Build undirected view of current graph
@@ -620,6 +631,20 @@ class AMoCv4:
             edge.label,
         )
 
+    def _get_edge_activation_scores(self) -> dict[tuple[str, str, str], int]:
+        """Get activation scores for all edges, keyed by (source, dest, label)."""
+        scores = {}
+        for edge in self.graph.edges:
+            key = (
+                edge.source_node.get_text_representer(),
+                edge.dest_node.get_text_representer(),
+                edge.label,
+            )
+            scores[key] = edge.activation_score
+            # Also add 2-tuple key for compatibility
+            scores[(key[0], key[1])] = edge.activation_score
+        return scores
+
     def _record_edge_in_graphs(self, edge: Edge, sentence_idx: Optional[int]) -> None:
         u, v, lbl = self._edge_key(edge)
         # Safety check: skip recording edges with empty/whitespace labels
@@ -769,16 +794,22 @@ class AMoCv4:
     def _is_valid_relation_label(self, label: str) -> bool:
         # Explicitly handle None, empty string, and whitespace-only labels
         if not label or not isinstance(label, str):
+            logging.debug("[EdgeFilter] Rejected empty/None label: %r", label)
             return False
         label_stripped = label.strip()
         if not label_stripped:
+            logging.debug("[EdgeFilter] Rejected whitespace-only label: %r", label)
             return False
         if self._is_generic_relation(label_stripped):
+            logging.debug("[EdgeFilter] Rejected generic relation: %r", label_stripped)
             return False
         if self._is_blacklisted_relation(label_stripped):
+            logging.debug("[EdgeFilter] Rejected blacklisted relation: %r", label_stripped)
             return False
         if not self._is_verb_relation(label_stripped):
+            logging.debug("[EdgeFilter] Rejected non-verb relation: %r", label_stripped)
             return False
+        logging.debug("[EdgeFilter] Accepted relation: %r", label_stripped)
         return True
 
     def _normalize_endpoint_text(self, text: str, is_subject: bool) -> Optional[str]:
@@ -945,6 +976,9 @@ class AMoCv4:
                 largest_component_only=largest_component_only,
                 positions=self._viz_positions,
                 active_edges=active_edges,
+                # LAYOUT POLICY: Pass activation scores for edge thickness/alpha
+                edge_activation_scores=self._get_edge_activation_scores(),
+                layout_from_active_only=True,
             )
             if triplets:
                 logging.info(
@@ -967,6 +1001,14 @@ class AMoCv4:
         largest_component_only: bool = False,
         force_node: bool = False,
     ) -> List[Tuple[str, str, str]]:
+        # Log story text and sentences for debugging
+        logging.info("[AMoC] Story text (first 200 chars): %s", self.story_text[:200] if self.story_text else "NONE")
+        doc = self.spacy_nlp(self.story_text)
+        sentences = list(doc.sents)
+        logging.info("[AMoC] Number of sentences detected by spaCy: %d", len(sentences))
+        for i, sent in enumerate(sentences):
+            logging.info("[AMoC] Sentence %d: %s", i + 1, sent.text.strip()[:100])
+
         if not hasattr(self, "_amoc_matrix_records"):
             self._amoc_matrix_records = []
         # Initialize persistent visualization positions ONCE per analyze run.
@@ -1104,6 +1146,13 @@ class AMoCv4:
                 prev_sentences.append(resolved_text)
                 if len(prev_sentences) > self.context_length:
                     prev_sentences.pop(0)
+
+                # ACTIVATION LOGIC: Deactivate all edges at sentence start
+                # This implements "cumulative memory, sentence-local activation"
+                self.graph.deactivate_all_edges()
+                logging.debug(
+                    "[Activation] Deactivated all edges at start of sentence %d", i
+                )
 
                 # phrase level nodes
                 phrase_nodes = self.get_phrase_level_concepts(current_sentence)
@@ -1323,6 +1372,20 @@ class AMoCv4:
                 self.graph.set_nodes_score_based_on_distance_from_active_nodes(
                     text_based_activated_nodes
                 )
+
+                # ACTIVATION LOGIC: Reactivate memory edges within MAX_DISTANCE of explicit nodes
+                # Property/attribute edges only reactivate in their origin sentence
+                reactivated_edges = self.graph.reactivate_memory_edges_within_distance(
+                    explicit_nodes=self._explicit_nodes_current_sentence,
+                    max_distance=self.max_distance_from_active_nodes,
+                    current_sentence=self._current_sentence_index,
+                )
+                logging.debug(
+                    "[Activation] Reactivated %d memory edges within distance %d",
+                    len(reactivated_edges),
+                    self.max_distance_from_active_nodes,
+                )
+
                 self.reactivate_relevant_edges(
                     self.graph.get_active_nodes(
                         self.max_distance_from_active_nodes, only_text_based=True
@@ -1342,6 +1405,12 @@ class AMoCv4:
                     self._anchor_nodes
                     | set(current_sentence_text_based_nodes)
                     | self._get_nodes_with_active_edges()
+                )
+
+                # ACTIVATION LOGIC: Decay activation_score for inactive edges
+                self.graph.decay_inactive_edges()
+                logging.debug(
+                    "[Activation] Decayed activation scores for inactive edges"
                 )
 
             if self.debug:
