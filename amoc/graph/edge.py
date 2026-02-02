@@ -55,7 +55,9 @@ class Edge:
         # activation_score: sentence-local activation counter (distinct from forget_score)
         # Edges are activated when asserted/inferred; decays when inactive
         self.activation_score: int = (
-            activation_score if activation_score is not None else self.DEFAULT_ACTIVATION_SCORE
+            activation_score
+            if activation_score is not None
+            else self.DEFAULT_ACTIVATION_SCORE
         )
         # origin_sentence: the sentence where this edge was first created (immutable)
         self.origin_sentence: Optional[int] = created_at_sentence
@@ -64,25 +66,110 @@ class Edge:
         self.created_at_sentence: Optional[int] = created_at_sentence
         self.metadata: dict[str, bool] = {}
 
+        # === EDGE ASSERTION STATES (per AMoC v4 paper) ===
+        # Each edge has exactly one state per sentence:
+        # - asserted_this_sentence: edge was explicitly created/inferred this sentence
+        # - reactivated_this_sentence: edge was reactivated from memory this sentence
+        # - inactive: edge exists in memory but not active this sentence
+        # These are mutually exclusive and reset at each sentence start
+        # Default is False - mark_as_asserted() must be called explicitly for new edges
+        self.asserted_this_sentence: bool = False
+        self.reactivated_this_sentence: bool = False
+
+        # activation_role: tracks how edge became active
+        # "asserted" - created/inferred this sentence
+        # "reactivated" - reactivated from memory
+        # "connector" - promoted to preserve active graph connectivity (not asserted/reactivated)
+        # Default is None - mark_as_* methods set the appropriate role
+        self.activation_role: Optional[str] = None
+
     def fade_away(self) -> None:
-        self.forget_score -= 1
-        if self.forget_score <= 0:
-            self.active = False
+        pass
+
+    def reset_for_sentence_start(self) -> None:
+        """
+        Reset edge state at the start of a new sentence.
+        Per AMoC v4 paper: all edges become inactive at sentence start,
+        then selectively activated through assertion or reactivation.
+        """
+        self.active = False
+        self.asserted_this_sentence = False
+        self.reactivated_this_sentence = False
+        self.activation_role = None
 
     def deactivate(self) -> None:
         """Deactivate edge (sentence-local reset)."""
         self.active = False
+        self.asserted_this_sentence = False
+        self.reactivated_this_sentence = False
+        self.activation_role = None
+
+    def mark_as_asserted(self, reset_score: bool = True) -> None:
+        """
+        Mark edge as asserted this sentence (created/inferred from current sentence).
+        Asserted edges are active and have their activation_score reset.
+        """
+        self.active = True
+        self.asserted_this_sentence = True
+        self.reactivated_this_sentence = False
+        self.activation_role = "asserted"
+        if reset_score:
+            self.activation_score = self.DEFAULT_ACTIVATION_SCORE
+
+    def mark_as_reactivated(self, reset_score: bool = True) -> None:
+        """
+        Mark edge as reactivated this sentence (brought back from memory).
+        PROPERTY edges should NEVER be reactivated - caller must check.
+        """
+        if self.activation_role == "connector":
+            return
+        self.active = True
+        self.asserted_this_sentence = False
+        self.reactivated_this_sentence = True
+        self.activation_role = "reactivated"
+        if reset_score:
+            self.activation_score = self.DEFAULT_ACTIVATION_SCORE
+
+    def mark_as_connector(self) -> None:
+        """
+        Mark edge as a connector (promoted to preserve active graph connectivity).
+        Connector edges:
+        - Must already exist in the cumulative graph
+        - Must NOT be PROPERTY edges (caller must check)
+        - Do NOT count as asserted or reactivated
+        - Do NOT increase activation scores
+        - Are NOT eligible for inference
+        - Exist only to preserve structural connectivity
+        """
+        self.active = True
+        self.asserted_this_sentence = False
+        self.reactivated_this_sentence = False
+        self.activation_role = "connector"
+        # Do NOT reset activation_score - connectors don't boost activation
 
     def activate(self, reset_score: bool = True) -> None:
-        """Activate edge and optionally reset activation_score."""
+        """Activate edge and optionally reset activation_score (legacy method)."""
         self.active = True
         if reset_score:
             self.activation_score = self.DEFAULT_ACTIVATION_SCORE
 
     def decay_activation(self) -> None:
-        """Decay activation_score by 1 for inactive edges."""
+        if self.activation_role == "connector":
+            return
         if not self.active:
             self.activation_score -= 1
+
+    def is_connector(self) -> bool:
+        """Check if this edge is serving as a connector (for connectivity only)."""
+        return self.activation_role == "connector"
+
+    def is_asserted(self) -> bool:
+        """Check if this edge was asserted this sentence."""
+        return self.asserted_this_sentence
+
+    def is_reactivated(self) -> bool:
+        """Check if this edge was reactivated this sentence."""
+        return self.reactivated_this_sentence
 
     def is_property_edge(self) -> bool:
         """
@@ -90,11 +177,11 @@ class Edge:
         Attribute edges should only attach in their origin sentence.
         """
         from amoc.graph.node import NodeType
+
         src_type = self.source_node.node_type
         dst_type = self.dest_node.node_type
-        return (
-            (src_type == NodeType.CONCEPT and dst_type == NodeType.PROPERTY)
-            or (src_type == NodeType.PROPERTY and dst_type == NodeType.CONCEPT)
+        return (src_type == NodeType.CONCEPT and dst_type == NodeType.PROPERTY) or (
+            src_type == NodeType.PROPERTY and dst_type == NodeType.CONCEPT
         )
 
     def is_similar(self, other_edge: "Edge") -> bool:
@@ -111,18 +198,36 @@ class Edge:
         return SequenceMatcher(None, a, b).ratio() >= self.similarity_threshold
 
     def __eq__(self, other: "Edge") -> bool:
-        return (
-            self.source_node == other.source_node
-            and self.dest_node == other.dest_node
-            and self.label == other.label
-        )
+        return self is other
 
     def __hash__(self) -> int:
-        return hash((self.source_node, self.dest_node, self.label))
+        return id(self)
 
     def __str__(self) -> str:
-        status = 'active' if self.active else 'inactive'
+        if self.active:
+            if self.asserted_this_sentence:
+                status = "asserted"
+            elif self.reactivated_this_sentence:
+                status = "reactivated"
+            elif self.activation_role == "connector":
+                status = "connector"
+            else:
+                status = "active"
+        else:
+            status = "inactive"
         return f"{self.source_node.get_text_representer()} --{self.label} ({status}, act={self.activation_score})--> {self.dest_node.get_text_representer()} (forget={self.forget_score})"
 
     def __repr__(self) -> str:
         return self.__str__()
+
+    def violates_property_sentence_constraint(self, current_sentence: int) -> bool:
+        """
+        PROPERTY edges must only be active in their origin sentence.
+        """
+        if self.is_property_edge() and self.origin_sentence is None:
+            raise RuntimeError("PROPERTY edge missing origin_sentence")
+        if not self.is_property_edge():
+            return False
+        if self.origin_sentence is None:
+            return True
+        return current_sentence != self.origin_sentence

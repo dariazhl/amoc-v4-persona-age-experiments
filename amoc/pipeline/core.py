@@ -498,6 +498,10 @@ class AMoCv4:
         )
 
         if edge:
+            # Mark edge as ASSERTED this sentence (per AMoC v4 paper semantics)
+            # New edges are explicitly asserted, not reactivated or connectors
+            edge.mark_as_asserted(reset_score=True)
+
             trip_id = (
                 edge.source_node.get_text_representer(),
                 edge.label,
@@ -594,13 +598,20 @@ class AMoCv4:
 
     # Step 5 from paper - only explicit nodes from the current sentence stay active
     def _restrict_active_to_current_explicit(self, explicit_nodes: List[Node]) -> None:
+        """
+        Restrict salience, NOT activation.
+        Explicit nodes get highest salience, but
+        carry-over and connector-supported nodes remain valid.
+        """
         explicit_set = set(explicit_nodes)
-        inactive_score = self.max_distance_from_active_nodes + 1
+
         for node in self.graph.nodes:
-            if node in explicit_set and node.node_source == NodeSource.TEXT_BASED:
+            if node in explicit_set:
                 node.score = 0
+            elif any(e.active for e in node.edges):
+                node.score = 1  # carry-over / connector-supported
             else:
-                node.score = inactive_score
+                node.score = self.max_distance_from_active_nodes + 1
 
     def _get_nodes_with_active_edges(self) -> set[Node]:
         active_nodes: set[Node] = set()
@@ -804,7 +815,9 @@ class AMoCv4:
             logging.debug("[EdgeFilter] Rejected generic relation: %r", label_stripped)
             return False
         if self._is_blacklisted_relation(label_stripped):
-            logging.debug("[EdgeFilter] Rejected blacklisted relation: %r", label_stripped)
+            logging.debug(
+                "[EdgeFilter] Rejected blacklisted relation: %r", label_stripped
+            )
             return False
         if not self._is_verb_relation(label_stripped):
             logging.debug("[EdgeFilter] Rejected non-verb relation: %r", label_stripped)
@@ -1002,7 +1015,10 @@ class AMoCv4:
         force_node: bool = False,
     ) -> List[Tuple[str, str, str]]:
         # Log story text and sentences for debugging
-        logging.info("[AMoC] Story text (first 200 chars): %s", self.story_text[:200] if self.story_text else "NONE")
+        logging.info(
+            "[AMoC] Story text (first 200 chars): %s",
+            self.story_text[:200] if self.story_text else "NONE",
+        )
         doc = self.spacy_nlp(self.story_text)
         sentences = list(doc.sents)
         logging.info("[AMoC] Number of sentences detected by spaCy: %d", len(sentences))
@@ -1152,6 +1168,10 @@ class AMoCv4:
                 self.graph.deactivate_all_edges()
                 logging.debug(
                     "[Activation] Deactivated all edges at start of sentence %d", i
+                )
+
+                self.graph.enforce_property_sentence_constraints(
+                    self._current_sentence_index
                 )
 
                 # phrase level nodes
@@ -1393,12 +1413,7 @@ class AMoCv4:
                     " ".join(prev_sentences),
                     added_edges,
                 )
-                self._restrict_active_to_current_explicit(
-                    list(self._explicit_nodes_current_sentence)
-                )
-                self.graph.set_nodes_score_based_on_distance_from_active_nodes(
-                    current_sentence_text_based_nodes
-                )
+
                 # Update anchor nodes to include current explicit nodes and
                 # nodes with active edges to maintain connectivity across sentences
                 self._anchor_nodes = (
@@ -1407,10 +1422,30 @@ class AMoCv4:
                     | self._get_nodes_with_active_edges()
                 )
 
+                # ACTIVE CONNECTIVITY PRESERVATION (per AMoC v4 paper)
+                # The active graph must remain connected at all times.
+                # If disconnected, promote minimum memory edges as connectors.
+                # Connector edges preserve structure but don't count as asserted/reactivated.
+                connector_edges = self.graph.ensure_active_connectivity(
+                    focus_nodes=self._explicit_nodes_current_sentence,
+                    carryover_focus_nodes=self._anchor_nodes,
+                )
+                if connector_edges:
+                    logging.debug(
+                        "[Connectivity] Promoted %d edges as connectors to preserve connectivity",
+                        len(connector_edges),
+                    )
+
                 # ACTIVATION LOGIC: Decay activation_score for inactive edges
                 self.graph.decay_inactive_edges()
                 logging.debug(
                     "[Activation] Decayed activation scores for inactive edges"
+                )
+                self._restrict_active_to_current_explicit(
+                    list(self._explicit_nodes_current_sentence)
+                )
+                self.graph.set_nodes_score_based_on_distance_from_active_nodes(
+                    current_sentence_text_based_nodes
                 )
 
             if self.debug:
@@ -1476,9 +1511,8 @@ class AMoCv4:
                 nx.Graph(self.active_graph)
             ):
                 logging.error(
-                    "Active graph disconnected at sentence %s for persona '%s'",
+                    "Legacy active_graph disconnected at sentence %s (per-sentence view governs correctness)",
                     sentence_id,
-                    self.persona,
                 )
             if i == 0:
                 recently_deactivated_nodes: set[Node] = set()
@@ -1578,17 +1612,36 @@ class AMoCv4:
                     restrict_nodes=active_nodes,
                 )
 
-                active_edge_pairs = (
-                    {
-                        (
-                            edge.source_node.get_text_representer(),
-                            edge.dest_node.get_text_representer(),
-                        )
-                        for edge in self._per_sentence_view.active_edges
-                    }
-                    if self._per_sentence_view is not None
-                    else {(u, v) for u, v in self.active_graph.edges()}
-                )
+                # Build active edge pairs for SEMANTIC triplets (agent -> target)
+                # The triplets are (agent_text, relation_text, target_text), so we need
+                # to match (agent_text, target_text) pairs, not structural edge pairs
+                active_edge_pairs = set()
+                for rel_node in self.graph.nodes:
+                    if rel_node.node_type != NodeType.RELATION:
+                        continue
+                    agents = []
+                    targets = []
+                    for e in rel_node.edges:
+                        if not e.active:
+                            continue
+                        if (
+                            e.label == self.STRUCTURAL_AGENT_EDGE
+                            and e.dest_node == rel_node
+                        ):
+                            agents.append(e.source_node)
+                        elif (
+                            e.label == self.STRUCTURAL_TARGET_EDGE
+                            and e.source_node == rel_node
+                        ):
+                            targets.append(e.dest_node)
+                    for a in agents:
+                        for t in targets:
+                            active_edge_pairs.add(
+                                (
+                                    a.get_text_representer(),
+                                    t.get_text_representer(),
+                                )
+                            )
 
                 self._plot_graph_snapshot(
                     sentence_index=i,
@@ -1605,6 +1658,35 @@ class AMoCv4:
                     active_edges=active_edge_pairs,
                 )
                 # Cumulative memory view
+                # Build cumulative active edge pairs for SEMANTIC triplets
+                cumulative_active_pairs = set()
+                for rel_node in self.graph.nodes:
+                    if rel_node.node_type != NodeType.RELATION:
+                        continue
+                    agents = []
+                    targets = []
+                    for e in rel_node.edges:
+                        if not e.active:
+                            continue
+                        if (
+                            e.label == self.STRUCTURAL_AGENT_EDGE
+                            and e.dest_node == rel_node
+                        ):
+                            agents.append(e.source_node)
+                        elif (
+                            e.label == self.STRUCTURAL_TARGET_EDGE
+                            and e.source_node == rel_node
+                        ):
+                            targets.append(e.dest_node)
+                    for a in agents:
+                        for t in targets:
+                            cumulative_active_pairs.add(
+                                (
+                                    a.get_text_representer(),
+                                    t.get_text_representer(),
+                                )
+                            )
+
                 self._plot_graph_snapshot(
                     sentence_index=i,
                     sentence_text=sent.text,
@@ -1619,14 +1701,7 @@ class AMoCv4:
                     triplets_override=self._reconstruct_semantic_triplets(
                         only_active=False
                     ),
-                    active_edges={
-                        (
-                            edge.source_node.get_text_representer(),
-                            edge.dest_node.get_text_representer(),
-                        )
-                        for edge in self.graph.edges
-                        if edge.active
-                    },
+                    active_edges=cumulative_active_pairs,
                 )
 
             # Capture triplets for this sentence (all edges, with current active flag)
@@ -1849,7 +1924,10 @@ class AMoCv4:
         # Non-strict mode: accumulate salience monotonically (no fading/pruning).
         if not self.strict_reactivate_function:
             for edge in edges:
-                edge.active = True
+                # Use proper state management - mark as reactivated
+                # PROPERTY edges should NOT be reactivated per paper rules
+                if not edge.is_property_edge():
+                    edge.mark_as_reactivated(reset_score=True)
                 edge.forget_score = self.edge_forget
                 self._record_edge_in_graphs(edge, self._current_sentence_index)
             # Enforce connectivity even in non-strict mode
@@ -1896,9 +1974,13 @@ class AMoCv4:
         else:
             selected = set(valid_indices)
             for i in selected:
-                edges[i - 1].forget_score = self.edge_forget
-                edges[i - 1].active = True
-                self._record_edge_in_graphs(edges[i - 1], self._current_sentence_index)
+                edge = edges[i - 1]
+                edge.forget_score = self.edge_forget
+                # Use proper state management - mark as reactivated
+                # PROPERTY edges should NOT be reactivated per paper rules
+                if not edge.is_property_edge():
+                    edge.mark_as_reactivated(reset_score=True)
+                self._record_edge_in_graphs(edge, self._current_sentence_index)
 
         # Preserve connectivity in the active projection.
         # If deactivating an edge would disconnect active nodes,
@@ -1917,10 +1999,13 @@ class AMoCv4:
         for j in range(1, len(edges) + 1):
             edge = edges[j - 1]
             if j not in selected and edges[j - 1] not in newly_added_edges:
-                edge.active = False
+                # Use proper deactivation
+                edge.deactivate()
 
                 if not _active_subgraph_connected():
-                    edge.active = True  # keep as bridge
+                    # Keep as connectivity bridge - mark as CONNECTOR, not reactivated
+                    # Connectors don't count as asserted/reactivated
+                    edge.mark_as_connector()
                     edge.forget_score = 0  # lowest salience
                     # Record bridge edges in active_graph to prevent disconnection in plots
                     self._record_edge_in_graphs(edge, self._current_sentence_index)
@@ -2092,6 +2177,10 @@ class AMoCv4:
                 node_type=NodeType.RELATION,
                 node_source=NodeSource.INFERENCE_BASED,
             )
+            if node_type == NodeType.PROPERTY:
+                # PROPERTY edges only allowed in origin sentence
+                if self._current_sentence_index != 1:
+                    continue
             self._add_edge(
                 source_node,
                 relation_node,
@@ -2190,6 +2279,10 @@ class AMoCv4:
                 node_type=NodeType.RELATION,
                 node_source=NodeSource.INFERENCE_BASED,
             )
+            if node_type == NodeType.PROPERTY:
+                # PROPERTY edges only allowed in origin sentence
+                if self._current_sentence_index != 1:
+                    continue
             potential_edge_1 = self._add_edge(
                 source_node,
                 relation_node,

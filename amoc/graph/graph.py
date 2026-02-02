@@ -65,6 +65,41 @@ class Graph:
         # Safety net: reject edges with empty/whitespace-only labels
         if not label or not isinstance(label, str) or not label.strip():
             return None
+
+        # STRICT PROPERTY CONSTRAINT: A PROPERTY node must not attach to more than one concept
+        # Check if this would violate the single-attach rule
+        property_node = None
+        concept_node = None
+        if (
+            source_node.node_type == NodeType.PROPERTY
+            and dest_node.node_type == NodeType.CONCEPT
+        ):
+            property_node = source_node
+            concept_node = dest_node
+        elif (
+            dest_node.node_type == NodeType.PROPERTY
+            and source_node.node_type == NodeType.CONCEPT
+        ):
+            property_node = dest_node
+            concept_node = source_node
+
+        if property_node is not None:
+            if created_at_sentence is None:
+                return None
+            # Check if this property is already attached to a DIFFERENT concept
+            for existing_edge in property_node.edges:
+                other_node = (
+                    existing_edge.dest_node
+                    if existing_edge.source_node == property_node
+                    else existing_edge.source_node
+                )
+                if (
+                    other_node.node_type == NodeType.CONCEPT
+                    and other_node != concept_node
+                ):
+                    # PROPERTY already attached to a different concept - reject
+                    return None
+
         edge = Edge(
             source_node,
             dest_node,
@@ -85,8 +120,10 @@ class Graph:
 
     def check_if_similar_edge_exists(self, edge: Edge, edge_forget: int) -> bool:
         if edge in self.edges:
-            self.get_edge(edge).forget_score = edge_forget
-            self.get_edge(edge).active = True
+            existing_edge = self.get_edge(edge)
+            existing_edge.forget_score = edge_forget
+            # Mark as ASSERTED (re-assertion of existing edge)
+            existing_edge.mark_as_asserted(reset_score=True)
             return True
         for other_edge in self.edges:
             same_nodes = (
@@ -104,18 +141,24 @@ class Graph:
                 )
                 if is_concept_property_pair or edge.is_similar(other_edge):
                     other_edge.forget_score = edge_forget
-                    other_edge.active = True
+                    # Mark as ASSERTED (re-assertion of existing edge)
+                    other_edge.mark_as_asserted(reset_score=True)
                     return True
         return False
 
     def deactivate_all_edges(self) -> None:
         """
-        Deactivate all edges at the start of a new sentence.
+        Reset all edges at the start of a new sentence.
         This implements the "cumulative memory, sentence-local activation" rule.
-        Edges remain in memory but are marked inactive until reactivated.
+        Per AMoC v4 paper: all edges become inactive at sentence start,
+        then selectively activated through assertion or reactivation.
+        Edges remain in memory but are marked inactive until reasserted/reactivated.
         """
         for edge in self.edges:
-            edge.deactivate()
+            edge.reset_for_sentence_start()
+
+    # Maximum number of edges to reactivate per sentence (sparse reactivation)
+    MAX_REACTIVATION_COUNT: int = 3
 
     def reactivate_memory_edges_within_distance(
         self,
@@ -126,19 +169,22 @@ class Graph:
         """
         Reactivate memory edges that are within max_distance of explicit sentence nodes.
 
-        Property/attribute edges are only reactivated if current_sentence matches
-        their origin_sentence (attributes attach only in their origin sentence).
+        Per AMoC v4 paper requirements:
+        - PROPERTY edges must NEVER be reactivated (strict rule)
+        - Reactivation is sparse: limited to MAX_REACTIVATION_COUNT edges (≈1-3)
+        - Only edges within graph_distance ≤ max_distance are candidates
 
         Returns the set of reactivated edges.
         """
         if not explicit_nodes or max_distance < 1:
             return set()
 
-        # BFS to find nodes within distance
+        # BFS to find candidate edges within distance
+        # We collect candidates first, then select the best ones (sparse reactivation)
         reachable_nodes: Dict[Node, int] = {n: 0 for n in explicit_nodes}
         queue: deque = deque(explicit_nodes)
         visited_edges: Set[Edge] = set()
-        reactivated: Set[Edge] = set()
+        candidate_edges: list[tuple[int, Edge]] = []  # (distance, edge)
 
         while queue:
             node = queue.popleft()
@@ -152,17 +198,19 @@ class Graph:
                     continue
                 visited_edges.add(edge)
 
-                # Check if property edge should be reactivated
-                # Property edges only attach in their origin sentence
-                if edge.is_property_edge():
-                    if edge.origin_sentence != current_sentence:
-                        continue  # Skip - property edges don't reattach
+                # STRICT RULE: PROPERTY edges must NEVER be reactivated
+                # Property edges fade permanently if not reasserted in current sentence
+                if edge.violates_property_sentence_constraint(current_sentence):
+                    continue
 
-                # Reactivate the edge
-                edge.activate(reset_score=True)
-                reactivated.add(edge)
+                # Skip edges that are already active (asserted this sentence)
+                if edge.active:
+                    continue
 
-                # Continue BFS to neighbors
+                # Collect as candidate for reactivation
+                candidate_edges.append((dist, edge))
+
+                # Continue BFS to neighbors (for finding more candidates)
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
@@ -170,15 +218,23 @@ class Graph:
                     reachable_nodes[neighbor] = dist + 1
                     queue.append(neighbor)
 
+        # SPARSE REACTIVATION: sort by distance and limit to MAX_REACTIVATION_COUNT
+        # Prefer closer edges (smaller distance)
+        candidate_edges.sort(key=lambda x: x[0])
+        reactivated: Set[Edge] = set()
+
+        for dist, edge in candidate_edges[: self.MAX_REACTIVATION_COUNT]:
+            edge.mark_as_reactivated(reset_score=True)
+            reactivated.add(edge)
+
         return reactivated
 
     def decay_inactive_edges(self) -> None:
-        """
-        Decay activation_score by 1 for all inactive edges.
-        Called at the end of each sentence processing.
-        """
         for edge in self.edges:
-            edge.decay_activation()
+            if edge.activation_role == "connector":
+                continue
+            if not edge.active:
+                edge.activation_score -= 1
 
     def get_active_subgraph(
         self, activation_threshold: int = 0
@@ -202,7 +258,11 @@ class Graph:
         active_nodes: Set[Node] = set()
 
         for edge in self.edges:
-            if edge.active and edge.activation_score > activation_threshold:
+            if not edge.active:
+                continue
+            if edge.is_property_edge():
+                continue
+            if edge.activation_score > activation_threshold:
                 active_edges.add(edge)
                 active_nodes.add(edge.source_node)
                 active_nodes.add(edge.dest_node)
@@ -220,13 +280,15 @@ class Graph:
         """
         triplets = []
         for edge in self.edges:
-            triplets.append((
-                edge.source_node.get_text_representer(),
-                edge.label,
-                edge.dest_node.get_text_representer(),
-                edge.active,
-                edge.activation_score,
-            ))
+            triplets.append(
+                (
+                    edge.source_node.get_text_representer(),
+                    edge.label,
+                    edge.dest_node.get_text_representer(),
+                    edge.active,
+                    edge.activation_score,
+                )
+            )
         return triplets
 
     @staticmethod
@@ -234,6 +296,10 @@ class Graph:
         """
         Canonicalize relation labels before edge creation.
         Removes parser prefixes/artifacts and normalizes format.
+
+        Per AMoC v4 paper: Forbidden examples like 'tkidnap', 'bprotecte', 'fckilltt'
+        must be cleaned up - these are parser artifacts with single-letter prefixes
+        or trailing artifacts.
         """
         if not label or not isinstance(label, str):
             return ""
@@ -241,22 +307,54 @@ class Graph:
         # Strip whitespace
         label = label.strip()
 
-        # Remove common parser prefixes/artifacts
+        # Remove common parser prefixes/artifacts (colon-based)
         prefixes_to_remove = [
-            "nsubj:", "dobj:", "pobj:", "prep:", "amod:", "advmod:",
-            "ROOT:", "VERB:", "NOUN:", "ADJ:", "dep:", "compound:",
-            "agent:", "xcomp:", "ccomp:", "aux:", "auxpass:",
+            "nsubj:",
+            "dobj:",
+            "pobj:",
+            "prep:",
+            "amod:",
+            "advmod:",
+            "ROOT:",
+            "VERB:",
+            "NOUN:",
+            "ADJ:",
+            "dep:",
+            "compound:",
+            "agent:",
+            "xcomp:",
+            "ccomp:",
+            "aux:",
+            "auxpass:",
         ]
         for prefix in prefixes_to_remove:
             if label.lower().startswith(prefix.lower()):
-                label = label[len(prefix):]
+                label = label[len(prefix) :]
+
+        # Remove single-letter prefixes that look like parser artifacts
+        # Examples: tkidnap -> kidnap, bprotecte -> protecte, fckilltt -> ckilltt
+        # Only remove if the prefix is a single lowercase letter followed by a word
+        label = re.sub(r"^[a-z](?=[a-z]{3,})", "", label.lower())
+
+        # Remove trailing letter artifacts (doubled consonants at end)
+        # Examples: killtt -> kill
+        label = re.sub(r"([a-z])\1+$", r"\1", label)  # Remove repeated final letters
+
+        # Remove trailing 'e' only after certain consonant clusters (parser artifacts)
+        # Examples: protecte -> protect, but keep: have, make, give, take
+        # Only remove if preceded by 'ct', 'pt', 'nd' etc. (common artifact patterns)
+        label = re.sub(r"(ct|pt|nd|lt|rt)e$", r"\1", label)
 
         # Remove trailing punctuation and artifacts
-        label = re.sub(r'[^\w\s]$', '', label)
+        label = re.sub(r"[^\w\s]$", "", label)
         label = label.strip()
 
         # Normalize whitespace
-        label = re.sub(r'\s+', ' ', label)
+        label = re.sub(r"\s+", " ", label)
+
+        # Final cleanup: reject if result is too short (likely artifact)
+        if len(label) < 2:
+            return ""
 
         return label.lower()
 
@@ -371,6 +469,155 @@ class Graph:
             s += str(edge) + "\n"
         return s
 
+    def ensure_active_connectivity(
+        self,
+        focus_nodes: Set[Node],
+        carryover_focus_nodes: Optional[Set[Node]] = None,
+    ) -> Set[Edge]:
+        """
+        Ensure the active graph remains connected per AMoC v4 paper requirements.
+
+        If the active graph becomes disconnected:
+        1. Identify focus nodes (explicit entities in current sentence + carry-over focus)
+        2. Compute connected components of the active graph
+        3. If multiple components exist, find minimum set of existing memory edges
+           that connect them
+        4. Promote those edges to active as "connectors"
+
+        Connector edge constraints (CRITICAL):
+        - Must already exist in the cumulative graph
+        - Must NOT be PROPERTY edges
+        - Must NOT be counted as asserted or reactivated
+        - Must NOT increase activation scores
+        - Must NOT be eligible for inference
+        - Exist only to preserve structural connectivity
+
+        Returns the set of edges promoted as connectors.
+        """
+        import networkx as nx
+
+        # Build active subgraph
+        active_edges = [e for e in self.edges if e.active]
+        if not active_edges:
+            return set()
+
+        # Build undirected graph of active edges
+        G_active = nx.Graph()
+        for edge in active_edges:
+            G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
+
+        # Check if already connected
+        if G_active.number_of_nodes() <= 1 or nx.is_connected(G_active):
+            return set()
+
+        # Graph is disconnected - find components
+        components = list(nx.connected_components(G_active))
+        if len(components) <= 1:
+            return set()
+
+        # Identify focus component (contains focus nodes)
+        all_focus = focus_nodes | (carryover_focus_nodes or set())
+        focus_component_idx = 0
+        for idx, comp in enumerate(components):
+            if any(n in comp for n in all_focus):
+                focus_component_idx = idx
+                break
+
+        # Build full cumulative graph for finding paths
+        G_cumulative = nx.Graph()
+        for edge in self.edges:
+            if edge.is_property_edge():
+                continue
+            G_cumulative.add_edge(edge.source_node, edge.dest_node, edge=edge)
+
+        promoted_connectors: Set[Edge] = set()
+
+        # For each non-focus component, find shortest path to focus component
+        focus_comp_nodes = components[focus_component_idx]
+        for idx, comp in enumerate(components):
+            if idx == focus_component_idx:
+                continue
+
+            # Find shortest path in cumulative graph between any node in comp
+            # and any node in focus component
+            best_path = None
+            best_path_len = float("inf")
+
+            for src in comp:
+                for tgt in focus_comp_nodes:
+                    if src == tgt:
+                        continue
+                    try:
+                        path = nx.shortest_path(G_cumulative, src, tgt)
+                        if len(path) < best_path_len:
+                            best_path = path
+                            best_path_len = len(path)
+                    except nx.NetworkXNoPath:
+                        continue
+
+            if best_path is None:
+                continue
+
+            # Promote edges along the path as connectors
+            for i in range(len(best_path) - 1):
+                node_a = best_path[i]
+                node_b = best_path[i + 1]
+
+                # Find the edge in cumulative graph
+                edge_data = G_cumulative.get_edge_data(node_a, node_b)
+                if edge_data is None:
+                    continue
+
+                edge = edge_data.get("edge")
+                if edge is None:
+                    continue
+
+                # STRICT: Never use PROPERTY edges as connectors
+                if edge.is_property_edge():
+                    continue
+
+                # Only promote if not already active
+                if not edge.active:
+                    edge.mark_as_connector()
+                    promoted_connectors.add(edge)
+
+            if __debug__:
+                G_check = nx.Graph()
+                for e in self.edges:
+                    if e.active:
+                        G_check.add_edge(e.source_node, e.dest_node)
+                if G_check.number_of_nodes() > 1:
+                    assert nx.is_connected(G_check), "Active graph is disconnected"
+
+        return promoted_connectors
+
+    def get_active_edges_by_role(self) -> dict[str, Set[Edge]]:
+        """
+        Get active edges grouped by their activation role.
+
+        Returns dict with keys:
+        - "asserted": edges asserted this sentence
+        - "reactivated": edges reactivated from memory
+        - "connector": edges promoted for connectivity
+        """
+        result: dict[str, Set[Edge]] = {
+            "asserted": set(),
+            "reactivated": set(),
+            "connector": set(),
+        }
+
+        for edge in self.edges:
+            if not edge.active:
+                continue
+            if edge.is_asserted():
+                result["asserted"].add(edge)
+            elif edge.is_reactivated():
+                result["reactivated"].add(edge)
+            elif edge.is_connector():
+                result["connector"].add(edge)
+
+        return result
+
     def __str__(self) -> str:
         return "nodes: {}\n\nedges: {}".format(
             "\n".join([str(x) for x in self.nodes]),
@@ -379,3 +626,8 @@ class Graph:
 
     def __repr__(self) -> str:
         return self.__str__()
+
+    def enforce_property_sentence_constraints(self, current_sentence: int) -> None:
+        for edge in self.edges:
+            if edge.violates_property_sentence_constraint(current_sentence):
+                edge.deactivate()
