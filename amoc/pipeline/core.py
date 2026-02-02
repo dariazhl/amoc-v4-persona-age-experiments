@@ -354,6 +354,7 @@ class AMoCv4:
             if not isinstance(subj, str) or not isinstance(obj, str):
                 continue
             edge_label = rel.replace("(edge)", "").strip()
+            edge_label = self._normalize_edge_label(edge_label)
             if not self._is_valid_relation_label(edge_label):
                 continue
 
@@ -524,7 +525,7 @@ class AMoCv4:
         for edge in self.graph.edges:
             if only_active and not edge.active:
                 continue
-            if edge.label in {STRUCTURAL_AGENT_EDGE, STRUCTURAL_TARGET_EDGE}:
+            if edge.label in {self.STRUCTURAL_AGENT_EDGE, self.STRUCTURAL_TARGET_EDGE}:
                 continue
             if not edge.label or not str(edge.label).strip():
                 continue
@@ -558,7 +559,7 @@ class AMoCv4:
                 if only_active and not e.active:
                     continue
 
-                if e.label == STRUCTURAL_AGENT_EDGE and e.dest_node == rel_node:
+                if e.label == self.STRUCTURAL_AGENT_EDGE and e.dest_node == rel_node:
                     agents.append(e.source_node)
 
                 elif e.label == STRUCTURAL_TARGET_EDGE and e.source_node == rel_node:
@@ -702,16 +703,66 @@ class AMoCv4:
         return norm in self.RELATION_BLACKLIST
 
     def _is_verb_relation(self, label: str) -> bool:
+        """
+        Check if a relation label is verb-based.
+        Allows VERB+ADV combinations (e.g., "ride fast", "run quickly").
+        Rejects standalone adverbs or labels with only non-verb content.
+        """
         doc = self.spacy_nlp(label)
         has_verb = False
+        has_adv = False
+        has_invalid = False
+
         for tok in doc:
             if not getattr(tok, "is_alpha", False):
                 continue
-            if tok.pos_ in {"ADJ", "NOUN", "PROPN", "ADV"}:
-                return False
-            if tok.pos_ in {"VERB", "AUX"}:
+            if tok.pos_ in {"ADJ", "NOUN", "PROPN"}:
+                has_invalid = True
+            elif tok.pos_ == "ADV":
+                has_adv = True
+            elif tok.pos_ in {"VERB", "AUX"}:
                 has_verb = True
+
+        # Allow VERB+ADV combinations, reject standalone ADV or invalid POS
+        if has_invalid:
+            return False
+        if has_adv and not has_verb:
+            return False  # Standalone adverb without verb
         return has_verb
+
+    def _normalize_edge_label(self, label: str) -> str:
+        """
+        Normalize edge label by combining verb + adverb in proper order.
+        E.g., "fast ride" -> "ride fast", "quickly run" -> "run quickly"
+
+        Returns the normalized label with verb followed by adverb(s).
+        """
+        if not label or not isinstance(label, str):
+            return label
+
+        doc = self.spacy_nlp(label.strip())
+        verbs = []
+        adverbs = []
+        other = []
+
+        for tok in doc:
+            if not getattr(tok, "is_alpha", False):
+                continue
+            if tok.pos_ in {"VERB", "AUX"}:
+                verbs.append(tok.lemma_)
+            elif tok.pos_ == "ADV":
+                adverbs.append(tok.text.lower())
+            else:
+                other.append(tok.text.lower())
+
+        # If we have verb(s) and adverb(s), combine them: verb + adverb
+        if verbs and adverbs:
+            return " ".join(verbs + adverbs)
+        # If only verbs, return lemmatized verb
+        if verbs:
+            return " ".join(verbs)
+        # Otherwise return original (will likely be rejected by validation)
+        return label.strip()
 
     def _is_valid_relation_label(self, label: str) -> bool:
         # Explicitly handle None, empty string, and whitespace-only labels
@@ -1180,6 +1231,7 @@ class AMoCv4:
                         create_node=True,
                     )
                     edge_label = rel.replace("(edge)", "").strip()
+                    edge_label = self._normalize_edge_label(edge_label)
                     if not self._is_valid_relation_label(edge_label):
                         continue
                     if source_node is None or dest_node is None:
@@ -1862,6 +1914,7 @@ class AMoCv4:
                 create_node=True,
             )
             edge_label = relationship[1].replace("(edge)", "").strip()
+            edge_label = self._normalize_edge_label(edge_label)
             if not self._is_valid_relation_label(edge_label):
                 continue
             if source_node is None or dest_node is None:
@@ -1875,13 +1928,13 @@ class AMoCv4:
             self._add_edge(
                 source_node,
                 relation_node,
-                STRUCTURAL_AGENT_EDGE,
+                self.STRUCTURAL_AGENT_EDGE,
                 self.edge_forget,
             )
             self._add_edge(
                 relation_node,
                 dest_node,
-                STRUCTURAL_TARGET_EDGE,
+                self.STRUCTURAL_TARGET_EDGE,
                 self.edge_forget,
             )
 
@@ -1943,6 +1996,7 @@ class AMoCv4:
                 create_node=False,
             )
             edge_label = relationship[1].replace("(edge)", "").strip()
+            edge_label = self._normalize_edge_label(edge_label)
             if not self._is_valid_relation_label(edge_label):
                 continue
             if source_node is None:
@@ -1970,13 +2024,13 @@ class AMoCv4:
             self._add_edge(
                 source_node,
                 relation_node,
-                STRUCTURAL_AGENT_EDGE,
+                self.STRUCTURAL_AGENT_EDGE,
                 self.edge_forget,
             )
             self._add_edge(
                 relation_node,
                 dest_node,
-                STRUCTURAL_TARGET_EDGE,
+                self.STRUCTURAL_TARGET_EDGE,
                 self.edge_forget,
             )
 
@@ -2040,6 +2094,7 @@ class AMoCv4:
                 create_node=False,
             )
             edge_label = relationship[1].replace("(edge)", "").strip()
+            edge_label = self._normalize_edge_label(edge_label)
             if not self._is_valid_relation_label(edge_label):
                 continue
             if source_node is None:
@@ -2067,13 +2122,13 @@ class AMoCv4:
             potential_edge_1 = self._add_edge(
                 source_node,
                 relation_node,
-                STRUCTURAL_AGENT_EDGE,
+                self.STRUCTURAL_AGENT_EDGE,
                 self.edge_forget,
             )
             potential_edge_2 = self._add_edge(
                 relation_node,
                 dest_node,
-                STRUCTURAL_TARGET_EDGE,
+                self.STRUCTURAL_TARGET_EDGE,
                 self.edge_forget,
             )
             if potential_edge_1:
