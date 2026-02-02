@@ -562,7 +562,9 @@ class AMoCv4:
                 if e.label == self.STRUCTURAL_AGENT_EDGE and e.dest_node == rel_node:
                     agents.append(e.source_node)
 
-                elif e.label == STRUCTURAL_TARGET_EDGE and e.source_node == rel_node:
+                elif (
+                    e.label == self.STRUCTURAL_TARGET_EDGE and e.source_node == rel_node
+                ):
                     targets.append(e.dest_node)
 
             for a in agents:
