@@ -7,9 +7,11 @@ if TYPE_CHECKING:
 from enum import Enum
 from typing import List, Dict
 
+
 class NodeType(Enum):
     CONCEPT = 1
     PROPERTY = 2
+    RELATION = 3
 
 
 class NodeSource(Enum):
@@ -31,7 +33,10 @@ class Node:
         self.actual_texts: Dict[str, int] = {actual_text_l: 1}
         self.node_type: NodeType = node_type
         self.node_source: NodeSource = node_source
-        self.score = score
+        if node_type == NodeType.RELATION:
+            self.score = 0
+        else:
+            self.score = score
         self.edges: List["Edge"] = []
 
     def __eq__(self, other: "Node") -> bool:

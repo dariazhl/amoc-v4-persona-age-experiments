@@ -5,6 +5,7 @@ from typing import List, Tuple, Iterable, Optional, Dict
 import networkx as nx
 import matplotlib.pyplot as plt
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR  # reuse existing output base
+from collections import defaultdict
 
 DEFAULT_BLUE_NODES: Iterable[str] = ()
 
@@ -421,7 +422,7 @@ def plot_amoc_triplets(
     inactive_nodes_for_title: Optional[Iterable[str]] = None,
     positions: Optional[Dict[str, Tuple[float, float]]] = None,
     avoid_edge_overlap: bool = True,
-    active_edges: Optional[set[Tuple[str, str]]] = None,
+    active_edges: Optional[set[Tuple[str, str, str]]] = None,
     hub_edge_explanations: Optional[List[str]] = None,
     show_all_edges: bool = False,
 ) -> str:
@@ -510,10 +511,10 @@ def plot_amoc_triplets(
     #   - graph_plots.py: Purely representational, assumes valid input
     # =========================================================================
 
-    G = nx.DiGraph()
-    edge_labels: Dict[Tuple[str, str], str] = {}
-    edge_status: Dict[Tuple[str, str], str] = {}
-    duplicate_edges: set[Tuple[str, str]] = set()
+    G = nx.MultiDiGraph()
+
+    edge_labels: Dict[Tuple[str, str, str], str] = {}
+    edge_status: Dict[Tuple[str, str, str], str] = {}
     active_edge_set = active_edges or set()
 
     for src, rel, dst in triplets:
@@ -521,31 +522,24 @@ def plot_amoc_triplets(
         dst = str(dst).strip()
         rel = str(rel).strip()
 
-        # INVARIANT 3: Skip triplets with missing nodes or empty relations
-        # Empty relations are NOT downgraded to "__implicit__" - they are skipped
-        # If an edge needs to exist, it must have a valid label from upstream
-        if not src or not dst:
-            continue
-        if not rel:
-            continue  # INVARIANT 3: No relation synthesis in plotter
-
-        u, v = src, dst
-        if (u, v) in edge_labels:
-            duplicate_edges.add((u, v))
+        # INVARIANT: semantic triplets must be complete
+        if not src or not dst or not rel:
             continue
 
         is_structural = rel.startswith("structural::")
         clean_rel = rel.replace("structural::", "").strip()
 
-        G.add_edge(u, v)
+        # Unique key per semantic relation
+        edge_key = f"{clean_rel}"
 
-        edge_labels[(u, v)] = clean_rel
-        edge_labels[(v, u)] = clean_rel  # undirected lookup
+        G.add_edge(src, dst, key=edge_key)
+
+        edge_labels[(src, dst, edge_key)] = clean_rel
 
         if is_structural:
-            edge_status[(u, v)] = "structural"
+            edge_status[(src, dst, edge_key)] = "structural"
         else:
-            edge_status[(u, v)] = "normal"
+            edge_status[(src, dst, edge_key)] = "normal"
 
     # INVARIANT 1: Nodes derived ONLY from triplets - no injection
     if G.number_of_nodes() == 0:
@@ -870,7 +864,9 @@ def plot_amoc_triplets(
     if pos and hub is None:
         hub = next(iter(pos.keys()))
     min_edge_len = max(6.5, target_min_dist * 0.9)
-    _enforce_min_edge_length(pos, list(G.edges()), min_len=min_edge_len, hub=hub)
+    _enforce_min_edge_length(
+        pos, [(u, v) for u, v, _ in G.edges(keys=True)], min_len=min_edge_len, hub=hub
+    )
     if avoid_edge_overlap:
         _push_nodes_off_edges(fig, ax, pos, list(G.edges()))
     _enforce_minimum_spacing(
@@ -938,8 +934,7 @@ def plot_amoc_triplets(
     # Draw active nodes on top with full opacity
     if active_in_graph:
         active_colors = [
-            "#a0cbe2" if node in blue_nodes else "#ffe8a0"
-            for node in active_in_graph
+            "#a0cbe2" if node in blue_nodes else "#ffe8a0" for node in active_in_graph
         ]
         nx.draw_networkx_nodes(
             G,
@@ -952,9 +947,8 @@ def plot_amoc_triplets(
             ax=ax,
         )
 
-    reciprocals: set[Tuple[str, str]] = {
-        (u, v) for u, v in G.edges() if (v, u) in G.edges()
-    }
+    edge_pairs = {(u, v) for u, v, _ in G.edges(keys=True)}
+    reciprocals = {(u, v) for (u, v) in edge_pairs if (v, u) in edge_pairs}
 
     normal_edges = []
     implicit_edges = []
@@ -974,30 +968,31 @@ def plot_amoc_triplets(
     inactive_edge_colors = []
     inactive_edge_widths = []
 
-    for u, v in G.edges():
-        status = edge_status.get((u, v), "normal")
-        is_active = (u, v) in active_edge_set
-        # Check if either endpoint is inactive
+    for u, v, k in G.edges(keys=True):
+        status = edge_status.get((u, v, k), "normal")
+        is_active = (u, v, k) in active_edge_set
         involves_inactive = u in inactive_node_set or v in inactive_node_set
 
         if status == "structural":
-            structural_edges.append((u, v))
-            structural_edge_colors.append("green" if not involves_inactive else "#90c090")
+            structural_edges.append((u, v, k))
+            structural_edge_colors.append(
+                "green" if not involves_inactive else "#90c090"
+            )
             structural_edge_widths.append(2.5 if not involves_inactive else 1.5)
 
         elif status == "implicit":
-            implicit_edges.append((u, v))
+            implicit_edges.append((u, v, k))
             implicit_edge_colors.append("#999999" if not is_active else "#666699")
             implicit_edge_widths.append(1.0)
 
         elif involves_inactive:
             # Edges involving inactive nodes: faded gray
-            inactive_edges.append((u, v))
+            inactive_edges.append((u, v, k))
             inactive_edge_colors.append("#cccccc")
             inactive_edge_widths.append(0.8)
 
         else:
-            normal_edges.append((u, v))
+            normal_edges.append((u, v, k))
             if is_active:
                 normal_edge_colors.append("black")
                 normal_edge_widths.append(1.3)
@@ -1010,12 +1005,12 @@ def plot_amoc_triplets(
         nx.draw_networkx_edges(
             G,
             pos,
-            edgelist=normal_edges,
+            edgelist=[(u, v) for u, v, k in normal_edges],
             edge_color=normal_edge_colors,
             arrows=True,
             arrowsize=16,
             width=normal_edge_widths,
-            connectionstyle="arc3,rad=0.0",
+            connectionstyle="arc3,rad=0.2",
             ax=ax,
         )
 
@@ -1030,7 +1025,7 @@ def plot_amoc_triplets(
             arrowsize=14,
             width=implicit_edge_widths,
             style="dashed",
-            connectionstyle="arc3,rad=0.0",
+            connectionstyle="arc3,rad=0.2",
             ax=ax,
         )
 
@@ -1044,7 +1039,7 @@ def plot_amoc_triplets(
             style="dashed",
             arrows=True,
             arrowsize=18,
-            connectionstyle="arc3,rad=0.0",
+            connectionstyle="arc3,rad=0.2",
             ax=ax,
         )
 
@@ -1070,73 +1065,53 @@ def plot_amoc_triplets(
         dist = math.hypot(dx, dy)
         if dist < 1e-6:
             return (x1 + x2) * 0.5, (y1 + y2) * 0.5
-        # Perpendicular unit vector
-        nx_ = -dy / dist
-        ny_ = dx / dist
-        base = 0.0  # place label on the edge axis (no perpendicular shift)
-        # For reciprocals, push labels to opposite sides and stagger along the edge.
-        if (u, v) in reciprocals:
-            sign = 1.0 if u < v else -1.0
-            t = 0.58 if u < v else 0.42
-        else:
-            sign = 0.0
-            t = 0.5
-        mx = x1 * (1.0 - t) + x2 * t
-        my = y1 * (1.0 - t) + y2 * t
-        return mx + sign * base * nx_, my + sign * base * ny_
+        t = 0.5
+        return x1 * (1.0 - t) + x2 * t, y1 * (1.0 - t) + y2 * t
 
-    for u, v in G.edges():
-        if (u, v) not in edge_labels:
+    for u, v, k in G.edges(keys=True):
+        if (u, v, k) not in edge_labels:
             continue
-        lx, ly = _label_offset(u, v)
-        label_text = edge_labels[(u, v)]
 
-        status = edge_status.get((u, v), "normal")
-        # Check if edge involves an inactive node
+        lx, ly = _label_offset(u, v)
+        label_text = edge_labels[(u, v, k)]
+        status = edge_status.get((u, v, k), "normal")
         involves_inactive = u in inactive_node_set or v in inactive_node_set
 
-        if status == "implicit":
-            ax.text(
-                lx,
-                ly,
-                "(implicit)",
-                fontsize=12 if not involves_inactive else 10,
-                fontstyle="italic",
-                color="#666699" if not involves_inactive else "#aaaaaa",
-                alpha=1.0 if not involves_inactive else 0.5,
-                ha="center",
-                va="center",
-                bbox=dict(facecolor="white", edgecolor="none", pad=0.2, alpha=0.8 if not involves_inactive else 0.4),
-            )
-
-        elif status == "structural":
+        if status == "structural":
             ax.text(
                 lx,
                 ly,
                 _pretty_text(label_text),
-                fontsize=12 if not involves_inactive else 10,
-                fontweight="bold" if not involves_inactive else "normal",
-                color="green" if not involves_inactive else "#90c090",
-                alpha=1.0 if not involves_inactive else 0.5,
+                fontsize=12,
+                fontweight="bold",
+                color="green",
                 ha="center",
                 va="center",
-                bbox=dict(facecolor="white", edgecolor="green" if not involves_inactive else "#90c090", pad=0.25, alpha=1.0 if not involves_inactive else 0.4),
+                bbox=dict(facecolor="white", edgecolor="green", pad=0.25),
             )
-
+        elif status == "implicit":
+            ax.text(
+                lx,
+                ly,
+                "(implicit)",
+                fontsize=11,
+                fontstyle="italic",
+                color="#666699",
+                ha="center",
+                va="center",
+                bbox=dict(facecolor="white", edgecolor="none", pad=0.2),
+            )
         elif involves_inactive:
-            # Edge labels for edges involving inactive nodes: faded gray
             ax.text(
                 lx,
                 ly,
                 _pretty_text(label_text),
                 fontsize=10,
                 color="#999999",
-                alpha=0.5,
                 ha="center",
                 va="center",
-                bbox=dict(facecolor="white", edgecolor="none", pad=0.2, alpha=0.4),
+                bbox=dict(facecolor="white", edgecolor="none", pad=0.2),
             )
-
         else:
             ax.text(
                 lx,
@@ -1150,7 +1125,9 @@ def plot_amoc_triplets(
             )
 
     # Draw labels separately for active and inactive nodes
-    active_labels = {n: _pretty_text(n) for n in G.nodes() if n not in inactive_node_set}
+    active_labels = {
+        n: _pretty_text(n) for n in G.nodes() if n not in inactive_node_set
+    }
     inactive_labels = {n: _pretty_text(n) for n in G.nodes() if n in inactive_node_set}
 
     # Draw active node labels (bold, black)

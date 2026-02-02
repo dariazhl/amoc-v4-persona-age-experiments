@@ -57,6 +57,8 @@ class AMoCv4:
     ENFORCE_ATTACHMENT_CONSTRAINT = False
     ACTIVATION_MAX_DISTANCE = 2
     RELATION_BLACKLIST = {"describes", "is_at_stake"}
+    STRUCTURAL_AGENT_EDGE = "agent_of"
+    STRUCTURAL_TARGET_EDGE = "target_of"
 
     def __init__(
         self,
@@ -176,6 +178,8 @@ class AMoCv4:
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
+                if neighbor.node_type == NodeType.RELATION:
+                    continue
                 if neighbor in distances:
                     continue
                 distances[neighbor] = dist + 1
@@ -197,7 +201,7 @@ class AMoCv4:
                 return 5.0
             return val
 
-        explicit_set = set(explicit_nodes)
+        explicit_set = {n for n in explicit_nodes if n.node_type != NodeType.RELATION}
         distances = self._distances_from_sources_active_edges(
             explicit_set, max_distance=self.ACTIVATION_MAX_DISTANCE
         )
@@ -363,9 +367,31 @@ class AMoCv4:
             if self._has_edge_between(subj_node, obj_node):
                 continue
 
-            edge = self._add_edge(subj_node, obj_node, edge_label, self.edge_forget)
-            if edge:
-                added.append(edge)
+            # 1. Create or reuse relation node
+            relation_node = self.graph.add_or_get_node(
+                lemmas=[edge_label],
+                actual_text=edge_label,
+                node_type=NodeType.RELATION,
+                node_source=NodeSource.INFERENCE_BASED,
+            )
+            # 2. Structural edges
+            edge1 = self._add_edge(
+                subj_node,
+                relation_node,
+                "agent_of",
+                self.edge_forget,
+            )
+            edge2 = self._add_edge(
+                relation_node,
+                obj_node,
+                "target_of",
+                self.edge_forget,
+            )
+            # 3. Track added edges (for reactivation bookkeeping)
+            if edge1:
+                added.append(edge1)
+            if edge2:
+                added.append(edge2)
         return added
 
     def _passes_attachment_constraint(
@@ -377,11 +403,17 @@ class AMoCv4:
         graph_active_nodes: List[Node],
         graph_active_edge_nodes: Optional[set[Node]] = None,
     ) -> bool:
-        # If the graph is empty, allow seeding (first edges bootstrap the graph)
+        # 1. Bootstrap: allow first edges
         if not self.graph.nodes:
             return True
 
-        # Canonicalize and get lemma keys
+        # 2. If strict mode is ON:
+        #    do NOT reject here — let _add_edge enforce connectivity
+        if self.strict_attachament_constraint:
+            return True
+
+        # 3. Permissive mode (legacy behavior):
+        #    require that at least one endpoint touches memory
         subject = canonicalize_node_text(self.spacy_nlp, subject)
         obj = canonicalize_node_text(self.spacy_nlp, obj)
 
@@ -391,41 +423,16 @@ class AMoCv4:
         subj_key = _lemma_key(subject)
         obj_key = _lemma_key(obj)
 
-        # Check memory connection (used in permissive mode)
         memory_lemma_keys = {tuple(n.lemmas) for n in self.graph.nodes}
-        touches_memory = subj_key in memory_lemma_keys or obj_key in memory_lemma_keys
 
-        # PERMISSIVE MODE: only require memory connection
-        if not self.strict_attachament_constraint:
-            return touches_memory
-
-        # STRICT MODE: enforce structural connectivity guarantee
-        # Build the attachable set: nodes that can be endpoints of new edges
-        active_edge_nodes = graph_active_edge_nodes or set()
-        attachable_nodes: set[Node] = (
-            set(current_sentence_nodes)  # Explicit: always attachable
-            | set(graph_active_nodes)  # Carry-over: active neighborhood
-            | active_edge_nodes  # Nodes with active edges
-            | self._anchor_nodes  # Anchors: connectivity guarantors
-        )
-
-        # Build lemma key sets for efficient lookup
-        attachable_lemma_keys = {tuple(n.lemmas) for n in attachable_nodes}
-        sentence_lemma_keys = {tuple(n.lemmas) for n in current_sentence_nodes}
-
-        # At least one endpoint must be in the attachable set
-        subj_attachable = (
-            subj_key in attachable_lemma_keys
-            or subj_key in sentence_lemma_keys
+        touches_memory = (
+            subj_key in memory_lemma_keys
+            or obj_key in memory_lemma_keys
             or subject in current_sentence_words
-        )
-        obj_attachable = (
-            obj_key in attachable_lemma_keys
-            or obj_key in sentence_lemma_keys
             or obj in current_sentence_words
         )
 
-        return subj_attachable or obj_attachable
+        return touches_memory
 
     def _add_edge(
         self,
@@ -437,31 +444,32 @@ class AMoCv4:
     ) -> Optional[Edge]:
         # STRICT MODE: enforce structural connectivity guarantee
         if self.strict_attachament_constraint and self.graph.edges:
-            # Build the current main component
+            # Build undirected view of current graph
             G = nx.Graph()
             for e in self.graph.edges:
                 G.add_edge(e.source_node, e.dest_node)
 
-            # Find the main component (containing anchor nodes)
+            # Find main component (prefer one containing anchors)
             main_component: set[Node] = set()
             for comp in nx.connected_components(G):
                 if any(n in self._anchor_nodes for n in comp):
-                    main_component |= comp
+                    main_component = set(comp)
+                    break
 
-            # If no anchor-containing component, use largest component
+            # Fallback: largest component
             if not main_component and G.number_of_nodes() > 0:
-                main_component = max(nx.connected_components(G), key=len)
+                main_component = set(max(nx.connected_components(G), key=len))
 
-            # Build the attachable set: structural guarantee of connectivity
+            # Nodes allowed to attach new edges
             attachable = (
                 main_component
                 | self._anchor_nodes
                 | getattr(self, "_explicit_nodes_current_sentence", set())
             )
 
-            # At least one endpoint must be attachable
+            # HARD GUARD: at least one endpoint must be attachable
             if source_node not in attachable and dest_node not in attachable:
-                return None
+                return None  # ← THIS is the missing enforcement
 
         use_sentence = (
             created_at_sentence
@@ -516,6 +524,8 @@ class AMoCv4:
         for edge in self.graph.edges:
             if only_active and not edge.active:
                 continue
+            if edge.label in {STRUCTURAL_AGENT_EDGE, STRUCTURAL_TARGET_EDGE}:
+                continue
             if not edge.label or not str(edge.label).strip():
                 continue
             if edge.source_node == edge.dest_node:
@@ -528,6 +538,45 @@ class AMoCv4:
                 )
             )
         return triplets
+
+    def _reconstruct_semantic_triplets(
+        self,
+        *,
+        only_active: bool = False,
+        restrict_nodes: Optional[set[Node]] = None,
+    ):
+        trips = []
+
+        for rel_node in self.graph.nodes:
+            if rel_node.node_type != NodeType.RELATION:
+                continue
+
+            agents = []
+            targets = []
+
+            for e in rel_node.edges:
+                if only_active and not e.active:
+                    continue
+
+                if e.label == STRUCTURAL_AGENT_EDGE and e.dest_node == rel_node:
+                    agents.append(e.source_node)
+
+                elif e.label == STRUCTURAL_TARGET_EDGE and e.source_node == rel_node:
+                    targets.append(e.dest_node)
+
+            for a in agents:
+                for t in targets:
+                    if restrict_nodes is not None:
+                        if a not in restrict_nodes or t not in restrict_nodes:
+                            continue
+                    trips.append(
+                        (
+                            a.get_text_representer(),
+                            rel_node.get_text_representer(),
+                            t.get_text_representer(),
+                        )
+                    )
+        return trips
 
     # Step 5 from paper - only explicit nodes from the current sentence stay active
     def _restrict_active_to_current_explicit(self, explicit_nodes: List[Node]) -> None:
@@ -701,12 +750,19 @@ class AMoCv4:
             return lemma
         return None
 
-    def _has_edge_between(self, a: Node, b: Node) -> bool:
-        for edge in self.graph.edges:
-            if (edge.source_node == a and edge.dest_node == b) or (
-                edge.source_node == b and edge.dest_node == a
-            ):
-                return True
+    def _has_edge_between(
+        self, a: Node, b: Node, relation_lemma: Optional[str] = None
+    ) -> bool:
+        for e1 in a.edges:
+            mid = e1.dest_node if e1.source_node == a else e1.source_node
+            if mid.node_type != NodeType.RELATION:
+                continue
+            if relation_lemma and relation_lemma not in mid.lemmas:
+                continue
+            for e2 in mid.edges:
+                other = e2.dest_node if e2.source_node == mid else e2.source_node
+                if other == b:
+                    return True
         return False
 
     def _find_node_by_text(
@@ -947,15 +1003,27 @@ class AMoCv4:
                 prev_sentences.append(resolved_text)
                 self.init_graph(sent)
 
+                # phrase concepts - old code
+                phrase_nodes = self.get_phrase_level_concepts(sent)
+
                 (
                     current_sentence_text_based_nodes,
                     current_sentence_text_based_words,
                 ) = self.get_senteces_text_based_nodes(
                     [sent], create_unexistent_nodes=True
                 )
-                self._explicit_nodes_current_sentence = set(
+
+                # union them as explicit nodes
+                self._explicit_nodes_current_sentence = set(phrase_nodes) | set(
                     current_sentence_text_based_nodes
                 )
+
+                self._explicit_nodes_current_sentence = {
+                    n
+                    for n in self._explicit_nodes_current_sentence
+                    if n.node_source == NodeSource.TEXT_BASED
+                }
+
                 # Populate _anchor_nodes from first sentence's explicit nodes
                 # to ensure connectivity checks have a valid anchor set
                 self._anchor_nodes = set(current_sentence_text_based_nodes)
@@ -972,7 +1040,7 @@ class AMoCv4:
                 # Enforce connectivity for first sentence - remove any disconnected edges
                 self._enforce_graph_connectivity()
                 self._restrict_active_to_current_explicit(
-                    current_sentence_text_based_nodes
+                    list(self._explicit_nodes_current_sentence)
                 )
                 self.graph.set_nodes_score_based_on_distance_from_active_nodes(
                     current_sentence_text_based_nodes
@@ -984,14 +1052,25 @@ class AMoCv4:
                 if len(prev_sentences) > self.context_length:
                     prev_sentences.pop(0)
 
+                # phrase level nodes
+                phrase_nodes = self.get_phrase_level_concepts(current_sentence)
+
                 current_sentence_text_based_nodes, current_sentence_text_based_words = (
                     self.get_senteces_text_based_nodes(
                         [current_sentence], create_unexistent_nodes=True
                     )
                 )
-                self._explicit_nodes_current_sentence = set(
+
+                # union phrase-level + explicit nodes
+                self._explicit_nodes_current_sentence = set(phrase_nodes) | set(
                     current_sentence_text_based_nodes
                 )
+
+                self._explicit_nodes_current_sentence = {
+                    n
+                    for n in self._explicit_nodes_current_sentence
+                    if n.node_source == NodeSource.TEXT_BASED
+                }
 
                 current_all_text = resolved_text
                 # Step 3: build active subgraph using only explicit (text-based) nodes.
@@ -1111,14 +1190,34 @@ class AMoCv4:
                     if tuple(dest_node.lemmas) in sentence_lemma_keys:
                         dest_node.node_source = NodeSource.TEXT_BASED
 
-                    potential_new_edge = self._add_edge(
-                        source_node, dest_node, edge_label, self.edge_forget
+                    # 1. Create or reuse relation node
+                    relation_node = self.graph.add_or_get_node(
+                        lemmas=[edge_label],
+                        actual_text=edge_label,
+                        node_type=NodeType.RELATION,
+                        node_source=NodeSource.INFERENCE_BASED,
                     )
-                    if potential_new_edge:
-                        added_edges.append(potential_new_edge)
-                        # to revert
-                        self._explicit_nodes_current_sentence.add(source_node)
-                        self._explicit_nodes_current_sentence.add(dest_node)
+
+                    # 2. Structural edges
+                    edge1 = self._add_edge(
+                        source_node,
+                        relation_node,
+                        "agent_of",
+                        self.edge_forget,
+                    )
+
+                    edge2 = self._add_edge(
+                        relation_node,
+                        dest_node,
+                        "target_of",
+                        self.edge_forget,
+                    )
+
+                    self._explicit_nodes_current_sentence = {
+                        n
+                        for n in self._explicit_nodes_current_sentence
+                        if n.node_source == NodeSource.TEXT_BASED
+                    }
 
                 # infer new relationships logic...
                 inferred_concept_relationships, inferred_property_relationships = (
@@ -1178,7 +1277,7 @@ class AMoCv4:
                     added_edges,
                 )
                 self._restrict_active_to_current_explicit(
-                    current_sentence_text_based_nodes
+                    list(self._explicit_nodes_current_sentence)
                 )
                 self.graph.set_nodes_score_based_on_distance_from_active_nodes(
                     current_sentence_text_based_nodes
@@ -1212,7 +1311,7 @@ class AMoCv4:
             # - Only edges where BOTH endpoints are active are included
             # - The graph is guaranteed connected (or empty)
             per_sentence_view = self._build_per_sentence_view(
-                explicit_nodes=current_sentence_text_based_nodes,
+                explicit_nodes=list(self._explicit_nodes_current_sentence),
                 sentence_index=sentence_id,
             )
 
@@ -1344,11 +1443,18 @@ class AMoCv4:
             if plot_after_each_sentence:
                 # Active (salience) view - use per-sentence view for clean isolation
                 # This guarantees only edges with BOTH endpoints active are shown
-                active_triplets = (
-                    self._per_sentence_view.get_triplets()
+                active_nodes = (
+                    set(self._per_sentence_view.explicit_nodes)
+                    | set(self._per_sentence_view.carryover_nodes)
                     if self._per_sentence_view is not None
-                    else self._graph_to_triplets(self.active_graph)
+                    else None
                 )
+
+                active_triplets = self._reconstruct_semantic_triplets(
+                    only_active=True,
+                    restrict_nodes=active_nodes,
+                )
+
                 active_edge_pairs = (
                     {
                         (
@@ -1387,8 +1493,8 @@ class AMoCv4:
                     only_active=False,
                     largest_component_only=largest_component_only,
                     mode="sentence_cumulative",
-                    triplets_override=self._cumulative_triplets_upto(
-                        self._current_sentence_index
+                    triplets_override=self._reconstruct_semantic_triplets(
+                        only_active=False
                     ),
                     active_edges={
                         (
@@ -1401,25 +1507,24 @@ class AMoCv4:
                 )
 
             # Capture triplets for this sentence (all edges, with current active flag)
-            for edge in self.graph.edges:
-                intro = self._triplet_intro.get(
-                    (
-                        edge.source_node.get_text_representer(),
-                        edge.label,
-                        edge.dest_node.get_text_representer(),
-                    ),
-                    edge.created_at_sentence if edge.created_at_sentence else -1,
-                )
+            # Capture semantic triplets for this sentence (relation-node reconstruction)
+            current_nodes = (
+                self._explicit_nodes_current_sentence
+                | self._get_nodes_with_active_edges()
+            )
+            for subj, rel, obj in self._reconstruct_semantic_triplets(
+                only_active=False, restrict_nodes=current_nodes
+            ):
                 self._sentence_triplets.append(
                     (
                         self._current_sentence_index,
                         original_text,
-                        edge.source_node.get_text_representer(),
-                        edge.label,
-                        edge.dest_node.get_text_representer(),
-                        edge.active,
-                        True,  # anchor_kept
-                        int(intro),
+                        subj,
+                        rel,
+                        obj,
+                        True,  # semantic triplet exists
+                        True,  # anchor_kept (semantic-level; structural handled elsewhere)
+                        self._triplet_intro.get((subj, rel, obj), -1),
                     )
                 )
             for sent_idx, sent_text, subj, rel, obj in getattr(
@@ -1491,16 +1596,15 @@ class AMoCv4:
         logging.info("AMoC activation matrix:\n%s", matrix.to_string())
         # Collect final active triplets: edges active after the final sentence.
         final_sentence_idx = getattr(self, "_current_sentence_index", None)
+
         final_triplets = []
-        for edge in self.graph.edges:
-            if not edge.active:
-                continue
-            subj = edge.source_node.get_text_representer()
-            obj = edge.dest_node.get_text_representer()
-            rel = edge.label
-            intro = self._triplet_intro.get((subj, rel, obj))
-            if intro is None:
-                intro = edge.created_at_sentence if edge.created_at_sentence else -1
+        current_nodes = (
+            self._explicit_nodes_current_sentence | self._get_nodes_with_active_edges()
+        )
+        for subj, rel, obj in self._reconstruct_semantic_triplets(
+            only_active=True, restrict_nodes=current_nodes
+        ):
+            intro = self._triplet_intro.get((subj, rel, obj), -1)
             final_triplets.append(
                 (
                     subj,
@@ -1508,18 +1612,13 @@ class AMoCv4:
                     obj,
                     True,
                     int(intro),
-                    int(final_sentence_idx) if final_sentence_idx is not None else -1,
+                    int(final_sentence_idx) if final_sentence_idx else -1,
                 )
             )
 
         cumulative_triplets = []
-        for edge in self.graph.edges:
-            subj = edge.source_node.get_text_representer()
-            obj = edge.dest_node.get_text_representer()
-            rel = edge.label
-            intro = self._triplet_intro.get((subj, rel, obj))
-            if intro is None:
-                intro = edge.created_at_sentence if edge.created_at_sentence else -1
+        for subj, rel, obj in self._reconstruct_semantic_triplets():
+            intro = self._triplet_intro.get((subj, rel, obj), -1)
             cumulative_triplets.append((subj, rel, obj, int(intro)))
 
         return final_triplets, self._sentence_triplets, cumulative_triplets
@@ -1767,7 +1866,24 @@ class AMoCv4:
                 continue
             if source_node is None or dest_node is None:
                 continue
-            self._add_edge(source_node, dest_node, edge_label, self.edge_forget)
+            relation_node = self.graph.add_or_get_node(
+                lemmas=[edge_label],
+                actual_text=edge_label,
+                node_type=NodeType.RELATION,
+                node_source=NodeSource.INFERENCE_BASED,
+            )
+            self._add_edge(
+                source_node,
+                relation_node,
+                STRUCTURAL_AGENT_EDGE,
+                self.edge_forget,
+            )
+            self._add_edge(
+                relation_node,
+                dest_node,
+                STRUCTURAL_TARGET_EDGE,
+                self.edge_forget,
+            )
 
     def add_inferred_relationships_to_graph_step_0(
         self,
@@ -1845,7 +1961,24 @@ class AMoCv4:
                     NodeSource.INFERENCE_BASED,
                 )
 
-            self._add_edge(source_node, dest_node, edge_label, self.edge_forget)
+            relation_node = self.graph.add_or_get_node(
+                lemmas=[edge_label],
+                actual_text=edge_label,
+                node_type=NodeType.RELATION,
+                node_source=NodeSource.INFERENCE_BASED,
+            )
+            self._add_edge(
+                source_node,
+                relation_node,
+                STRUCTURAL_AGENT_EDGE,
+                self.edge_forget,
+            )
+            self._add_edge(
+                relation_node,
+                dest_node,
+                STRUCTURAL_TARGET_EDGE,
+                self.edge_forget,
+            )
 
     def add_inferred_relationships_to_graph(
         self,
@@ -1925,11 +2058,28 @@ class AMoCv4:
                     NodeSource.INFERENCE_BASED,
                 )
 
-            potential_edge = self._add_edge(
-                source_node, dest_node, edge_label, self.edge_forget
+            relation_node = self.graph.add_or_get_node(
+                lemmas=[edge_label],
+                actual_text=edge_label,
+                node_type=NodeType.RELATION,
+                node_source=NodeSource.INFERENCE_BASED,
             )
-            if potential_edge:
-                added_edges.append(potential_edge)
+            potential_edge_1 = self._add_edge(
+                source_node,
+                relation_node,
+                STRUCTURAL_AGENT_EDGE,
+                self.edge_forget,
+            )
+            potential_edge_2 = self._add_edge(
+                relation_node,
+                dest_node,
+                STRUCTURAL_TARGET_EDGE,
+                self.edge_forget,
+            )
+            if potential_edge_1:
+                added_edges.append(potential_edge_1)
+            if potential_edge_2:
+                added_edges.append(potential_edge_2)
 
     def get_node_from_text(
         self,
@@ -1988,6 +2138,29 @@ class AMoCv4:
         return (token.pos_ in pos_list) and (
             token.lemma_ not in self.spacy_nlp.Defaults.stop_words
         )
+
+    def get_phrase_level_concepts(self, sent):
+        phrase_nodes = []
+
+        # spaCy noun chunks = adjective + noun phrases
+        for chunk in sent.noun_chunks:
+            # Old rule: phrase is a concept if it contains a noun
+            if any(tok.pos_ in {"NOUN", "PROPN"} for tok in chunk):
+                # Remove determiners, keep content
+                lemmas = [tok.lemma_ for tok in chunk if tok.pos_ != "DET"]
+
+                surface = chunk.text
+
+                node = self.graph.add_or_get_node(
+                    lemmas=lemmas,
+                    actual_text=surface,
+                    node_type=NodeType.CONCEPT,
+                    node_source=NodeSource.TEXT_BASED,
+                )
+
+                phrase_nodes.append(node)
+
+        return phrase_nodes
 
     # get the explicit node
     def get_senteces_text_based_nodes(
