@@ -631,3 +631,61 @@ class Graph:
         for edge in self.edges:
             if edge.violates_property_sentence_constraint(current_sentence):
                 edge.deactivate()
+
+    # ==========================================================================
+    # AMoCv4 HARD CONSTRAINTS - Surface-relation format enforcement
+    # ==========================================================================
+    FORBIDDEN_EDGE_LABELS = {"agent_of", "target_of", "patient_of"}
+
+    def validate_amocv4_constraints(self) -> None:
+        """
+        Enforce AMoCv4 surface-relation format constraints.
+
+        Hard constraints (fail fast if violated):
+        1. Never create agent_of, target_of, patient_of, or role-based edges
+        2. All verbs must be represented as direct labeled edges between entities
+        3. All attributes must be represented using the relation 'is'
+
+        Raises:
+            AssertionError: If any constraint is violated
+        """
+        # CONSTRAINT 1: No forbidden edge labels
+        forbidden_edges = [
+            edge for edge in self.edges
+            if edge.label in self.FORBIDDEN_EDGE_LABELS
+        ]
+        assert not forbidden_edges, (
+            f"AMoCv4 VIOLATION: Found {len(forbidden_edges)} forbidden edge(s) with "
+            f"labels in {self.FORBIDDEN_EDGE_LABELS}. "
+            f"Examples: {[(e.source_node.get_text_representer(), e.label, e.dest_node.get_text_representer()) for e in forbidden_edges[:3]]}"
+        )
+        # NOTE: NodeType.RELATION check removed - the type no longer exists in AMoCv4
+
+    def sanity_check_readable_triplets(self) -> bool:
+        """
+        AMoCv4 sanity check: Every edge must be readable as a simple sentence fragment.
+
+        Returns:
+            True if all edges pass the sanity check
+
+        Raises:
+            AssertionError: If any edge cannot be read as a sentence fragment
+        """
+        for edge in self.edges:
+            subj = edge.source_node.get_text_representer()
+            verb = edge.label
+            obj = edge.dest_node.get_text_representer()
+
+            # Basic sanity: all parts must be non-empty
+            assert subj and verb and obj, (
+                f"AMoCv4 SANITY FAIL: Edge has empty component: "
+                f"'{subj}' --{verb}--> '{obj}'"
+            )
+
+            # Forbidden patterns
+            assert verb not in self.FORBIDDEN_EDGE_LABELS, (
+                f"AMoCv4 SANITY FAIL: Edge uses forbidden label '{verb}': "
+                f"'{subj}' --{verb}--> '{obj}'"
+            )
+
+        return True

@@ -62,8 +62,6 @@ class AMoCv4:
     ENFORCE_ATTACHMENT_CONSTRAINT = False
     ACTIVATION_MAX_DISTANCE = 2
     RELATION_BLACKLIST = {"describes", "is_at_stake"}
-    STRUCTURAL_AGENT_EDGE = "agent_of"
-    STRUCTURAL_TARGET_EDGE = "target_of"
 
     def __init__(
         self,
@@ -183,8 +181,7 @@ class AMoCv4:
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
-                if neighbor.node_type == NodeType.RELATION:
-                    continue
+                # NOTE: NodeType.RELATION check removed - type no longer exists in AMoCv4
                 if neighbor in distances:
                     continue
                 distances[neighbor] = dist + 1
@@ -206,7 +203,8 @@ class AMoCv4:
                 return 5.0
             return val
 
-        explicit_set = {n for n in explicit_nodes if n.node_type != NodeType.RELATION}
+        # NOTE: NodeType.RELATION filter removed - type no longer exists in AMoCv4
+        explicit_set = set(explicit_nodes)
         distances = self._distances_from_sources_active_edges(
             explicit_set, max_distance=self.ACTIVATION_MAX_DISTANCE
         )
@@ -373,31 +371,17 @@ class AMoCv4:
             if self._has_edge_between(subj_node, obj_node):
                 continue
 
-            # 1. Create or reuse relation node
-            relation_node = self.graph.add_or_get_node(
-                lemmas=[edge_label],
-                actual_text=edge_label,
-                node_type=NodeType.RELATION,
-                node_source=NodeSource.INFERENCE_BASED,
-            )
-            # 2. Structural edges
-            edge1 = self._add_edge(
+            # AMoCv4 surface-relation format: direct edge between entities
+            # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
+            edge = self._add_edge(
                 subj_node,
-                relation_node,
-                "agent_of",
-                self.edge_forget,
-            )
-            edge2 = self._add_edge(
-                relation_node,
                 obj_node,
-                "target_of",
+                edge_label,
                 self.edge_forget,
             )
-            # 3. Track added edges (for reactivation bookkeeping)
-            if edge1:
-                added.append(edge1)
-            if edge2:
-                added.append(edge2)
+            # Track added edge (for reactivation bookkeeping)
+            if edge:
+                added.append(edge)
         return added
 
     def _passes_attachment_constraint(
@@ -536,12 +520,12 @@ class AMoCv4:
     def _graph_edges_to_triplets(
         self, only_active: bool = False
     ) -> List[Tuple[str, str, str]]:
+        """AMoCv4 surface-relation format: edges ARE the triplets."""
         triplets: List[Tuple[str, str, str]] = []
         for edge in self.graph.edges:
             if only_active and not edge.active:
                 continue
-            if edge.label in {self.STRUCTURAL_AGENT_EDGE, self.STRUCTURAL_TARGET_EDGE}:
-                continue
+            # NOTE: agent_of/target_of check removed - AMoCv4 format never creates these
             if not edge.label or not str(edge.label).strip():
                 continue
             if edge.source_node == edge.dest_node:
@@ -561,39 +545,29 @@ class AMoCv4:
         only_active: bool = False,
         restrict_nodes: Optional[set[Node]] = None,
     ):
+        """
+        AMoCv4 surface-relation format: edges ARE the semantic triplets.
+        No reconstruction needed - just filter and return.
+        """
         trips = []
 
-        for rel_node in self.graph.nodes:
-            if rel_node.node_type != NodeType.RELATION:
+        for edge in self.graph.edges:
+            if only_active and not edge.active:
                 continue
-
-            agents = []
-            targets = []
-
-            for e in rel_node.edges:
-                if only_active and not e.active:
+            if not edge.label or not edge.label.strip():
+                continue
+            if edge.source_node == edge.dest_node:
+                continue
+            if restrict_nodes is not None:
+                if edge.source_node not in restrict_nodes or edge.dest_node not in restrict_nodes:
                     continue
-
-                if e.label == self.STRUCTURAL_AGENT_EDGE and e.dest_node == rel_node:
-                    agents.append(e.source_node)
-
-                elif (
-                    e.label == self.STRUCTURAL_TARGET_EDGE and e.source_node == rel_node
-                ):
-                    targets.append(e.dest_node)
-
-            for a in agents:
-                for t in targets:
-                    if restrict_nodes is not None:
-                        if a not in restrict_nodes or t not in restrict_nodes:
-                            continue
-                    trips.append(
-                        (
-                            a.get_text_representer(),
-                            rel_node.get_text_representer(),
-                            t.get_text_representer(),
-                        )
-                    )
+            trips.append(
+                (
+                    edge.source_node.get_text_representer(),
+                    edge.label,
+                    edge.dest_node.get_text_representer(),
+                )
+            )
         return trips
 
     # Step 5 from paper - only explicit nodes from the current sentence stay active
@@ -850,15 +824,16 @@ class AMoCv4:
     def _has_edge_between(
         self, a: Node, b: Node, relation_lemma: Optional[str] = None
     ) -> bool:
-        for e1 in a.edges:
-            mid = e1.dest_node if e1.source_node == a else e1.source_node
-            if mid.node_type != NodeType.RELATION:
-                continue
-            if relation_lemma and relation_lemma not in mid.lemmas:
-                continue
-            for e2 in mid.edges:
-                other = e2.dest_node if e2.source_node == mid else e2.source_node
-                if other == b:
+        """
+        AMoCv4 surface-relation format: check for direct edge between nodes.
+        """
+        for edge in a.edges:
+            other = edge.dest_node if edge.source_node == a else edge.source_node
+            if other == b:
+                if relation_lemma is None:
+                    return True
+                # Check if edge label matches the relation lemma
+                if relation_lemma in edge.label.lower():
                     return True
         return False
 
@@ -920,7 +895,7 @@ class AMoCv4:
         # Route per-sentence plots into mode-specific subfolders for clarity.
         plot_dir = output_dir
         if output_dir and mode in {"sentence_active", "sentence_cumulative"}:
-            subdir = "active" if mode == "sentence_active" else "cummulative"
+            subdir = "active" if mode == "sentence_active" else "cumulative"
             plot_dir = os.path.join(output_dir, subdir)
         triplets = (
             triplets_override
@@ -967,11 +942,7 @@ class AMoCv4:
             # ------------------------------------------------------------------------
 
             saved_path = plot_amoc_triplets(
-                triplets=(
-                    self._graph_edges_to_triplets(only_active=True)
-                    if only_active
-                    else triplets
-                ),
+                triplets=triplets,
                 persona=self.persona,
                 model_name=self.model_name,
                 age=age_for_filename,
@@ -1313,26 +1284,12 @@ class AMoCv4:
                     if tuple(dest_node.lemmas) in sentence_lemma_keys:
                         dest_node.node_source = NodeSource.TEXT_BASED
 
-                    # 1. Create or reuse relation node
-                    relation_node = self.graph.add_or_get_node(
-                        lemmas=[edge_label],
-                        actual_text=edge_label,
-                        node_type=NodeType.RELATION,
-                        node_source=NodeSource.INFERENCE_BASED,
-                    )
-
-                    # 2. Structural edges
-                    edge1 = self._add_edge(
+                    # AMoCv4 surface-relation format: direct edge between entities
+                    # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
+                    edge = self._add_edge(
                         source_node,
-                        relation_node,
-                        "agent_of",
-                        self.edge_forget,
-                    )
-
-                    edge2 = self._add_edge(
-                        relation_node,
                         dest_node,
-                        "target_of",
+                        edge_label,
                         self.edge_forget,
                     )
 
@@ -1612,36 +1569,18 @@ class AMoCv4:
                     restrict_nodes=active_nodes,
                 )
 
-                # Build active edge pairs for SEMANTIC triplets (agent -> target)
-                # The triplets are (agent_text, relation_text, target_text), so we need
-                # to match (agent_text, target_text) pairs, not structural edge pairs
+                # AMoCv4 surface-relation format: edges ARE the semantic triplets
+                # Just collect active edge pairs directly
                 active_edge_pairs = set()
-                for rel_node in self.graph.nodes:
-                    if rel_node.node_type != NodeType.RELATION:
+                for edge in self.graph.edges:
+                    if not edge.active:
                         continue
-                    agents = []
-                    targets = []
-                    for e in rel_node.edges:
-                        if not e.active:
-                            continue
-                        if (
-                            e.label == self.STRUCTURAL_AGENT_EDGE
-                            and e.dest_node == rel_node
-                        ):
-                            agents.append(e.source_node)
-                        elif (
-                            e.label == self.STRUCTURAL_TARGET_EDGE
-                            and e.source_node == rel_node
-                        ):
-                            targets.append(e.dest_node)
-                    for a in agents:
-                        for t in targets:
-                            active_edge_pairs.add(
-                                (
-                                    a.get_text_representer(),
-                                    t.get_text_representer(),
-                                )
-                            )
+                    active_edge_pairs.add(
+                        (
+                            edge.source_node.get_text_representer(),
+                            edge.dest_node.get_text_representer(),
+                        )
+                    )
 
                 self._plot_graph_snapshot(
                     sentence_index=i,
@@ -1658,34 +1597,17 @@ class AMoCv4:
                     active_edges=active_edge_pairs,
                 )
                 # Cumulative memory view
-                # Build cumulative active edge pairs for SEMANTIC triplets
+                # AMoCv4 surface-relation format: edges ARE the semantic triplets
                 cumulative_active_pairs = set()
-                for rel_node in self.graph.nodes:
-                    if rel_node.node_type != NodeType.RELATION:
+                for edge in self.graph.edges:
+                    if not edge.active:
                         continue
-                    agents = []
-                    targets = []
-                    for e in rel_node.edges:
-                        if not e.active:
-                            continue
-                        if (
-                            e.label == self.STRUCTURAL_AGENT_EDGE
-                            and e.dest_node == rel_node
-                        ):
-                            agents.append(e.source_node)
-                        elif (
-                            e.label == self.STRUCTURAL_TARGET_EDGE
-                            and e.source_node == rel_node
-                        ):
-                            targets.append(e.dest_node)
-                    for a in agents:
-                        for t in targets:
-                            cumulative_active_pairs.add(
-                                (
-                                    a.get_text_representer(),
-                                    t.get_text_representer(),
-                                )
-                            )
+                    cumulative_active_pairs.add(
+                        (
+                            edge.source_node.get_text_representer(),
+                            edge.dest_node.get_text_representer(),
+                        )
+                    )
 
                 self._plot_graph_snapshot(
                     sentence_index=i,
@@ -1818,6 +1740,11 @@ class AMoCv4:
         for subj, rel, obj in self._reconstruct_semantic_triplets():
             intro = self._triplet_intro.get((subj, rel, obj), -1)
             cumulative_triplets.append((subj, rel, obj, int(intro)))
+
+        # AMoCv4 HARD CONSTRAINTS - Validate surface-relation format
+        # Fail fast if any forbidden patterns exist
+        self.graph.validate_amocv4_constraints()
+        self.graph.sanity_check_readable_triplets()
 
         return final_triplets, self._sentence_triplets, cumulative_triplets
 
@@ -2075,22 +2002,12 @@ class AMoCv4:
                 continue
             if source_node is None or dest_node is None:
                 continue
-            relation_node = self.graph.add_or_get_node(
-                lemmas=[edge_label],
-                actual_text=edge_label,
-                node_type=NodeType.RELATION,
-                node_source=NodeSource.INFERENCE_BASED,
-            )
+            # AMoCv4 surface-relation format: direct edge between entities
+            # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
             self._add_edge(
                 source_node,
-                relation_node,
-                self.STRUCTURAL_AGENT_EDGE,
-                self.edge_forget,
-            )
-            self._add_edge(
-                relation_node,
                 dest_node,
-                self.STRUCTURAL_TARGET_EDGE,
+                edge_label,
                 self.edge_forget,
             )
 
@@ -2171,26 +2088,16 @@ class AMoCv4:
                     NodeSource.INFERENCE_BASED,
                 )
 
-            relation_node = self.graph.add_or_get_node(
-                lemmas=[edge_label],
-                actual_text=edge_label,
-                node_type=NodeType.RELATION,
-                node_source=NodeSource.INFERENCE_BASED,
-            )
             if node_type == NodeType.PROPERTY:
                 # PROPERTY edges only allowed in origin sentence
                 if self._current_sentence_index != 1:
                     continue
+            # AMoCv4 surface-relation format: direct edge between entities
+            # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
             self._add_edge(
                 source_node,
-                relation_node,
-                self.STRUCTURAL_AGENT_EDGE,
-                self.edge_forget,
-            )
-            self._add_edge(
-                relation_node,
                 dest_node,
-                self.STRUCTURAL_TARGET_EDGE,
+                edge_label,
                 self.edge_forget,
             )
 
@@ -2273,32 +2180,20 @@ class AMoCv4:
                     NodeSource.INFERENCE_BASED,
                 )
 
-            relation_node = self.graph.add_or_get_node(
-                lemmas=[edge_label],
-                actual_text=edge_label,
-                node_type=NodeType.RELATION,
-                node_source=NodeSource.INFERENCE_BASED,
-            )
             if node_type == NodeType.PROPERTY:
                 # PROPERTY edges only allowed in origin sentence
                 if self._current_sentence_index != 1:
                     continue
-            potential_edge_1 = self._add_edge(
+            # AMoCv4 surface-relation format: direct edge between entities
+            # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
+            potential_edge = self._add_edge(
                 source_node,
-                relation_node,
-                self.STRUCTURAL_AGENT_EDGE,
-                self.edge_forget,
-            )
-            potential_edge_2 = self._add_edge(
-                relation_node,
                 dest_node,
-                self.STRUCTURAL_TARGET_EDGE,
+                edge_label,
                 self.edge_forget,
             )
-            if potential_edge_1:
-                added_edges.append(potential_edge_1)
-            if potential_edge_2:
-                added_edges.append(potential_edge_2)
+            if potential_edge:
+                added_edges.append(potential_edge)
 
     def get_node_from_text(
         self,

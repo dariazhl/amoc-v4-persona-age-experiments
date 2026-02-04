@@ -11,7 +11,8 @@ from typing import List, Dict
 class NodeType(Enum):
     CONCEPT = 1
     PROPERTY = 2
-    RELATION = 3
+    # NOTE: RELATION type removed for AMoCv4 surface-relation format compliance.
+    # Verbs are represented as direct labeled edges, not intermediate nodes.
 
 
 class NodeSource(Enum):
@@ -33,10 +34,7 @@ class Node:
         self.actual_texts: Dict[str, int] = {actual_text_l: 1}
         self.node_type: NodeType = node_type
         self.node_source: NodeSource = node_source
-        if node_type == NodeType.RELATION:
-            self.score = 0
-        else:
-            self.score = score
+        self.score = score
         self.edges: List["Edge"] = []
 
     def __eq__(self, other: "Node") -> bool:
