@@ -395,7 +395,28 @@ class Graph:
 
         return label
 
-    def bfs_from_activated_nodes(self, activated_nodes: List[Node]) -> Dict[Node, int]:
+    def bfs_from_activated_nodes(
+        self,
+        activated_nodes: List[Node],
+        direction: str = "both",
+    ) -> Dict[Node, int]:
+        """
+        Compute shortest-path distances from activated nodes via BFS.
+
+        Args:
+            activated_nodes: Starting nodes for BFS
+            direction: How to traverse edges:
+                - "both": Follow edges in both directions (default, for distance computation)
+                - "outgoing": Only follow edges where current node is source (A → B)
+                - "incoming": Only follow edges where current node is dest (A ← B)
+
+        Returns:
+            Dict mapping each reachable node to its distance from nearest activated node.
+
+        Per AMoC v4: Activation distance is computed bidirectionally (semantic edges
+        connect concepts regardless of direction). Direction matters for meaning,
+        not for activation propagation.
+        """
         distances = {}
         queue = deque([(node, 0) for node in activated_nodes])
         while queue:
@@ -403,12 +424,28 @@ class Graph:
             if curr_node not in distances:
                 distances[curr_node] = curr_distance
                 for edge in curr_node.edges:
-                    if edge.active:
+                    if not edge.active:
+                        continue
+
+                    # Determine which neighbor to visit based on direction mode
+                    next_node = None
+                    if direction == "both":
+                        # Bidirectional: follow edge regardless of direction
                         next_node = (
                             edge.dest_node
                             if edge.source_node == curr_node
                             else edge.source_node
                         )
+                    elif direction == "outgoing":
+                        # Only follow if current node is the source
+                        if edge.source_node == curr_node:
+                            next_node = edge.dest_node
+                    elif direction == "incoming":
+                        # Only follow if current node is the destination
+                        if edge.dest_node == curr_node:
+                            next_node = edge.source_node
+
+                    if next_node is not None:
                         queue.append((next_node, curr_distance + 1))
         return distances
 

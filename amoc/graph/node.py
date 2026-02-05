@@ -51,7 +51,19 @@ class Node:
             self.actual_texts[actual_text_l] = 1
 
     def get_text_representer(self) -> str:
-        return max(self.actual_texts, key=self.actual_texts.get)
+        """
+        Get the most frequent text representation for this node.
+
+        Per AMoC v4 paper: Node labels are single lowercase lemmas like "country",
+        NEVER "the country". This method strips leading determiners as a safety net.
+        """
+        DETERMINERS = {"the", "a", "an"}
+        best = max(self.actual_texts, key=self.actual_texts.get)
+        # Safety: strip leading determiners (should already be canonicalized, but ensure)
+        words = best.split()
+        while words and words[0].lower() in DETERMINERS:
+            words.pop(0)
+        return " ".join(words) if words else best
 
     def __str__(self) -> str:
         return f"{self.get_text_representer()} ({self.node_type.name}, {self.node_source.name}, {self.score})"

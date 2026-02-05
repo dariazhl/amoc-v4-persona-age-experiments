@@ -195,6 +195,11 @@ class Edge:
         )
 
     def is_similar(self, other_edge: "Edge") -> bool:
+        """
+        Check if two edges have similar labels.
+        NOTE: This only checks label similarity, NOT direction.
+        Use matches_directed() for full direction-aware comparison.
+        """
         a = (self.label or "").strip().lower()
         b = (other_edge.label or "").strip().lower()
         if a == b:
@@ -206,6 +211,62 @@ class Edge:
                 return True
 
         return SequenceMatcher(None, a, b).ratio() >= self.similarity_threshold
+
+    def matches_directed(self, other_edge: "Edge") -> bool:
+        """
+        Check if this edge matches another edge considering DIRECTION.
+
+        Per AMoC v4 paper: (A → B, label) ≠ (B → A, label)
+        Two edges match only if:
+        1. Same source node
+        2. Same destination node
+        3. Similar labels
+        """
+        same_direction = (
+            self.source_node == other_edge.source_node
+            and self.dest_node == other_edge.dest_node
+        )
+        return same_direction and self.is_similar(other_edge)
+
+    def is_inverse_of(self, other_edge: "Edge") -> bool:
+        """
+        Check if this edge is the directional inverse of another edge.
+
+        (A → B) is inverse of (B → A) if labels are similar.
+        This is used to detect and canonicalize passive voice constructions.
+        """
+        opposite_direction = (
+            self.source_node == other_edge.dest_node
+            and self.dest_node == other_edge.source_node
+        )
+        return opposite_direction and self.is_similar(other_edge)
+
+    def get_directed_key(self) -> tuple:
+        """
+        Get a unique key for this directed edge.
+
+        Returns (source_lemmas, dest_lemmas, label) tuple that uniquely
+        identifies this directed edge. Used for deduplication.
+        """
+        src_key = tuple(self.source_node.lemmas)
+        dst_key = tuple(self.dest_node.lemmas)
+        label_key = (self.label or "").strip().lower()
+        return (src_key, dst_key, label_key)
+
+    def get_undirected_key(self) -> tuple:
+        """
+        Get a direction-agnostic key for this edge.
+
+        Returns a tuple where node order is normalized (sorted by lemmas).
+        Used to find edges between the same pair of nodes regardless of direction.
+        """
+        src_key = tuple(self.source_node.lemmas)
+        dst_key = tuple(self.dest_node.lemmas)
+        label_key = (self.label or "").strip().lower()
+        # Sort to make order-independent
+        if src_key <= dst_key:
+            return (src_key, dst_key, label_key)
+        return (dst_key, src_key, label_key)
 
     def __eq__(self, other: "Edge") -> bool:
         return self is other

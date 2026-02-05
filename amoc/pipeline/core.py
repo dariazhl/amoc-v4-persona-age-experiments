@@ -36,27 +36,14 @@ class AMoCv4:
     # NOTE: Simple "is" and "be" are KEPT because the AMoC paper uses them
     # (e.g., "knight - is - brave" in Figure 7)
     GENERIC_RELATION_LABELS = {
-        "has_property",
-        "is_type_of",
-        "is_part_of",
-        "related_to",
-        "has_attribute",
-        "is_a",
         "appears",
         "contains",
         "includes",
         "include",
         "contain",
-        "part_of",
-        "associated_with",
-        "is associated with",
-        "|eot id|",
         "refers to",
-        "is an",
-        "is mentioned in",
         "involves",
-        "has_relation",
-        "relates_to",
+        "describes",
     }
 
     ENFORCE_ATTACHMENT_CONSTRAINT = False
@@ -559,7 +546,10 @@ class AMoCv4:
             if edge.source_node == edge.dest_node:
                 continue
             if restrict_nodes is not None:
-                if edge.source_node not in restrict_nodes or edge.dest_node not in restrict_nodes:
+                if (
+                    edge.source_node not in restrict_nodes
+                    or edge.dest_node not in restrict_nodes
+                ):
                     continue
             trips.append(
                 (
@@ -781,6 +771,83 @@ class AMoCv4:
 
         return False
 
+    def _canonicalize_edge_direction(
+        self, label: str, source_text: str, dest_text: str
+    ) -> tuple[str, str, str, bool]:
+        """
+        Canonicalize edge direction by detecting and normalizing passive voice.
+
+        Per AMoC v4 paper: edges are directed semantic propositions.
+        - Active voice: subject → object (e.g., "dragon kidnapped princess")
+        - Passive voice must be normalized to active: swap direction
+
+        Args:
+            label: The edge label (verb phrase)
+            source_text: Current source node text
+            dest_text: Current destination node text
+
+        Returns:
+            (normalized_label, final_source, final_dest, was_swapped)
+
+        Examples:
+            "was kidnapped by" → ("kidnapped", dest, source, True)
+            "is threatened by" → ("threatens", dest, source, True)
+            "kidnapped" → ("kidnapped", source, dest, False)
+        """
+        if not label or not isinstance(label, str):
+            return (label, source_text, dest_text, False)
+
+        label_lower = label.strip().lower()
+
+        # Passive voice patterns that require direction swap
+        # Pattern: "was/is/were Xed by" → "X" with swapped direction
+        passive_patterns = [
+            (r"^(was|is|were|been|being)\s+(\w+ed)\s+by$", 2),  # "was kidnapped by"
+            (r"^(was|is|were|been|being)\s+(\w+en)\s+by$", 2),  # "was taken by"
+            (r"^(was|is|were|been|being)\s+(\w+)\s+by$", 2),    # "was hurt by"
+        ]
+
+        for pattern, verb_group in passive_patterns:
+            match = re.match(pattern, label_lower)
+            if match:
+                # Extract the main verb and convert to active voice
+                verb = match.group(verb_group)
+                # Swap source and dest to reflect active voice direction
+                logging.debug(
+                    "[EdgeDirection] Passive detected: %r → active: %r (swapped)",
+                    label_lower,
+                    verb,
+                )
+                return (verb, dest_text, source_text, True)
+
+        # Inverse relation patterns (semantic inverses)
+        # These describe the same relation from opposite perspectives
+        inverse_mappings = {
+            "is threatened by": ("threatens", True),
+            "was threatened by": ("threatens", True),
+            "is loved by": ("loves", True),
+            "was loved by": ("loves", True),
+            "is hated by": ("hates", True),
+            "was hated by": ("hates", True),
+            "is owned by": ("owns", True),
+            "was owned by": ("owns", True),
+            "belongs to": ("owns", True),  # "X belongs to Y" → "Y owns X"
+        }
+
+        if label_lower in inverse_mappings:
+            active_label, should_swap = inverse_mappings[label_lower]
+            if should_swap:
+                logging.debug(
+                    "[EdgeDirection] Inverse relation: %r → %r (swapped)",
+                    label_lower,
+                    active_label,
+                )
+                return (active_label, dest_text, source_text, True)
+            return (active_label, source_text, dest_text, False)
+
+        # No passive/inverse detected - keep original direction
+        return (label, source_text, dest_text, False)
+
     def _normalize_edge_label(self, label: str) -> str:
         """
         Normalize edge label to preserve full verb phrases per AMoC v4 paper.
@@ -841,7 +908,14 @@ class AMoCv4:
             elif pos == "ADJ":
                 # Only include adjective if it follows a copula (is, was, were, be)
                 # Check if previous token was a copula
-                if phrase_tokens and phrase_tokens[-1] in {"is", "was", "were", "be", "been", "being"}:
+                if phrase_tokens and phrase_tokens[-1] in {
+                    "is",
+                    "was",
+                    "were",
+                    "be",
+                    "been",
+                    "being",
+                }:
                     phrase_tokens.append(tok.text.lower())
 
         if not has_verb:
@@ -1229,7 +1303,8 @@ class AMoCv4:
                 # The gradual decay mechanism is: non-relevant edges call fade_away()
                 # which decrements forget_score. When forget_score reaches 0, edge becomes inactive.
                 logging.debug(
-                    "[Activation] Sentence %d: edges carry forward, will fade if not relevant", i
+                    "[Activation] Sentence %d: edges carry forward, will fade if not relevant",
+                    i,
                 )
 
                 self.graph.enforce_property_sentence_constraints(
@@ -1371,6 +1446,26 @@ class AMoCv4:
                     if source_node is None or dest_node is None:
                         continue
 
+                    # DIRECTION CANONICALIZATION: Normalize passive voice to active
+                    # Per AMoC v4: edges are directed semantic propositions (subject → object)
+                    canon_label, canon_src, canon_dst, was_swapped = (
+                        self._canonicalize_edge_direction(
+                            edge_label,
+                            source_node.get_text_representer(),
+                            dest_node.get_text_representer(),
+                        )
+                    )
+                    if was_swapped:
+                        # Swap nodes to reflect active voice direction
+                        source_node, dest_node = dest_node, source_node
+                        edge_label = canon_label
+                        logging.debug(
+                            "[EdgeDirection] Swapped direction: %s → %s (label: %s)",
+                            canon_src,
+                            canon_dst,
+                            edge_label,
+                        )
+
                     if tuple(source_node.lemmas) in sentence_lemma_keys:
                         source_node.node_source = NodeSource.TEXT_BASED
                     if tuple(dest_node.lemmas) in sentence_lemma_keys:
@@ -1378,6 +1473,7 @@ class AMoCv4:
 
                     # AMoCv4 surface-relation format: direct edge between entities
                     # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
+                    # Direction: source (subject/agent) → dest (object/patient)
                     edge = self._add_edge(
                         source_node,
                         dest_node,
@@ -2093,8 +2189,22 @@ class AMoCv4:
                 continue
             if source_node is None or dest_node is None:
                 continue
+
+            # DIRECTION CANONICALIZATION: Normalize passive voice to active
+            canon_label, canon_src, canon_dst, was_swapped = (
+                self._canonicalize_edge_direction(
+                    edge_label,
+                    source_node.get_text_representer(),
+                    dest_node.get_text_representer(),
+                )
+            )
+            if was_swapped:
+                source_node, dest_node = dest_node, source_node
+                edge_label = canon_label
+
             # AMoCv4 surface-relation format: direct edge between entities
             # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
+            # Direction: source (subject/agent) → dest (object/patient)
             self._add_edge(
                 source_node,
                 dest_node,
@@ -2183,8 +2293,22 @@ class AMoCv4:
                 # PROPERTY edges only allowed in origin sentence
                 if self._current_sentence_index != 1:
                     continue
+
+            # DIRECTION CANONICALIZATION: Normalize passive voice to active
+            canon_label, canon_src, canon_dst, was_swapped = (
+                self._canonicalize_edge_direction(
+                    edge_label,
+                    source_node.get_text_representer(),
+                    dest_node.get_text_representer(),
+                )
+            )
+            if was_swapped:
+                source_node, dest_node = dest_node, source_node
+                edge_label = canon_label
+
             # AMoCv4 surface-relation format: direct edge between entities
             # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
+            # Direction: source (subject/agent) → dest (object/patient)
             self._add_edge(
                 source_node,
                 dest_node,
@@ -2275,8 +2399,22 @@ class AMoCv4:
                 # PROPERTY edges only allowed in origin sentence
                 if self._current_sentence_index != 1:
                     continue
+
+            # DIRECTION CANONICALIZATION: Normalize passive voice to active
+            canon_label, canon_src, canon_dst, was_swapped = (
+                self._canonicalize_edge_direction(
+                    edge_label,
+                    source_node.get_text_representer(),
+                    dest_node.get_text_representer(),
+                )
+            )
+            if was_swapped:
+                source_node, dest_node = dest_node, source_node
+                edge_label = canon_label
+
             # AMoCv4 surface-relation format: direct edge between entities
             # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
+            # Direction: source (subject/agent) → dest (object/patient)
             potential_edge = self._add_edge(
                 source_node,
                 dest_node,
@@ -2384,7 +2522,10 @@ class AMoCv4:
 
             # Also extract adjectives as PROPERTY nodes (per paper Section 3.1)
             for tok in chunk:
-                if tok.pos_ == "ADJ" and tok.lemma_ not in self.spacy_nlp.Defaults.stop_words:
+                if (
+                    tok.pos_ == "ADJ"
+                    and tok.lemma_ not in self.spacy_nlp.Defaults.stop_words
+                ):
                     adj_lemma = tok.lemma_.lower()
                     prop_node = self.graph.add_or_get_node(
                         lemmas=[adj_lemma],
