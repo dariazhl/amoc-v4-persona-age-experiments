@@ -570,22 +570,23 @@ class AMoCv4:
             )
         return trips
 
-    # Step 5 from paper - only explicit nodes from the current sentence stay active
+    # STEP 5 from paper - HARD RESET: Only explicit nodes from current sentence are active
     def _restrict_active_to_current_explicit(self, explicit_nodes: List[Node]) -> None:
         """
-        Restrict salience, NOT activation.
-        Explicit nodes get highest salience, but
-        carry-over and connector-supported nodes remain valid.
-        """
-        explicit_set = set(explicit_nodes)
+        AMoC v4 STEP 5: Hard reset of active graph.
 
-        for node in self.graph.nodes:
-            if node in explicit_set:
-                node.score = 0
-            elif any(e.active for e in node.edges):
-                node.score = 1  # carry-over / connector-supported
-            else:
-                node.score = self.max_distance_from_active_nodes + 1
+        Per paper Section 3.1:
+        - After sentence processing, active_nodes ← explicit_nodes (current sentence only)
+        - This is a HARD RESET - no carry-over unless reactivated next sentence
+        - Activation is purely graph-theoretic: BFS distance from explicit nodes
+
+        This function delegates to set_nodes_score_based_on_distance_from_active_nodes
+        which computes shortest-path distance. Nodes with score > max_distance are inactive.
+        """
+        # CRITICAL: Per paper, this is a hard reset to ONLY explicit nodes
+        # The BFS function will compute distances from these seed nodes
+        # Nodes unreachable or beyond max_distance get score=100 (inactive)
+        self.graph.set_nodes_score_based_on_distance_from_active_nodes(explicit_nodes)
 
     def _get_nodes_with_active_edges(self) -> set[Node]:
         active_nodes: set[Node] = set()
@@ -716,65 +717,154 @@ class AMoCv4:
 
     def _is_verb_relation(self, label: str) -> bool:
         """
-        Check if a relation label is verb-based.
-        Allows VERB+ADV combinations (e.g., "ride fast", "run quickly").
-        Rejects standalone adverbs or labels with only non-verb content.
+        Check if a relation label is verb-based per AMoC v4 paper.
+
+        Per paper Figures 2-4, valid relations include:
+        - Simple verbs: "rode", "kidnapped"
+        - Verb + preposition: "rode through", "is unfamiliar with"
+        - Auxiliary + verb: "was kidnapping", "wanted to free"
+        - Copula + adjective: "is unfamiliar" (predicate adjective)
+
+        Rejects:
+        - Standalone adjectives/nouns (not verb-based)
+        - Pure adverb phrases without verbs
         """
         doc = self.spacy_nlp(label)
         has_verb = False
-        has_adv = False
-        has_invalid = False
+        has_copula = False
+        has_adj_after_copula = False
+        has_standalone_noun = False
+
+        prev_was_copula = False
 
         for tok in doc:
             if not getattr(tok, "is_alpha", False):
                 continue
-            if tok.pos_ in {"ADJ", "NOUN", "PROPN"}:
-                has_invalid = True
-            elif tok.pos_ == "ADV":
-                has_adv = True
-            elif tok.pos_ in {"VERB", "AUX"}:
-                has_verb = True
 
-        # Allow VERB+ADV combinations, reject standalone ADV or invalid POS
-        if has_invalid:
-            return False
-        if has_adv and not has_verb:
-            return False  # Standalone adverb without verb
-        return has_verb
+            pos = tok.pos_
+            lemma = tok.lemma_.lower()
+
+            # Track verbs and copulas
+            if pos in {"VERB", "AUX"}:
+                has_verb = True
+                # Check if this is a copula (be verbs)
+                if lemma in {"be", "is", "was", "were", "been", "being", "am", "are"}:
+                    has_copula = True
+                    prev_was_copula = True
+                else:
+                    prev_was_copula = False
+
+            # Allow adjectives only after copulas (predicate adjectives)
+            # e.g., "is unfamiliar" is valid
+            elif pos == "ADJ":
+                if prev_was_copula or has_copula:
+                    has_adj_after_copula = True
+                prev_was_copula = False
+
+            # Nouns in relations are problematic unless they're part of a phrase
+            elif pos in {"NOUN", "PROPN"}:
+                # Check if this is a standalone noun (not part of verb phrase)
+                # Skip this check for now - rely on context
+                has_standalone_noun = True
+                prev_was_copula = False
+
+            # Prepositions, particles, adverbs are fine as modifiers
+            elif pos in {"ADP", "PART", "ADV"}:
+                prev_was_copula = False
+
+        # Accept if has a verb
+        # Also accept copula + adjective constructions ("is unfamiliar")
+        if has_verb:
+            return True
+        if has_copula and has_adj_after_copula:
+            return True
+
+        return False
 
     def _normalize_edge_label(self, label: str) -> str:
         """
-        Normalize edge label by combining verb + adverb in proper order.
-        E.g., "fast ride" -> "ride fast", "quickly run" -> "run quickly"
+        Normalize edge label to preserve full verb phrases per AMoC v4 paper.
 
-        Returns the normalized label with verb followed by adverb(s).
+        Per paper Figures 2-4, edge labels are FULL verb phrases:
+        - "rode through" (not just "ride")
+        - "was kidnapping" (not just "kidnap")
+        - "wanted to free" (not just "want free")
+        - "is unfamiliar with" (preserves copula + adjective + preposition)
+
+        Key changes from previous implementation:
+        1. Preserve auxiliaries (was, were, is, has, had)
+        2. Preserve prepositions (through, to, from, with)
+        3. Preserve infinitive markers (to)
+        4. Keep original word order and tense
+        5. Only lowercase, don't lemmatize (to preserve "was kidnapping" not "be kidnap")
         """
         if not label or not isinstance(label, str):
             return label
 
-        doc = self.spacy_nlp(label.strip())
-        verbs = []
-        adverbs = []
-        other = []
+        label = label.strip()
+        if not label:
+            return label
+
+        doc = self.spacy_nlp(label)
+
+        # Collect tokens that form a valid verb phrase
+        # Include: VERB, AUX, ADV, ADP (prepositions), PART (particles like "to")
+        phrase_tokens = []
+        has_verb = False
 
         for tok in doc:
             if not getattr(tok, "is_alpha", False):
                 continue
-            if tok.pos_ in {"VERB", "AUX"}:
-                verbs.append(tok.lemma_)
-            elif tok.pos_ == "ADV":
-                adverbs.append(tok.text.lower())
-            else:
-                other.append(tok.text.lower())
 
-        # If we have verb(s) and adverb(s), combine them: verb + adverb
-        if verbs and adverbs:
-            return " ".join(verbs + adverbs)
-        # If only verbs, return lemmatized verb
-        if verbs:
-            return " ".join(verbs)
-        # Otherwise return original (will likely be rejected by validation)
-        return label.strip()
+            pos = tok.pos_
+
+            # Include verbs and auxiliaries (preserving tense)
+            if pos in {"VERB", "AUX"}:
+                has_verb = True
+                # Use lowercase text to preserve tense ("was" not "be")
+                phrase_tokens.append(tok.text.lower())
+
+            # Include prepositions (through, to, from, with, etc.)
+            elif pos == "ADP":
+                phrase_tokens.append(tok.text.lower())
+
+            # Include particles (infinitive "to", phrasal verb particles "up", "down")
+            elif pos == "PART":
+                phrase_tokens.append(tok.text.lower())
+
+            # Include adverbs that modify the verb
+            elif pos == "ADV":
+                phrase_tokens.append(tok.text.lower())
+
+            # Skip nouns, adjectives (except in copula constructions)
+            # For "is unfamiliar with", we need to keep the adjective
+            elif pos == "ADJ":
+                # Only include adjective if it follows a copula (is, was, were, be)
+                # Check if previous token was a copula
+                if phrase_tokens and phrase_tokens[-1] in {"is", "was", "were", "be", "been", "being"}:
+                    phrase_tokens.append(tok.text.lower())
+
+        if not has_verb:
+            # No verb found - return original label (will be rejected by validation)
+            return label
+
+        # Reject malformed labels (too short, repeated syllables, non-alphabetic noise)
+        result = " ".join(phrase_tokens)
+
+        # Detect and reject malformed labels like "beidnapap", "fckilltt"
+        if len(result) > 0:
+            # Check for repeated character sequences (sign of corruption)
+            if re.search(r"(.)\1{2,}", result):  # 3+ repeated chars
+                logging.debug("[EdgeLabel] Rejected repeated chars: %r", result)
+                return ""
+            # Check for non-word patterns (consonant clusters without vowels)
+            words = result.split()
+            for word in words:
+                if len(word) > 3 and not re.search(r"[aeiou]", word):
+                    logging.debug("[EdgeLabel] Rejected no-vowel word: %r", result)
+                    return ""
+
+        return result
 
     def _is_valid_relation_label(self, label: str) -> bool:
         # Explicitly handle None, empty string, and whitespace-only labels
@@ -1096,15 +1186,14 @@ class AMoCv4:
                 )
 
                 # union them as explicit nodes
+                # CRITICAL FIX: Explicit nodes are ALL nodes from current sentence text
+                # Do NOT filter by node_source - per AMoC paper: "explicit nodes =
+                # only nouns/adjectives present in the current sentence"
                 self._explicit_nodes_current_sentence = set(phrase_nodes) | set(
                     current_sentence_text_based_nodes
                 )
-
-                self._explicit_nodes_current_sentence = {
-                    n
-                    for n in self._explicit_nodes_current_sentence
-                    if n.node_source == NodeSource.TEXT_BASED
-                }
+                # NOTE: Removed node_source filtering - all nodes from current sentence
+                # are explicit by definition
 
                 # Populate _anchor_nodes from first sentence's explicit nodes
                 # to ensure connectivity checks have a valid anchor set
@@ -1134,11 +1223,13 @@ class AMoCv4:
                 if len(prev_sentences) > self.context_length:
                     prev_sentences.pop(0)
 
-                # ACTIVATION LOGIC: Deactivate all edges at sentence start
-                # This implements "cumulative memory, sentence-local activation"
-                self.graph.deactivate_all_edges()
+                # NOTE: Per AMoC v4 paper (old_code.py ground truth):
+                # Edges are NOT deactivated at sentence start.
+                # Instead, they remain active until faded via fade_away() in STEP 7.
+                # The gradual decay mechanism is: non-relevant edges call fade_away()
+                # which decrements forget_score. When forget_score reaches 0, edge becomes inactive.
                 logging.debug(
-                    "[Activation] Deactivated all edges at start of sentence %d", i
+                    "[Activation] Sentence %d: edges carry forward, will fade if not relevant", i
                 )
 
                 self.graph.enforce_property_sentence_constraints(
@@ -1155,15 +1246,16 @@ class AMoCv4:
                 )
 
                 # union phrase-level + explicit nodes
+                # CRITICAL FIX: Explicit nodes are ALL nodes from current sentence text
+                # Do NOT filter by node_source - a node can be explicit (mentioned in
+                # current sentence) regardless of how it was originally introduced.
+                # Per AMoC paper: "explicit nodes = only nouns/adjectives present in
+                # the current sentence"
                 self._explicit_nodes_current_sentence = set(phrase_nodes) | set(
                     current_sentence_text_based_nodes
                 )
-
-                self._explicit_nodes_current_sentence = {
-                    n
-                    for n in self._explicit_nodes_current_sentence
-                    if n.node_source == NodeSource.TEXT_BASED
-                }
+                # NOTE: Removed node_source filtering - all nodes from current sentence
+                # are explicit, even if they were originally inference-based
 
                 current_all_text = resolved_text
                 # Step 3: build active subgraph using only explicit (text-based) nodes.
@@ -1293,11 +1385,8 @@ class AMoCv4:
                         self.edge_forget,
                     )
 
-                    self._explicit_nodes_current_sentence = {
-                        n
-                        for n in self._explicit_nodes_current_sentence
-                        if n.node_source == NodeSource.TEXT_BASED
-                    }
+                    # NOTE: Removed node_source filtering - explicit nodes are determined
+                    # by presence in sentence text, not by how they were introduced
 
                 # infer new relationships logic...
                 inferred_concept_relationships, inferred_property_relationships = (
@@ -1921,13 +2010,15 @@ class AMoCv4:
                 G.add_node(n)
             return nx.is_connected(G) if G.number_of_nodes() > 1 else True
 
-        # Non-salient memory edges (AMoC-consistent):
-        # Keep edges in memory but mark them inactive.
+        # AMoC v4 STEP 7: Edge decay via fade_away()
+        # Per paper Section 3.1:
+        # - Non-relevant edges fade away (forget_score decrements)
+        # - When forget_score reaches 0, edge becomes inactive
         for j in range(1, len(edges) + 1):
             edge = edges[j - 1]
             if j not in selected and edges[j - 1] not in newly_added_edges:
-                # Use proper deactivation
-                edge.deactivate()
+                # Paper-faithful: use fade_away() for gradual decay
+                edge.fade_away()
 
                 if not _active_subgraph_connected():
                     # Keep as connectivity bridge - mark as CONNECTOR, not reactivated
@@ -2254,25 +2345,54 @@ class AMoCv4:
         )
 
     def get_phrase_level_concepts(self, sent):
+        """
+        Extract phrase-level concepts from a sentence per AMoC v4 paper.
+
+        Per paper Figures 2-4:
+        - Node labels are single lowercase lemmas (e.g., "country" not "the country")
+        - Determiners are NEVER included in node labels
+        - Each noun becomes a CONCEPT node, each adjective a PROPERTY node
+        """
         phrase_nodes = []
 
         # spaCy noun chunks = adjective + noun phrases
         for chunk in sent.noun_chunks:
-            # Old rule: phrase is a concept if it contains a noun
-            if any(tok.pos_ in {"NOUN", "PROPN"} for tok in chunk):
-                # Remove determiners, keep content
-                lemmas = [tok.lemma_ for tok in chunk if tok.pos_ != "DET"]
+            # Extract the head noun from the chunk (ignore determiners completely)
+            head_noun = None
+            for tok in chunk:
+                if tok.pos_ in {"NOUN", "PROPN"}:
+                    head_noun = tok
+                    break
 
-                surface = chunk.text
+            if head_noun is None:
+                continue
 
-                node = self.graph.add_or_get_node(
-                    lemmas=lemmas,
-                    actual_text=surface,
-                    node_type=NodeType.CONCEPT,
-                    node_source=NodeSource.TEXT_BASED,
-                )
+            # CRITICAL FIX: Use single lemma as node key, not full phrase
+            # Per AMoC paper: nodes are "country" not "the country"
+            lemma = head_noun.lemma_.lower()
 
-                phrase_nodes.append(node)
+            # actual_text should also be the clean lemma (no determiners)
+            # This ensures get_text_representer() returns the clean label
+            node = self.graph.add_or_get_node(
+                lemmas=[lemma],
+                actual_text=lemma,
+                node_type=NodeType.CONCEPT,
+                node_source=NodeSource.TEXT_BASED,
+            )
+
+            phrase_nodes.append(node)
+
+            # Also extract adjectives as PROPERTY nodes (per paper Section 3.1)
+            for tok in chunk:
+                if tok.pos_ == "ADJ" and tok.lemma_ not in self.spacy_nlp.Defaults.stop_words:
+                    adj_lemma = tok.lemma_.lower()
+                    prop_node = self.graph.add_or_get_node(
+                        lemmas=[adj_lemma],
+                        actual_text=adj_lemma,
+                        node_type=NodeType.PROPERTY,
+                        node_source=NodeSource.TEXT_BASED,
+                    )
+                    phrase_nodes.append(prop_node)
 
         return phrase_nodes
 
@@ -2280,32 +2400,49 @@ class AMoCv4:
     def get_senteces_text_based_nodes(
         self, previous_sentences: List[Span], create_unexistent_nodes: bool = True
     ) -> Tuple[List[Node], List[str]]:
+        """
+        Extract explicit text-based nodes from sentences per AMoC v4 paper.
+
+        Per paper Figures 2-4:
+        - Node labels are single lowercase lemmas
+        - Every noun/adjective in the current sentence becomes an explicit node
+        - Returns (nodes, words) where words are the canonical lemma forms
+
+        CRITICAL: This function determines what appears as "Explicit this sentence"
+        in the plot titles. Every content word in the sentence should produce an
+        explicit node.
+        """
         text_based_nodes = []
         text_based_words = []
         for sent in previous_sentences:
             content_words = get_content_words_from_sent(self.spacy_nlp, sent)
             for word in content_words:
-                node = self.graph.get_node([word.lemma_])
+                # CRITICAL FIX: Use lowercase lemma as canonical form
+                # Per AMoC paper: node labels are "knight" not "Knight" or "the knight"
+                lemma = word.lemma_.lower()
+
+                node = self.graph.get_node([lemma])
                 if node is not None:
-                    node.add_actual_text(word.text)
+                    # Update actual_text with lemma (not surface form)
+                    node.add_actual_text(lemma)
                     text_based_nodes.append(node)
-                    text_based_words.append(word.text)
+                    text_based_words.append(lemma)
                 else:
                     if create_unexistent_nodes:
                         if word.pos_ == "ADJ":
                             new_node = self.graph.add_or_get_node(
-                                [word.lemma_],
-                                word.text,
+                                [lemma],
+                                lemma,  # Use lemma as actual_text (not surface form)
                                 NodeType.PROPERTY,
                                 NodeSource.TEXT_BASED,
                             )
                         else:
                             new_node = self.graph.add_or_get_node(
-                                [word.lemma_],
-                                word.text,
+                                [lemma],
+                                lemma,  # Use lemma as actual_text (not surface form)
                                 NodeType.CONCEPT,
                                 NodeSource.TEXT_BASED,
                             )
                         text_based_nodes.append(new_node)
-                        text_based_words.append(word.text)
+                        text_based_words.append(lemma)
         return text_based_nodes, text_based_words

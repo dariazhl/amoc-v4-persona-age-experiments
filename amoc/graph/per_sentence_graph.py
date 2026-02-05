@@ -231,16 +231,23 @@ class PerSentenceGraphBuilder:
         This constructs the final view with all invariants enforced:
         - Only active nodes (explicit + carry-over) are included
         - Only edges with BOTH endpoints active are included
+        - Property edges only included in their origin sentence (per AMoC paper)
         - The result is guaranteed connected (or empty)
         """
         self._sentence_index = sentence_index
         active_nodes = self._explicit_nodes | self._carryover_nodes
 
         # Filter edges: only those where BOTH endpoints are active
+        # CRITICAL: Also enforce property edge sentence constraints
         active_edges: Set["Edge"] = set()
         for edge in self.cumulative_graph.edges:
             if not edge.active:
                 continue
+            # Property edges must only be active in their origin sentence
+            # Per AMoC paper: properties attach via "is" edges in their sentence only
+            if edge.is_property_edge():
+                if edge.violates_property_sentence_constraint(sentence_index):
+                    continue
             if edge.source_node in active_nodes and edge.dest_node in active_nodes:
                 active_edges.add(edge)
 

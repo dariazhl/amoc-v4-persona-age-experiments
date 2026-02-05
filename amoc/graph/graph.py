@@ -237,21 +237,27 @@ class Graph:
                 edge.activation_score -= 1
 
     def get_active_subgraph(
-        self, activation_threshold: int = 0
+        self,
+        activation_threshold: int = 0,
+        current_sentence: Optional[int] = None,
     ) -> Tuple[Set[Node], Set[Edge]]:
         """
         Get the active subgraph for layout computation.
 
-        Only active structure shapes layout - inactive nodes/edges
-        must not exert layout forces.
+        Per AMoC v4 paper:
+        - Active graph = explicit nodes + nodes within MaxDistance
+        - Property edges are INCLUDED if they don't violate sentence constraint
+        - Properties attach via "is" edges (e.g., "princess - is - beautiful")
 
         Args:
             activation_threshold: Minimum activation_score for edge inclusion.
                                   0 means only currently active edges.
+            current_sentence: Current sentence index for property edge validation.
+                             If None, property edges are excluded.
 
         Returns:
             Tuple of (active_nodes, active_edges) where:
-            - active_edges: Edges that are active AND have activation_score > threshold
+            - active_edges: Edges that are active AND meet threshold
             - active_nodes: Nodes connected by active_edges
         """
         active_edges: Set[Edge] = set()
@@ -260,8 +266,17 @@ class Graph:
         for edge in self.edges:
             if not edge.active:
                 continue
+
+            # CRITICAL FIX: Include property edges when they're in their origin sentence
+            # Per AMoC paper (Figures 2-4): properties attach via "is" edges
             if edge.is_property_edge():
-                continue
+                # Property edges only active in their origin sentence
+                if current_sentence is None:
+                    continue  # Can't validate - skip property edges
+                if edge.violates_property_sentence_constraint(current_sentence):
+                    continue  # Not in origin sentence - skip
+                # Property edge is valid - include it
+
             if edge.activation_score > activation_threshold:
                 active_edges.add(edge)
                 active_nodes.add(edge.source_node)
@@ -295,17 +310,24 @@ class Graph:
     def canonicalize_relation_label(label: str) -> str:
         """
         Canonicalize relation labels before edge creation.
-        Removes parser prefixes/artifacts and normalizes format.
+        Removes clear parser artifacts while preserving valid verb phrases.
 
-        Per AMoC v4 paper: Forbidden examples like 'tkidnap', 'bprotecte', 'fckilltt'
-        must be cleaned up - these are parser artifacts with single-letter prefixes
-        or trailing artifacts.
+        Per AMoC v4 paper (Figures 2-4), edge labels should be full verb phrases:
+        - "rode through"
+        - "was kidnapping"
+        - "wanted to free"
+        - "is unfamiliar with"
+
+        This function is CONSERVATIVE - it only removes clear artifacts.
+        The more aggressive normalization happens in _normalize_edge_label().
         """
         if not label or not isinstance(label, str):
             return ""
 
         # Strip whitespace
         label = label.strip()
+        if not label:
+            return ""
 
         # Remove common parser prefixes/artifacts (colon-based)
         prefixes_to_remove = [
@@ -331,32 +353,47 @@ class Graph:
             if label.lower().startswith(prefix.lower()):
                 label = label[len(prefix) :]
 
-        # Remove single-letter prefixes that look like parser artifacts
-        # Examples: tkidnap -> kidnap, bprotecte -> protecte, fckilltt -> ckilltt
-        # Only remove if the prefix is a single lowercase letter followed by a word
-        label = re.sub(r"^[a-z](?=[a-z]{3,})", "", label.lower())
-
-        # Remove trailing letter artifacts (doubled consonants at end)
-        # Examples: killtt -> kill
-        label = re.sub(r"([a-z])\1+$", r"\1", label)  # Remove repeated final letters
-
-        # Remove trailing 'e' only after certain consonant clusters (parser artifacts)
-        # Examples: protecte -> protect, but keep: have, make, give, take
-        # Only remove if preceded by 'ct', 'pt', 'nd' etc. (common artifact patterns)
-        label = re.sub(r"(ct|pt|nd|lt|rt)e$", r"\1", label)
-
-        # Remove trailing punctuation and artifacts
-        label = re.sub(r"[^\w\s]$", "", label)
+        # Remove trailing punctuation
+        label = re.sub(r"[^\w\s]+$", "", label)
         label = label.strip()
 
-        # Normalize whitespace
+        # Normalize whitespace (but preserve spaces between words)
         label = re.sub(r"\s+", " ", label)
 
-        # Final cleanup: reject if result is too short (likely artifact)
+        # CONSERVATIVE: Only reject clearly malformed labels
+        # - Labels with 3+ repeated characters (like "killtt" -> corruption)
+        # - Labels that are pure noise (no vowels in any word)
+        if len(label) > 0:
+            # Detect repeated character corruption
+            if re.search(r"(.)\1{2,}", label):
+                # Clean up repeated trailing consonants: "kidnapp" -> "kidnap"
+                label = re.sub(r"([bcdfghjklmnpqrstvwxyz])\1+$", r"\1", label)
+
+            # Check each word for vowel presence (skip very short words)
+            words = label.split()
+            cleaned_words = []
+            for word in words:
+                # Skip words that are too short to check
+                if len(word) <= 2:
+                    cleaned_words.append(word.lower())
+                    continue
+                # Reject words without vowels (corruption)
+                if not re.search(r"[aeiou]", word.lower()):
+                    continue
+                cleaned_words.append(word.lower())
+
+            if not cleaned_words:
+                return ""
+            label = " ".join(cleaned_words)
+
+        # Final: lowercase and return
+        label = label.lower().strip()
+
+        # Minimum length check (allow 2-char verbs like "be", "go", "do")
         if len(label) < 2:
             return ""
 
-        return label.lower()
+        return label
 
     def bfs_from_activated_nodes(self, activated_nodes: List[Node]) -> Dict[Node, int]:
         distances = {}

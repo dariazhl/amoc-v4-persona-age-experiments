@@ -20,12 +20,18 @@ RADIUS_GROWTH_MIN = 1.8  # Minimum allowed radius growth factor
 RADIUS_GROWTH_MAX = 2.2  # Maximum allowed radius growth factor
 
 TRIVIAL_NODE_TEXTS = {
+    # Determiners - should be stripped at node creation but filter here as safety
+    "the",
+    "a",
+    "an",
+    # Conjunctions
     "and",
     "or",
     "but",
     "nor",
     "so",
     "yet",
+    # Prepositions (these shouldn't be node labels per AMoC paper)
     "through",
     "with",
     "without",

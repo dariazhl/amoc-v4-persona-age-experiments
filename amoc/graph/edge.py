@@ -84,7 +84,17 @@ class Edge:
         self.activation_role: Optional[str] = None
 
     def fade_away(self) -> None:
-        pass
+        """
+        AMoC v4 STEP 7: Edge decay mechanism.
+
+        Per paper Section 3.1:
+        - Decrement forget_score by 1
+        - When forget_score reaches 0, edge becomes inactive
+        - This implements the gradual "fading" of memory traces
+        """
+        self.forget_score -= 1
+        if self.forget_score <= 0:
+            self.active = False
 
     def reset_for_sentence_start(self) -> None:
         """
