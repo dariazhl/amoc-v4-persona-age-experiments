@@ -543,13 +543,160 @@ class Graph:
             s += str(edge) + "\n"
         return s
 
+    # ==========================================================================
+    # TASK 2: CONNECTIVITY ENFORCEMENT LOGIC
+    # ==========================================================================
+    # This section contains all connectivity-related methods, isolated for clarity.
+    #
+    # CONNECTIVITY FLOW:
+    # 1. check_active_connectivity() - Detect if graph is disconnected
+    # 2. get_disconnected_components() - Get components that need connecting
+    # 3. ensure_active_connectivity() - Try to connect using existing edges
+    # 4. If still disconnected -> caller triggers secondary LLM call
+    # ==========================================================================
+
+    def check_active_connectivity(self) -> bool:
+        """
+        TASK 2: Check if the active graph is connected.
+
+        This is the primary method for connectivity detection.
+        Should be called BEFORE plotting to determine if intervention is needed.
+
+        Returns:
+            True if connected (or empty/single node), False if disconnected
+        """
+        import networkx as nx
+
+        active_edges = [e for e in self.edges if e.active]
+        if not active_edges:
+            return True  # Empty graph is trivially connected
+
+        G_active = nx.Graph()
+        for edge in active_edges:
+            G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
+
+        if G_active.number_of_nodes() <= 1:
+            return True
+
+        return nx.is_connected(G_active)
+
+    def get_disconnected_components(
+        self,
+        focus_nodes: Set[Node],
+    ) -> Tuple[List[Set[Node]], int]:
+        """
+        TASK 2: Get disconnected components and identify the focus component.
+
+        Use this to determine which nodes need connecting and to which component.
+        This information can be passed to a secondary LLM call.
+
+        Args:
+            focus_nodes: Nodes that should be in the "main" component
+
+        Returns:
+            Tuple of:
+            - List of connected components (each is a set of nodes)
+            - Index of the focus component (containing focus_nodes)
+
+        If graph is connected, returns ([all_nodes], 0).
+        """
+        import networkx as nx
+
+        active_edges = [e for e in self.edges if e.active]
+        if not active_edges:
+            return ([], -1)
+
+        G_active = nx.Graph()
+        for edge in active_edges:
+            G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
+
+        if G_active.number_of_nodes() <= 1:
+            return ([set(G_active.nodes())], 0) if G_active.number_of_nodes() == 1 else ([], -1)
+
+        components = [set(c) for c in nx.connected_components(G_active)]
+
+        if len(components) <= 1:
+            return (components, 0)
+
+        # Find which component contains focus nodes
+        focus_component_idx = 0
+        for idx, comp in enumerate(components):
+            if any(n in comp for n in focus_nodes):
+                focus_component_idx = idx
+                break
+
+        return (components, focus_component_idx)
+
+    def get_nodes_needing_connection(
+        self,
+        focus_nodes: Set[Node],
+    ) -> List[Tuple[Node, Node]]:
+        """
+        TASK 2: Get pairs of nodes that need edges to restore connectivity.
+
+        For each disconnected component, returns a representative node pair
+        (one node from the component, one from the focus component) that
+        could be connected by a new edge.
+
+        Use this to prepare the secondary LLM call prompt.
+
+        Args:
+            focus_nodes: Nodes that define the "main" component
+
+        Returns:
+            List of (isolated_node, focus_node) pairs that need connecting.
+            Empty list if graph is already connected.
+        """
+        components, focus_idx = self.get_disconnected_components(focus_nodes)
+
+        if len(components) <= 1:
+            return []  # Already connected
+
+        focus_comp = components[focus_idx]
+        pairs_needing_connection = []
+
+        for idx, comp in enumerate(components):
+            if idx == focus_idx:
+                continue
+
+            # Pick a representative node from each side
+            # Prefer CONCEPT nodes over PROPERTY nodes
+            from amoc.graph.node import NodeType
+
+            isolated_node = None
+            for n in comp:
+                if n.node_type == NodeType.CONCEPT:
+                    isolated_node = n
+                    break
+            if isolated_node is None:
+                isolated_node = next(iter(comp))
+
+            focus_node = None
+            for n in focus_comp:
+                if n in focus_nodes and n.node_type == NodeType.CONCEPT:
+                    focus_node = n
+                    break
+            if focus_node is None:
+                for n in focus_comp:
+                    if n.node_type == NodeType.CONCEPT:
+                        focus_node = n
+                        break
+            if focus_node is None:
+                focus_node = next(iter(focus_comp))
+
+            pairs_needing_connection.append((isolated_node, focus_node))
+
+        return pairs_needing_connection
+
     def ensure_active_connectivity(
         self,
         focus_nodes: Set[Node],
         carryover_focus_nodes: Optional[Set[Node]] = None,
     ) -> Set[Edge]:
         """
-        Ensure the active graph remains connected per AMoC v4 paper requirements.
+        TASK 2: Ensure the active graph remains connected.
+
+        STEP 1 of connectivity enforcement: Try to connect using EXISTING edges.
 
         If the active graph becomes disconnected:
         1. Identify focus nodes (explicit entities in current sentence + carry-over focus)
@@ -562,11 +709,17 @@ class Graph:
         - Must already exist in the cumulative graph
         - Must NOT be PROPERTY edges
         - Must NOT be counted as asserted or reactivated
-        - Must NOT increase activation scores
-        - Must NOT be eligible for inference
+        - Do NOT increase activation scores
+        - Are NOT eligible for inference
         - Exist only to preserve structural connectivity
 
-        Returns the set of edges promoted as connectors.
+        IMPORTANT: If this method returns an empty set but the graph is still
+        disconnected (check with check_active_connectivity()), caller should
+        trigger a secondary LLM call to create new edges. Use
+        get_nodes_needing_connection() to get the pairs that need connecting.
+
+        Returns:
+            Set of edges promoted as connectors.
         """
         import networkx as nx
 
@@ -636,6 +789,8 @@ class Graph:
                         continue
 
             if best_path is None:
+                # No path exists in cumulative graph - caller needs to use
+                # secondary LLM call to create new edges
                 continue
 
             # Promote edges along the path as connectors
@@ -667,7 +822,8 @@ class Graph:
                     if e.active:
                         G_check.add_edge(e.source_node, e.dest_node)
                 if G_check.number_of_nodes() > 1:
-                    assert nx.is_connected(G_check), "Active graph is disconnected"
+                    # Note: might still be disconnected if no path was found
+                    pass
 
         return promoted_connectors
 

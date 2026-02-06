@@ -83,6 +83,23 @@ class Edge:
         # Default is None - mark_as_* methods set the appropriate role
         self.activation_role: Optional[str] = None
 
+        # ==========================================================================
+        # TASK 2: FORCED CONNECTIVITY EDGES
+        # ==========================================================================
+        # forced_connection: True if this edge was created by secondary LLM call
+        # specifically to restore graph connectivity when no existing edges could
+        # connect disconnected components.
+        #
+        # KEY DISTINCTION:
+        # - connector edges: EXISTING edges promoted to active for connectivity
+        # - forced_connection edges: NEW edges created by LLM to fix disconnection
+        #
+        # These edges are marked so they can be:
+        # 1. Distinguished in debugging/analysis
+        # 2. Styled differently in plots if needed
+        # 3. Excluded from certain semantic analyses
+        self.forced_connection: bool = False
+
     def fade_away(self) -> None:
         """
         AMoC v4 STEP 7: Edge decay mechanism.
@@ -172,6 +189,40 @@ class Edge:
     def is_connector(self) -> bool:
         """Check if this edge is serving as a connector (for connectivity only)."""
         return self.activation_role == "connector"
+
+    def mark_as_forced_connection(self) -> None:
+        """
+        TASK 2: Mark edge as a forced connectivity edge.
+
+        Forced connection edges are NEW edges created by a secondary LLM call
+        specifically to restore graph connectivity when:
+        1. The graph becomes disconnected
+        2. No existing edges in the cumulative graph can connect components
+
+        Unlike connector edges (which promote existing edges), forced connection
+        edges are semantically new and created with minimal semantic commitment.
+
+        Properties:
+        - Created by secondary LLM call for connectivity only
+        - Marked for traceability and debugging
+        - Can be styled differently in visualizations
+        - Should be excluded from certain semantic analyses
+        """
+        self.forced_connection = True
+        self.active = True
+        self.asserted_this_sentence = True  # It IS newly asserted
+        self.reactivated_this_sentence = False
+        self.activation_role = "asserted"  # Semantically it's a new edge
+        self.activation_score = self.DEFAULT_ACTIVATION_SCORE
+
+    def is_forced_connection(self) -> bool:
+        """
+        TASK 2: Check if this edge was created by secondary LLM call for connectivity.
+
+        Returns True if this edge was force-created to connect disconnected
+        components, rather than being inferred from semantic content.
+        """
+        return self.forced_connection
 
     def is_asserted(self) -> bool:
         """Check if this edge was asserted this sentence."""

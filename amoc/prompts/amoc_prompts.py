@@ -399,3 +399,40 @@ Respond in this exact JSON format:
     "label": "relationship_label",
     "explanation": "Brief explanation of the connection"
 }}"""
+
+# ==========================================================================
+# TASK 2: FORCED CONNECTIVITY EDGE PROMPT
+# ==========================================================================
+# This prompt is used ONLY when:
+# 1. The active graph has become disconnected
+# 2. No existing edges in cumulative memory can restore connectivity
+# 3. A secondary LLM call is needed to create a minimal connecting edge
+#
+# The goal is to create semantically reasonable edges with minimal commitment.
+# ==========================================================================
+
+FORCED_CONNECTIVITY_EDGE_PROMPT = """I am building a knowledge graph from a story. The graph has become disconnected - there are concepts that should be connected but are not.
+
+I need to connect these two concepts to restore graph connectivity:
+- Concept A: "{node_a}"
+- Concept B: "{node_b}"
+
+Here is the story context so far:
+"{story_context}"
+
+Here is the current sentence being processed:
+"{current_sentence}"
+
+Based on the story context and current sentence, provide a SHORT relationship label (1-3 words, preferably a verb or verb phrase) that reasonably connects "{node_a}" to "{node_b}".
+
+IMPORTANT GUIDELINES:
+1. The relationship should be semantically reasonable given the story context
+2. Prefer generic but meaningful relationships like "relates to", "involves", "concerns" if no specific connection is clear
+3. Do NOT invent specific actions or events not supported by the text
+4. Keep it simple - this is a connectivity bridge, not a primary semantic relationship
+
+Respond in this exact JSON format:
+{{
+    "label": "relationship_label",
+    "explanation": "Brief explanation (1 sentence) of why this connection is reasonable"
+}}"""

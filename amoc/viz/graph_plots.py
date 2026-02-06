@@ -508,6 +508,70 @@ def _compute_label_position_curved(
     return b_x, b_y
 
 
+def _compute_label_angle_along_edge(
+    pos: Dict[str, Tuple[float, float]],
+    u: str,
+    v: str,
+    curvature: float,
+    t: float = 0.5,
+) -> float:
+    """
+    Compute the rotation angle (in degrees) for a label to align along the edge direction.
+
+    TASK 1 FIX: Labels must be placed ALONG the edge, not perpendicular.
+    This computes the tangent angle of the Bezier curve at parameter t.
+
+    For quadratic Bezier at t=0.5, the tangent is parallel to the chord (P2-P0).
+    For other t values, we compute the actual Bezier derivative.
+
+    The angle is normalized to keep text readable:
+    - If angle would make text upside-down (90° < angle < 270°), flip by 180°
+    - This ensures text is always readable left-to-right or slightly tilted
+
+    Returns angle in degrees suitable for matplotlib text rotation.
+    """
+    x1, y1 = pos[u]
+    x2, y2 = pos[v]
+
+    # Edge vector
+    dx, dy = x2 - x1, y2 - y1
+    length = math.hypot(dx, dy)
+
+    if length < 1e-6:
+        return 0.0  # No rotation for zero-length edges
+
+    # For quadratic Bezier, tangent at t is: B'(t) = 2[(1-t)(P1-P0) + t(P2-P1)]
+    # At t=0.5, this simplifies to P2-P0 (the chord direction)
+    # For other t values with curvature, we need the control point
+    if abs(curvature) < 1e-6 or t == 0.5:
+        # No curvature or at midpoint: tangent is chord direction
+        tangent_x, tangent_y = dx, dy
+    else:
+        # Compute control point
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        px, py = -dy / length, dx / length
+        offset = curvature * length * 0.5
+        cx, cy = mx + px * offset, my + py * offset
+
+        # Bezier derivative: B'(t) = 2[(1-t)(P1-P0) + t(P2-P1)]
+        tangent_x = 2 * ((1 - t) * (cx - x1) + t * (x2 - cx))
+        tangent_y = 2 * ((1 - t) * (cy - y1) + t * (y2 - cy))
+
+    # Compute angle in degrees
+    angle_rad = math.atan2(tangent_y, tangent_x)
+    angle_deg = math.degrees(angle_rad)
+
+    # Normalize angle to keep text readable (not upside-down)
+    # Text is readable when angle is in range [-90, 90]
+    # If outside this range, flip by 180 degrees
+    if angle_deg > 90:
+        angle_deg -= 180
+    elif angle_deg < -90:
+        angle_deg += 180
+
+    return angle_deg
+
+
 def plot_amoc_triplets(
     triplets: List[Tuple[str, str, str]],
     persona: str,
@@ -1249,10 +1313,13 @@ def plot_amoc_triplets(
                 edgelist=group_edges,
                 edge_color=group_colors,
                 arrows=True,
-                arrowsize=16,
+                arrowsize=35,  # Large arrowheads for visibility
+                arrowstyle="-|>",  # Filled arrow style
+                node_size=3800,  # Match node size so arrows stop at node boundary
                 width=group_widths,
                 alpha=alpha_val,
                 connectionstyle=f"arc3,rad={curvature}",
+                min_target_margin=15,  # Extra margin so arrowhead is fully visible
                 ax=ax,
             )
 
@@ -1273,10 +1340,13 @@ def plot_amoc_triplets(
                 edgelist=group_edges,
                 edge_color=group_colors,
                 arrows=True,
-                arrowsize=14,
+                arrowsize=30,  # Large arrowheads for visibility
+                arrowstyle="-|>",
+                node_size=3800,  # Match node size so arrows stop at node boundary
                 width=group_widths,
                 style="dashed",
                 connectionstyle=f"arc3,rad={curvature}",
+                min_target_margin=15,
                 ax=ax,
             )
 
@@ -1299,8 +1369,11 @@ def plot_amoc_triplets(
                 width=group_widths,
                 style="dashed",
                 arrows=True,
-                arrowsize=18,
+                arrowsize=35,  # Large arrowheads for visibility
+                arrowstyle="-|>",
+                node_size=3800,  # Match node size so arrows stop at node boundary
                 connectionstyle=f"arc3,rad={curvature}",
+                min_target_margin=15,
                 ax=ax,
             )
 
@@ -1322,22 +1395,33 @@ def plot_amoc_triplets(
                 edge_color=group_colors,
                 width=group_widths,
                 arrows=True,
-                arrowsize=12,
+                arrowsize=25,  # Smaller but still visible for inactive edges
+                arrowstyle="-|>",
+                node_size=3800,  # Match node size so arrows stop at node boundary
                 alpha=0.4,
                 connectionstyle=f"arc3,rad={curvature}",
+                min_target_margin=15,
                 ax=ax,
             )
 
-    # Draw edge labels with positions computed along curved edges
-    # Labels are placed at the midpoint of each edge's curve, ensuring
-    # parallel edges have labels at different positions (following curve)
+    # ==========================================================================
+    # TASK 1 FIX: Draw edge labels ALONG the edge direction, not perpendicular
+    # ==========================================================================
+    # Labels are:
+    # 1. Positioned at the midpoint of each edge's curve
+    # 2. ROTATED to follow the edge tangent direction
+    # 3. Kept readable (flipped if angle would make text upside-down)
+    # This ensures parallel edges have labels aligned with their direction.
     for u, v, k in G.edges(keys=True):
         if (u, v, k) not in edge_labels:
             continue
 
-        # Get curvature for this edge to compute correct label position
+        # Get curvature for this edge to compute correct label position and angle
         curvature = edge_curvatures.get((u, v, k), 0.0)
         lx, ly = _compute_label_position_curved(pos, u, v, curvature, t=0.5)
+
+        # TASK 1: Compute rotation angle to align label along edge direction
+        label_angle = _compute_label_angle_along_edge(pos, u, v, curvature, t=0.5)
 
         label_text = edge_labels[(u, v, k)]
         status = edge_status.get((u, v, k), "normal")
@@ -1363,6 +1447,8 @@ def plot_amoc_triplets(
                 color="green",
                 ha="center",
                 va="center",
+                rotation=label_angle,  # TASK 1: Rotate to follow edge
+                rotation_mode="anchor",  # Rotate around anchor point
                 bbox=dict(facecolor="white", edgecolor="green", alpha=0.95, pad=0.3, boxstyle="round,pad=0.15"),
                 zorder=10,  # Ensure labels render above edges
             )
@@ -1376,6 +1462,8 @@ def plot_amoc_triplets(
                 color="#666699",
                 ha="center",
                 va="center",
+                rotation=label_angle,  # TASK 1: Rotate to follow edge
+                rotation_mode="anchor",
                 bbox=base_bbox,
                 zorder=10,
             )
@@ -1388,6 +1476,8 @@ def plot_amoc_triplets(
                 color="#999999",
                 ha="center",
                 va="center",
+                rotation=label_angle,  # TASK 1: Rotate to follow edge
+                rotation_mode="anchor",
                 bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=0.25, boxstyle="round,pad=0.1"),
                 zorder=9,  # Slightly lower z-order for inactive labels
             )
@@ -1400,6 +1490,8 @@ def plot_amoc_triplets(
                 color="darkred",
                 ha="center",
                 va="center",
+                rotation=label_angle,  # TASK 1: Rotate to follow edge
+                rotation_mode="anchor",
                 bbox=base_bbox,
                 zorder=10,
             )

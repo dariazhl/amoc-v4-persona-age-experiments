@@ -150,6 +150,32 @@ class AMoCv4:
             | self._get_nodes_with_active_edges()
         )
 
+    def _extract_adjectival_modifiers(self, sent: Span) -> dict[str, list[str]]:
+        if not isinstance(sent, Span):
+            raise TypeError(
+                f"_extract_adjectival_modifiers expects a spaCy Span, got {type(sent)}"
+            )
+
+        prop_map: dict[str, list[str]] = {}
+
+        for tok in sent:
+            if tok.pos_ in {"NOUN", "PROPN"}:
+                head = tok.lemma_.lower()
+                for child in tok.children:
+                    if child.dep_ == "amod" and child.pos_ == "ADJ":
+                        adj = child.lemma_.lower()
+                        prop_map.setdefault(head, []).append(adj)
+
+        return prop_map
+
+    def _append_adjectival_hints(self, nodes_from_text: str, sent: Span) -> str:
+        adjectival_properties = self._extract_adjectival_modifiers(sent)
+        if adjectival_properties:
+            nodes_from_text += "\nAdjectival hints:\n"
+            for noun, adjectives in adjectival_properties.items():
+                nodes_from_text += f" - {noun}: {', '.join(adjectives)}\n"
+        return nodes_from_text
+
     def _distances_from_sources_active_edges(
         self, sources: set[Node], max_distance: int
     ) -> dict[Node, int]:
@@ -495,6 +521,120 @@ class AMoCv4:
         # No-op: do not prune edges after addition; connectivity is enforced at add time.
         return
 
+    # ==========================================================================
+    # TASK 2: FORCED CONNECTIVITY EDGE CREATION
+    # ==========================================================================
+    def _create_forced_connectivity_edges(
+        self,
+        story_context: str,
+        current_sentence: str,
+    ) -> List[Edge]:
+        """
+        TASK 2: Create forced connectivity edges when existing edges cannot restore connectivity.
+
+        This is the SECONDARY LLM CALL that fires ONLY when:
+        1. ensure_active_connectivity() has been called
+        2. The graph is STILL disconnected (check_active_connectivity() returns False)
+        3. No existing edges in cumulative memory can bridge the components
+
+        The method:
+        1. Identifies disconnected components using get_nodes_needing_connection()
+        2. For each pair needing connection, calls LLM to generate a minimal edge
+        3. Creates the edge and marks it as forced_connection
+
+        Args:
+            story_context: Previous sentences for LLM context
+            current_sentence: Current sentence being processed
+
+        Returns:
+            List of newly created forced connectivity edges
+        """
+        # Step 1: Check if graph is still disconnected
+        if self.graph.check_active_connectivity():
+            return []  # Already connected, no forced edges needed
+
+        # Step 2: Get pairs that need connecting
+        pairs = self.graph.get_nodes_needing_connection(
+            focus_nodes=self._explicit_nodes_current_sentence
+        )
+
+        if not pairs:
+            logging.warning(
+                "[Connectivity] Graph disconnected but no pairs identified for connection"
+            )
+            return []
+
+        logging.info(
+            "[Connectivity] SECONDARY LLM CALL: Creating %d forced connectivity edges",
+            len(pairs),
+        )
+
+        forced_edges: List[Edge] = []
+
+        for isolated_node, focus_node in pairs:
+            # Step 3: Call LLM to generate edge label
+            node_a_text = isolated_node.get_text_representer()
+            node_b_text = focus_node.get_text_representer()
+
+            result = self.client.get_forced_connectivity_edge_label(
+                node_a=node_a_text,
+                node_b=node_b_text,
+                story_context=story_context,
+                current_sentence=current_sentence,
+                persona=self.persona,
+            )
+
+            edge_label = result.get("label", "relates to")
+            explanation = result.get("explanation", "")
+
+            logging.debug(
+                "[Connectivity] Creating forced edge: %s --%s--> %s (reason: %s)",
+                node_a_text,
+                edge_label,
+                node_b_text,
+                explanation,
+            )
+
+            # Step 4: Create the edge
+            edge = self.graph.add_edge(
+                isolated_node,
+                focus_node,
+                edge_label,
+                self.edge_forget,
+                created_at_sentence=self._current_sentence_index,
+            )
+
+            if edge is not None:
+                # Mark as forced connectivity edge
+                edge.mark_as_forced_connection()
+                forced_edges.append(edge)
+
+                # Record in graphs for auditing
+                self._record_edge_in_graphs(edge, self._current_sentence_index)
+
+                logging.info(
+                    "[Connectivity] Created forced edge: %s --%s--> %s",
+                    node_a_text,
+                    edge_label,
+                    node_b_text,
+                )
+            else:
+                logging.warning(
+                    "[Connectivity] Failed to create forced edge: %s --%s--> %s",
+                    node_a_text,
+                    edge_label,
+                    node_b_text,
+                )
+
+        # Verify connectivity after creating forced edges
+        if not self.graph.check_active_connectivity():
+            logging.error(
+                "[Connectivity] Graph STILL disconnected after creating %d forced edges",
+                len(forced_edges),
+            )
+
+        return forced_edges
+
     def resolve_pronouns(self, text: str) -> str:
         resolved = self.client.resolve_pronouns(text, self.persona)
         if not isinstance(resolved, str) or not resolved.strip():
@@ -804,7 +944,7 @@ class AMoCv4:
         passive_patterns = [
             (r"^(was|is|were|been|being)\s+(\w+ed)\s+by$", 2),  # "was kidnapped by"
             (r"^(was|is|were|been|being)\s+(\w+en)\s+by$", 2),  # "was taken by"
-            (r"^(was|is|were|been|being)\s+(\w+)\s+by$", 2),    # "was hurt by"
+            (r"^(was|is|were|been|being)\s+(\w+)\s+by$", 2),  # "was hurt by"
         ]
 
         for pattern, verb_group in passive_patterns:
@@ -970,7 +1110,7 @@ class AMoCv4:
         if not doc:
             return None
         allowed_subject = {"NOUN", "PROPN", "PRON"}
-        allowed_object = {"NOUN", "PROPN", "PRON", "ADJ"}
+        allowed_object = {"NOUN", "PROPN", "PRON"}
         for tok in doc:
             if not getattr(tok, "is_alpha", False):
                 continue
@@ -1056,6 +1196,29 @@ class AMoCv4:
         salient_nodes: Optional[List[str]] = None,
         inactive_nodes: Optional[List[str]] = None,
     ) -> None:
+        # ==========================================================================
+        # DEFENSIVE GUARD: Ensure sentence_text never contains prompt scaffolding
+        # ==========================================================================
+        # This assertion catches the bug where LLM prompt text leaks into
+        # the sentence stream. If this fires, the bug is in the sentence
+        # processing pipeline (likely resolve_pronouns or its cleanup).
+        sentence_text_lower = (sentence_text or "").lower().strip()
+        prompt_contamination_patterns = [
+            "the text is:",
+            "here is the text:",
+            "the sentence is:",
+            "replace the pronouns",
+        ]
+        for pattern in prompt_contamination_patterns:
+            if sentence_text_lower.startswith(pattern):
+                logging.error(
+                    "[BUG] Prompt scaffolding leaked into sentence_text: %s",
+                    sentence_text[:100],
+                )
+                # Strip the contamination as a fallback (but the bug should be fixed upstream)
+                sentence_text = sentence_text[len(pattern) :].strip()
+                break
+
         # Route per-sentence plots into mode-specific subfolders for clarity.
         plot_dir = output_dir
         if output_dir and mode in {"sentence_active", "sentence_cumulative"}:
@@ -1175,6 +1338,23 @@ class AMoCv4:
             cleaned = re.sub(r"<[^>]+>", " ", candidate)
             cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
+            # ==========================================================================
+            # BUG FIX: Strip prompt scaffolding that LLM may echo back
+            # ==========================================================================
+            # The REPLACE_PRONOUNS_PROMPT ends with "The text is:\n" and the LLM
+            # sometimes echoes this prefix in its response. This contamination must
+            # be stripped to prevent it from leaking into sentence titles.
+            prompt_scaffolding_patterns = [
+                r"(?i)^the text is:\s*",  # "The text is: ..."
+                r"(?i)^here is the text:\s*",  # "Here is the text: ..."
+                r"(?i)^the sentence is:\s*",  # "The sentence is: ..."
+                r"(?i)^text:\s*",  # "Text: ..."
+                r"(?i)^sentence:\s*",  # "Sentence: ..."
+                r"(?i)^replace the pronouns.*?:\s*",  # Echo of prompt instruction
+            ]
+            for pattern in prompt_scaffolding_patterns:
+                cleaned = re.sub(pattern, "", cleaned).strip()
+
             # Filter out common LLM meta-responses about pronoun resolution
             llm_meta_patterns = [
                 r"(?i)the text does not contain pronouns?",
@@ -1262,10 +1442,15 @@ class AMoCv4:
                 # union them as explicit nodes
                 # CRITICAL FIX: Explicit nodes are ALL nodes from current sentence text
                 # Do NOT filter by node_source - per AMoC paper: "explicit nodes =
-                # only nouns/adjectives present in the current sentence"
-                self._explicit_nodes_current_sentence = set(phrase_nodes) | set(
-                    current_sentence_text_based_nodes
-                )
+                # Explicit nodes = entities (NOUN / PROPN) present in the current sentence
+                # Adjectives are latent property candidates (AMoC-v4)
+                self._explicit_nodes_current_sentence = {
+                    n
+                    for n in (
+                        set(phrase_nodes) | set(current_sentence_text_based_nodes)
+                    )
+                    if n.node_type != NodeType.PROPERTY
+                }
                 # NOTE: Removed node_source filtering - all nodes from current sentence
                 # are explicit by definition
 
@@ -1326,9 +1511,13 @@ class AMoCv4:
                 # current sentence) regardless of how it was originally introduced.
                 # Per AMoC paper: "explicit nodes = only nouns/adjectives present in
                 # the current sentence"
-                self._explicit_nodes_current_sentence = set(phrase_nodes) | set(
-                    current_sentence_text_based_nodes
-                )
+                self._explicit_nodes_current_sentence = {
+                    n
+                    for n in (
+                        set(phrase_nodes) | set(current_sentence_text_based_nodes)
+                    )
+                    if n.node_type == NodeType.CONCEPT
+                }
                 # NOTE: Removed node_source filtering - all nodes from current sentence
                 # are explicit, even if they were originally inference-based
 
@@ -1342,9 +1531,13 @@ class AMoCv4:
                     graph_active_nodes, only_text_based=True
                 )
 
+                adjectival_properties = self._extract_adjectival_modifiers(sent)
+
                 nodes_from_text = ""
                 for idx, node in enumerate(current_sentence_text_based_nodes):
                     nodes_from_text += f" - ({current_sentence_text_based_words[idx]}, {node.node_type})\n"
+
+                nodes_from_text = self._append_adjectival_hints(nodes_from_text, sent)
 
                 new_relationships = self.client.get_new_relationships(
                     nodes_from_text,  # 1. Nodes from Text
@@ -1578,6 +1771,28 @@ class AMoCv4:
                         len(connector_edges),
                     )
 
+                # ==========================================================================
+                # TASK 2: SECONDARY LLM CALL FOR FORCED CONNECTIVITY
+                # ==========================================================================
+                # If ensure_active_connectivity() couldn't fully connect the graph
+                # (no existing edges could bridge components), trigger secondary LLM call
+                # to create minimal forced connectivity edges.
+                if not self.graph.check_active_connectivity():
+                    forced_edges = self._create_forced_connectivity_edges(
+                        story_context=(
+                            " ".join(prev_sentences[:-1])
+                            if len(prev_sentences) > 1
+                            else ""
+                        ),
+                        current_sentence=resolved_text,
+                    )
+                    if forced_edges:
+                        logging.info(
+                            "[Connectivity] Created %d forced connectivity edges via secondary LLM call",
+                            len(forced_edges),
+                        )
+                        added_edges.extend(forced_edges)
+
                 # ACTIVATION LOGIC: Decay activation_score for inactive edges
                 self.graph.decay_inactive_edges()
                 logging.debug(
@@ -1767,9 +1982,16 @@ class AMoCv4:
                         )
                     )
 
+                # ==========================================================================
+                # BUG FIX: Use original_text for plot titles, NOT sent.text
+                # ==========================================================================
+                # `sent` is a spaCy Span created from `resolved_text` which may contain
+                # contamination from LLM prompt echoes (e.g., "The text is: ...").
+                # We must use `original_text` (the clean, unprocessed sentence) for
+                # all display purposes like plot titles.
                 self._plot_graph_snapshot(
                     sentence_index=i,
-                    sentence_text=sent.text,
+                    sentence_text=original_text,  # FIX: was sent.text (contaminated)
                     output_dir=graphs_output_dir,
                     highlight_nodes=highlight_nodes,
                     inactive_nodes=inactive_nodes_for_plot,
@@ -1796,7 +2018,7 @@ class AMoCv4:
 
                 self._plot_graph_snapshot(
                     sentence_index=i,
-                    sentence_text=sent.text,
+                    sentence_text=original_text,  # FIX: was sent.text (contaminated)
                     output_dir=graphs_output_dir,
                     highlight_nodes=highlight_nodes,
                     inactive_nodes=inactive_nodes_for_plot,
@@ -1946,6 +2168,8 @@ class AMoCv4:
                 f" - ({current_sentence_text_based_words[i]}, {node.node_type})\n"
             )
 
+        nodes_from_text = self._append_adjectival_hints(nodes_from_text, sent)
+
         for _ in range(3):
             try:
                 object_properties_dict = (
@@ -1991,6 +2215,10 @@ class AMoCv4:
             nodes_from_text += (
                 f" - ({current_sentence_text_based_words[i]}, {node.node_type})\n"
             )
+
+        doc = self.spacy_nlp(text)
+        sent_span = doc[0 : len(doc)]
+        nodes_from_text = self._append_adjectival_hints(nodes_from_text, sent_span)
 
         for _ in range(3):
             try:
@@ -2520,21 +2748,6 @@ class AMoCv4:
 
             phrase_nodes.append(node)
 
-            # Also extract adjectives as PROPERTY nodes (per paper Section 3.1)
-            for tok in chunk:
-                if (
-                    tok.pos_ == "ADJ"
-                    and tok.lemma_ not in self.spacy_nlp.Defaults.stop_words
-                ):
-                    adj_lemma = tok.lemma_.lower()
-                    prop_node = self.graph.add_or_get_node(
-                        lemmas=[adj_lemma],
-                        actual_text=adj_lemma,
-                        node_type=NodeType.PROPERTY,
-                        node_source=NodeSource.TEXT_BASED,
-                    )
-                    phrase_nodes.append(prop_node)
-
         return phrase_nodes
 
     # get the explicit node
@@ -2547,6 +2760,7 @@ class AMoCv4:
         Per paper Figures 2-4:
         - Node labels are single lowercase lemmas
         - Every noun/adjective in the current sentence becomes an explicit node
+        - Adjectives are handled as latent property candidates (not explicit nodes)
         - Returns (nodes, words) where words are the canonical lemma forms
 
         CRITICAL: This function determines what appears as "Explicit this sentence"
@@ -2570,20 +2784,19 @@ class AMoCv4:
                     text_based_words.append(lemma)
                 else:
                     if create_unexistent_nodes:
-                        if word.pos_ == "ADJ":
+                        # AMoC-v4 paper-faithful:
+                        # Only NOUN / PROPN become explicit nodes
+                        if word.pos_ in {"NOUN", "PROPN"}:
                             new_node = self.graph.add_or_get_node(
                                 [lemma],
-                                lemma,  # Use lemma as actual_text (not surface form)
-                                NodeType.PROPERTY,
-                                NodeSource.TEXT_BASED,
-                            )
-                        else:
-                            new_node = self.graph.add_or_get_node(
-                                [lemma],
-                                lemma,  # Use lemma as actual_text (not surface form)
+                                lemma,
                                 NodeType.CONCEPT,
                                 NodeSource.TEXT_BASED,
                             )
-                        text_based_nodes.append(new_node)
-                        text_based_words.append(lemma)
+                            text_based_nodes.append(new_node)
+                            text_based_words.append(lemma)
+                        else:
+                            continue
+                    else:
+                        continue
         return text_based_nodes, text_based_words

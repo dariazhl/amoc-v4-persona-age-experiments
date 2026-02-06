@@ -18,6 +18,7 @@ from amoc.prompts.amoc_prompts import (
     SELECT_RELEVANT_EDGES_PROMPT,
     REPLACE_PRONOUNS_PROMPT,
     HUB_EDGE_LABEL_WITH_EXPLANATION_PROMPT,
+    FORCED_CONNECTIVITY_EDGE_PROMPT,
 )
 
 
@@ -220,5 +221,61 @@ class VLLMClient:
             return {"label": "", "explanation": ""}
         return {
             "label": result.get("label", ""),
+            "explanation": result.get("explanation", ""),
+        }
+
+    # ==========================================================================
+    # TASK 2: FORCED CONNECTIVITY EDGE GENERATION
+    # ==========================================================================
+    def get_forced_connectivity_edge_label(
+        self,
+        node_a: str,
+        node_b: str,
+        story_context: str,
+        current_sentence: str,
+        persona: str,
+    ) -> Dict[str, str]:
+        """
+        TASK 2: Generate an edge label to restore graph connectivity.
+
+        This method is called ONLY when:
+        1. The active graph has become disconnected
+        2. No existing edges in cumulative memory can restore connectivity
+        3. A minimal connecting edge must be created
+
+        Args:
+            node_a: First node text (from isolated component)
+            node_b: Second node text (from focus component)
+            story_context: Previous sentences for context
+            current_sentence: The current sentence being processed
+            persona: The persona description for LLM context
+
+        Returns:
+            Dict with 'label' and 'explanation' keys.
+            Returns {"label": "relates to", "explanation": "..."} as fallback.
+        """
+        prompt = FORCED_CONNECTIVITY_EDGE_PROMPT.format(
+            node_a=node_a,
+            node_b=node_b,
+            story_context=story_context,
+            current_sentence=current_sentence,
+        )
+        response = self.call_vllm(prompt, persona)
+        result = parse_for_dict(response)
+
+        if not isinstance(result, dict) or not result.get("label"):
+            # Fallback to generic relationship if LLM fails
+            logging.warning(
+                "[Connectivity] LLM failed to generate edge label for %s -> %s, using fallback",
+                node_a,
+                node_b,
+            )
+            return {
+                "label": "relates to",
+                "explanation": "Fallback connectivity edge (LLM response invalid)",
+            }
+
+        return {
+            "label": result.get("label", "relates to"),
             "explanation": result.get("explanation", ""),
         }
