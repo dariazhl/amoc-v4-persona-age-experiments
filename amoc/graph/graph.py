@@ -618,15 +618,21 @@ class Graph:
             best_path_len = float("inf")
 
             for src in comp:
+                # Skip if src not in cumulative graph (only has property edges)
+                if src not in G_cumulative:
+                    continue
                 for tgt in focus_comp_nodes:
                     if src == tgt:
+                        continue
+                    # Skip if tgt not in cumulative graph (only has property edges)
+                    if tgt not in G_cumulative:
                         continue
                     try:
                         path = nx.shortest_path(G_cumulative, src, tgt)
                         if len(path) < best_path_len:
                             best_path = path
                             best_path_len = len(path)
-                    except nx.NetworkXNoPath:
+                    except (nx.NetworkXNoPath, nx.NodeNotFound):
                         continue
 
             if best_path is None:

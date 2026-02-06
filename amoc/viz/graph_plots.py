@@ -410,6 +410,104 @@ def _choose_angles_in_gaps(
     return chosen
 
 
+def _compute_edge_curvatures(
+    edges_with_keys: List[Tuple[str, str, str]],
+) -> Dict[Tuple[str, str, str], float]:
+    """
+    Compute curvature values for edges to prevent overlap of parallel edges.
+
+    For edges between the same pair of nodes (including reciprocals), assign
+    different curvature radii so they curve differently and don't overlap.
+
+    Returns a dict mapping (u, v, key) -> curvature radius for arc3 connectionstyle.
+    """
+    # Group edges by their node pair (undirected for overlap detection)
+    from collections import defaultdict
+
+    pair_edges: Dict[tuple, List[Tuple[str, str, str]]] = defaultdict(list)
+    for u, v, k in edges_with_keys:
+        # Use sorted tuple for undirected grouping (to catch A->B and B->A)
+        pair_key = tuple(sorted([u, v]))
+        pair_edges[pair_key].append((u, v, k))
+
+    curvatures: Dict[Tuple[str, str, str], float] = {}
+
+    for pair_key, edges in pair_edges.items():
+        n_edges = len(edges)
+        if n_edges == 1:
+            # Single edge - no curvature needed
+            curvatures[edges[0]] = 0.0
+        else:
+            # Multiple edges between same node pair - assign varying curvatures
+            # Spread curvatures symmetrically around 0
+            # E.g., for 2 edges: [-0.15, 0.15], for 3: [-0.2, 0, 0.2]
+            base_rad = 0.15  # Base curvature radius
+            max_rad = 0.35   # Maximum curvature to prevent extreme curves
+
+            for idx, (u, v, k) in enumerate(edges):
+                if n_edges == 2:
+                    # Two edges: one curves up, one curves down
+                    rad = base_rad if idx == 0 else -base_rad
+                else:
+                    # More edges: spread evenly
+                    spread = min(max_rad, base_rad * (n_edges - 1) / 2)
+                    rad = -spread + (2 * spread * idx / (n_edges - 1))
+
+                # For reciprocal edges (A->B vs B->A), ensure they curve opposite
+                # by checking if this is the "reverse" direction
+                if (u, v) != pair_key:
+                    rad = -rad  # Flip for reverse direction
+
+                curvatures[(u, v, k)] = rad
+
+    return curvatures
+
+
+def _compute_label_position_curved(
+    pos: Dict[str, Tuple[float, float]],
+    u: str,
+    v: str,
+    curvature: float,
+    t: float = 0.5,
+) -> Tuple[float, float]:
+    """
+    Compute label position along a curved edge (quadratic Bezier approximation).
+
+    For a curved edge from u to v with given curvature, compute the position
+    at parameter t (0=start, 1=end, 0.5=middle).
+
+    The curve is approximated as a quadratic Bezier with control point
+    offset perpendicular to the edge midpoint.
+    """
+    x1, y1 = pos[u]
+    x2, y2 = pos[v]
+
+    # Midpoint
+    mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+
+    # Edge vector and perpendicular
+    dx, dy = x2 - x1, y2 - y1
+    length = math.hypot(dx, dy)
+
+    if length < 1e-6:
+        return mx, my
+
+    # Perpendicular unit vector (rotated 90 degrees)
+    px, py = -dy / length, dx / length
+
+    # Control point offset by curvature * edge_length
+    # (curvature is the arc3 rad parameter, scale appropriately)
+    offset = curvature * length * 0.5
+    cx, cy = mx + px * offset, my + py * offset
+
+    # Quadratic Bezier: B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2
+    # where P0=(x1,y1), P1=(cx,cy), P2=(x2,y2)
+    b_x = (1-t)**2 * x1 + 2*(1-t)*t * cx + t**2 * x2
+    b_y = (1-t)**2 * y1 + 2*(1-t)*t * cy + t**2 * y2
+
+    return b_x, b_y
+
+
 def plot_amoc_triplets(
     triplets: List[Tuple[str, str, str]],
     persona: str,
@@ -433,6 +531,7 @@ def plot_amoc_triplets(
     show_all_edges: bool = False,
     edge_activation_scores: Optional[Dict[Tuple[str, str, str], int]] = None,
     layout_from_active_only: bool = True,
+    allow_multi_edges: bool = True,  # NEW: Flag to control multiple edges between same nodes
 ) -> str:
 
     def expand_by_anchor(
@@ -530,6 +629,9 @@ def plot_amoc_triplets(
     # Build sets for node categorization (needed for layout decision)
     inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
 
+    # Track edges seen per node pair when allow_multi_edges=False
+    seen_node_pairs: set[Tuple[str, str]] = set()
+
     for src, rel, dst in triplets:
         src = str(src).strip()
         dst = str(dst).strip()
@@ -538,6 +640,13 @@ def plot_amoc_triplets(
         # INVARIANT: semantic triplets must be complete
         if not src or not dst or not rel:
             continue
+
+        # Multi-edge control: when allow_multi_edges=False, skip duplicate edges
+        # between the same node pair (keep only the first edge)
+        if not allow_multi_edges:
+            if (src, dst) in seen_node_pairs:
+                continue
+            seen_node_pairs.add((src, dst))
 
         is_structural = rel.startswith("structural::")
         clean_rel = rel.replace("structural::", "").strip()
@@ -1037,6 +1146,11 @@ def plot_amoc_triplets(
     edge_pairs = {(u, v) for u, v, _ in G.edges(keys=True)}
     reciprocals = {(u, v) for (u, v) in edge_pairs if (v, u) in edge_pairs}
 
+    # Compute curvatures for all edges to handle parallel edges
+    # This ensures edges between same node pairs curve differently for visibility
+    all_edges_with_keys = list(G.edges(keys=True))
+    edge_curvatures = _compute_edge_curvatures(all_edges_with_keys)
+
     normal_edges = []
     implicit_edges = []
     structural_edges = []
@@ -1115,16 +1229,17 @@ def plot_amoc_triplets(
         else:
             normal_edge_alphas.append(0.4)
 
-    # Draw normal edges as solid lines
+    # Draw normal edges as solid lines with per-edge curvature for parallel edges
     if normal_edges:
-        # Draw edges with varying alpha (need to draw in batches by alpha)
-        alpha_groups = defaultdict(list)
+        # Group edges by (alpha, curvature) for efficient drawing
+        # Each unique (alpha, curvature) combination gets its own draw call
+        edge_draw_groups = defaultdict(list)
         for idx, (u, v, k) in enumerate(normal_edges):
-            alpha = normal_edge_alphas[idx]
-            alpha_key = round(alpha, 1)  # Group by rounded alpha
-            alpha_groups[alpha_key].append((idx, u, v, k))
+            alpha = round(normal_edge_alphas[idx], 1)
+            curvature = round(edge_curvatures.get((u, v, k), 0.0), 2)
+            edge_draw_groups[(alpha, curvature)].append((idx, u, v, k))
 
-        for alpha_val, edge_group in alpha_groups.items():
+        for (alpha_val, curvature), edge_group in edge_draw_groups.items():
             group_edges = [(u, v) for idx, u, v, k in edge_group]
             group_colors = [normal_edge_colors[idx] for idx, u, v, k in edge_group]
             group_widths = [normal_edge_widths[idx] for idx, u, v, k in edge_group]
@@ -1137,72 +1252,106 @@ def plot_amoc_triplets(
                 arrowsize=16,
                 width=group_widths,
                 alpha=alpha_val,
-                connectionstyle="arc3,rad=0.0",
+                connectionstyle=f"arc3,rad={curvature}",
                 ax=ax,
             )
 
-    # POLICY A: Draw implicit edges as dashed lines (style rather than remove)
+    # POLICY A: Draw implicit edges as dashed lines with per-edge curvature
     if implicit_edges:
-        nx.draw_networkx_edges(
-            G,
-            pos,
-            edgelist=implicit_edges,
-            edge_color=implicit_edge_colors,
-            arrows=True,
-            arrowsize=14,
-            width=implicit_edge_widths,
-            style="dashed",
-            connectionstyle="arc3,rad=0.0",
-            ax=ax,
-        )
+        implicit_curvature_groups = defaultdict(list)
+        for idx, (u, v, k) in enumerate(implicit_edges):
+            curvature = round(edge_curvatures.get((u, v, k), 0.0), 2)
+            implicit_curvature_groups[curvature].append((idx, u, v, k))
 
+        for curvature, edge_group in implicit_curvature_groups.items():
+            group_edges = [(u, v) for idx, u, v, k in edge_group]
+            group_colors = [implicit_edge_colors[idx] for idx, u, v, k in edge_group]
+            group_widths = [implicit_edge_widths[idx] for idx, u, v, k in edge_group]
+            nx.draw_networkx_edges(
+                G,
+                pos,
+                edgelist=group_edges,
+                edge_color=group_colors,
+                arrows=True,
+                arrowsize=14,
+                width=group_widths,
+                style="dashed",
+                connectionstyle=f"arc3,rad={curvature}",
+                ax=ax,
+            )
+
+    # Draw structural edges with per-edge curvature
     if structural_edges:
-        nx.draw_networkx_edges(
-            G,
-            pos,
-            edgelist=structural_edges,
-            edge_color=structural_edge_colors,
-            width=structural_edge_widths,
-            style="dashed",
-            arrows=True,
-            arrowsize=18,
-            connectionstyle="arc3,rad=0.0",
-            ax=ax,
-        )
+        structural_curvature_groups = defaultdict(list)
+        for idx, (u, v, k) in enumerate(structural_edges):
+            curvature = round(edge_curvatures.get((u, v, k), 0.0), 2)
+            structural_curvature_groups[curvature].append((idx, u, v, k))
 
-    # Draw edges involving inactive nodes with faded appearance
+        for curvature, edge_group in structural_curvature_groups.items():
+            group_edges = [(u, v) for idx, u, v, k in edge_group]
+            group_colors = [structural_edge_colors[idx] for idx, u, v, k in edge_group]
+            group_widths = [structural_edge_widths[idx] for idx, u, v, k in edge_group]
+            nx.draw_networkx_edges(
+                G,
+                pos,
+                edgelist=group_edges,
+                edge_color=group_colors,
+                width=group_widths,
+                style="dashed",
+                arrows=True,
+                arrowsize=18,
+                connectionstyle=f"arc3,rad={curvature}",
+                ax=ax,
+            )
+
+    # Draw edges involving inactive nodes with per-edge curvature
     if inactive_edges:
-        nx.draw_networkx_edges(
-            G,
-            pos,
-            edgelist=inactive_edges,
-            edge_color=inactive_edge_colors,
-            width=inactive_edge_widths,
-            arrows=True,
-            arrowsize=12,
-            alpha=0.4,
-            connectionstyle="arc3,rad=0.0",
-            ax=ax,
-        )
+        inactive_curvature_groups = defaultdict(list)
+        for idx, (u, v, k) in enumerate(inactive_edges):
+            curvature = round(edge_curvatures.get((u, v, k), 0.0), 2)
+            inactive_curvature_groups[curvature].append((idx, u, v, k))
 
-    def _label_offset(u: str, v: str) -> Tuple[float, float]:
-        x1, y1 = pos[u]
-        x2, y2 = pos[v]
-        dx, dy = x2 - x1, y2 - y1
-        dist = math.hypot(dx, dy)
-        if dist < 1e-6:
-            return (x1 + x2) * 0.5, (y1 + y2) * 0.5
-        t = 0.5
-        return x1 * (1.0 - t) + x2 * t, y1 * (1.0 - t) + y2 * t
+        for curvature, edge_group in inactive_curvature_groups.items():
+            group_edges = [(u, v) for idx, u, v, k in edge_group]
+            group_colors = [inactive_edge_colors[idx] for idx, u, v, k in edge_group]
+            group_widths = [inactive_edge_widths[idx] for idx, u, v, k in edge_group]
+            nx.draw_networkx_edges(
+                G,
+                pos,
+                edgelist=group_edges,
+                edge_color=group_colors,
+                width=group_widths,
+                arrows=True,
+                arrowsize=12,
+                alpha=0.4,
+                connectionstyle=f"arc3,rad={curvature}",
+                ax=ax,
+            )
 
+    # Draw edge labels with positions computed along curved edges
+    # Labels are placed at the midpoint of each edge's curve, ensuring
+    # parallel edges have labels at different positions (following curve)
     for u, v, k in G.edges(keys=True):
         if (u, v, k) not in edge_labels:
             continue
 
-        lx, ly = _label_offset(u, v)
+        # Get curvature for this edge to compute correct label position
+        curvature = edge_curvatures.get((u, v, k), 0.0)
+        lx, ly = _compute_label_position_curved(pos, u, v, curvature, t=0.5)
+
         label_text = edge_labels[(u, v, k)]
         status = edge_status.get((u, v, k), "normal")
         involves_inactive = u in inactive_node_set or v in inactive_node_set
+
+        # Common bbox style for ALL labels to ensure readability
+        # White background with slight padding prevents overlap issues
+        base_bbox = dict(
+            facecolor="white",
+            edgecolor="none",
+            alpha=0.9,
+            pad=0.3,
+            boxstyle="round,pad=0.15",
+        )
 
         if status == "structural":
             ax.text(
@@ -1214,7 +1363,8 @@ def plot_amoc_triplets(
                 color="green",
                 ha="center",
                 va="center",
-                bbox=dict(facecolor="white", edgecolor="green", pad=0.25),
+                bbox=dict(facecolor="white", edgecolor="green", alpha=0.95, pad=0.3, boxstyle="round,pad=0.15"),
+                zorder=10,  # Ensure labels render above edges
             )
         elif status == "implicit":
             ax.text(
@@ -1226,7 +1376,8 @@ def plot_amoc_triplets(
                 color="#666699",
                 ha="center",
                 va="center",
-                bbox=dict(facecolor="white", edgecolor="none", pad=0.2),
+                bbox=base_bbox,
+                zorder=10,
             )
         elif involves_inactive:
             ax.text(
@@ -1237,7 +1388,8 @@ def plot_amoc_triplets(
                 color="#999999",
                 ha="center",
                 va="center",
-                bbox=dict(facecolor="white", edgecolor="none", pad=0.2),
+                bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=0.25, boxstyle="round,pad=0.1"),
+                zorder=9,  # Slightly lower z-order for inactive labels
             )
         else:
             ax.text(
@@ -1248,7 +1400,8 @@ def plot_amoc_triplets(
                 color="darkred",
                 ha="center",
                 va="center",
-                bbox=dict(facecolor="white", edgecolor="none", pad=0.2),
+                bbox=base_bbox,
+                zorder=10,
             )
 
     # Draw labels separately for active and inactive nodes
