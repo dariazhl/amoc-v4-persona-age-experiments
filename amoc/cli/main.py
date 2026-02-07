@@ -141,10 +141,10 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     )
 
     p.add_argument(
-        "--edge-forget",
+        "--edge-visibility",
         type=int,
         default=None,
-        help="Override edge forget score (default uses value from amoc.config.constants).",
+        help="Override edge visibility score (default uses value from amoc.config.constants).",
     )
 
     p.add_argument(
@@ -251,7 +251,7 @@ def main(argv: List[str]) -> None:
                 strict_reactivate_function=args.strict_reactivate_function,
                 strict_attachament_constraint=args.strict_attachament_constraint,
                 single_anchor_hub=args.single_anchor_hub,
-                edge_forget=args.edge_forget,
+                edge_visibility=args.edge_visibility,
                 story_text=story_text,
                 force_node=True,
             )

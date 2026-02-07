@@ -42,7 +42,7 @@ class Edge:
         source_node: Node,
         dest_node: Node,
         label: str,
-        forget_score: int,
+        visibility_score: int,
         active: bool = True,
         created_at_sentence: Optional[int] = None,
         activation_score: Optional[int] = None,
@@ -51,8 +51,8 @@ class Edge:
         self.dest_node: Node = dest_node
         self.active: bool = active
         self.label: str = label
-        self.forget_score: int = forget_score
-        # activation_score: sentence-local activation counter (distinct from forget_score)
+        self.visibility_score: int = visibility_score
+        # activation_score: sentence-local activation counter (distinct from visibility_score)
         # Edges are activated when asserted/inferred; decays when inactive
         self.activation_score: int = (
             activation_score
@@ -100,18 +100,21 @@ class Edge:
         # 3. Excluded from certain semantic analyses
         self.forced_connection: bool = False
 
-    def fade_away(self) -> None:
+    def reduce_visibility(self) -> None:
         """
-        AMoC v4 STEP 7: Edge decay mechanism.
+        AMoC v4 STEP 7: Visibility gating mechanism.
 
-        Per paper Section 3.1:
-        - Decrement forget_score by 1
-        - When forget_score reaches 0, edge becomes inactive
-        - This implements the gradual "fading" of memory traces
+        This mechanism operationalizes the paper's implicit distinction
+        between active and inactive memory; no decay function is claimed.
+
+        Behavior:
+        - Decrement visibility_score by 1
+        - When visibility_score reaches 0, edge becomes INACTIVE (not deleted)
+        - Edge persists in memory and can be reactivated later
         """
-        self.forget_score -= 1
-        if self.forget_score <= 0:
-            self.active = False
+        self.visibility_score -= 1
+        if self.visibility_score <= 0:
+            self.active = False  # Hidden from active graph, NOT deleted
 
     def reset_for_sentence_start(self) -> None:
         """
@@ -337,7 +340,7 @@ class Edge:
                 status = "active"
         else:
             status = "inactive"
-        return f"{self.source_node.get_text_representer()} --{self.label} ({status}, act={self.activation_score})--> {self.dest_node.get_text_representer()} (forget={self.forget_score})"
+        return f"{self.source_node.get_text_representer()} --{self.label} ({status}, act={self.activation_score})--> {self.dest_node.get_text_representer()} (vis={self.visibility_score})"
 
     def __repr__(self) -> str:
         return self.__str__()

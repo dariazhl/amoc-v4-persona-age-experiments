@@ -57,7 +57,7 @@ class Graph:
         source_node: Node,
         dest_node: Node,
         label: str,
-        edge_forget: int,
+        edge_visibility: int,
         created_at_sentence: Optional[int] = None,
     ) -> Optional[Edge]:
         if source_node == dest_node:
@@ -104,11 +104,11 @@ class Graph:
             source_node,
             dest_node,
             label,
-            edge_forget,
+            edge_visibility,
             active=True,
             created_at_sentence=created_at_sentence,
         )
-        if self.check_if_similar_edge_exists(edge, edge_forget):
+        if self.check_if_similar_edge_exists(edge, edge_visibility):
             return None
         self.edges.add(edge)
         if edge not in source_node.edges:
@@ -118,10 +118,10 @@ class Graph:
 
         return edge
 
-    def check_if_similar_edge_exists(self, edge: Edge, edge_forget: int) -> bool:
+    def check_if_similar_edge_exists(self, edge: Edge, edge_visibility: int) -> bool:
         if edge in self.edges:
             existing_edge = self.get_edge(edge)
-            existing_edge.forget_score = edge_forget
+            existing_edge.visibility_score = edge_visibility
             # Mark as ASSERTED (re-assertion of existing edge)
             existing_edge.mark_as_asserted(reset_score=True)
             return True
@@ -140,7 +140,7 @@ class Graph:
                     and edge.source_node.node_type == NodeType.PROPERTY
                 )
                 if is_concept_property_pair or edge.is_similar(other_edge):
-                    other_edge.forget_score = edge_forget
+                    other_edge.visibility_score = edge_visibility
                     # Mark as ASSERTED (re-assertion of existing edge)
                     other_edge.mark_as_asserted(reset_score=True)
                     return True

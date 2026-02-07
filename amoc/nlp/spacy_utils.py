@@ -153,3 +153,157 @@ def canonicalize_node_text(nlp, text: str) -> str:
 def has_noun(nlp, text: str) -> bool:
     doc = nlp(text)
     return any(token.pos_ in {"NOUN", "PROPN"} for token in doc)
+
+
+# ==========================================================================
+# PAPER-FAITHFUL EXTRACTION: Deterministic linguistic extraction
+# Per AMoC paper Figures 4-6: Adjectives and prepositional objects are
+# extracted deterministically before LLM enrichment.
+# ==========================================================================
+
+def extract_adjectival_modifiers(sent: Span) -> List[dict]:
+    """
+    Extract adjectival modifiers from a sentence per AMoC paper.
+
+    Detects:
+    - amod: adjectival modifier (e.g., "young knight")
+    - acomp: adjectival complement (e.g., "knight is brave")
+    - attr: attribute (e.g., "knight was young")
+
+    Returns list of dicts: {
+        'adjective': str (lemma),
+        'head_noun': str (lemma),
+        'relation': str ('is')
+    }
+
+    Per paper: These become PROPERTY nodes attached via 'is' edge.
+    """
+    modifiers = []
+
+    for token in sent:
+        # amod: "young knight" -> young modifies knight
+        if token.dep_ == "amod" and token.pos_ == "ADJ":
+            head = token.head
+            if head.pos_ in {"NOUN", "PROPN"}:
+                modifiers.append({
+                    'adjective': token.lemma_.lower(),
+                    'head_noun': head.lemma_.lower(),
+                    'relation': 'is',
+                })
+
+        # acomp: "knight is brave" -> brave is complement of is, knight is subject
+        elif token.dep_ == "acomp" and token.pos_ == "ADJ":
+            verb = token.head
+            if verb.pos_ == "AUX" or verb.lemma_ in {"be", "become", "seem", "appear"}:
+                # Find the subject of the verb
+                for child in verb.children:
+                    if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {"NOUN", "PROPN"}:
+                        modifiers.append({
+                            'adjective': token.lemma_.lower(),
+                            'head_noun': child.lemma_.lower(),
+                            'relation': 'is',
+                        })
+                        break
+
+        # attr: "knight was young" -> young is attribute, knight is subject
+        elif token.dep_ == "attr" and token.pos_ == "ADJ":
+            verb = token.head
+            if verb.pos_ == "AUX" or verb.lemma_ in {"be", "become", "seem", "appear"}:
+                for child in verb.children:
+                    if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {"NOUN", "PROPN"}:
+                        modifiers.append({
+                            'adjective': token.lemma_.lower(),
+                            'head_noun': child.lemma_.lower(),
+                            'relation': 'is',
+                        })
+                        break
+
+    return modifiers
+
+
+def extract_prepositional_objects(sent: Span) -> List[dict]:
+    """
+    Extract prepositional objects from a sentence per AMoC paper.
+
+    Detects: prep → pobj patterns
+    Examples:
+    - "rode through the forest" -> (knight, ride_through, forest)
+    - "unfamiliar with the country" -> (knight, unfamiliar_with, country)
+
+    Returns list of dicts: {
+        'subject': str (lemma of verb's subject),
+        'head_word': str (lemma of verb or adjective),
+        'preposition': str,
+        'object': str (lemma of pobj),
+        'label': str (head_preposition)
+    }
+
+    Per paper: Objects become CONCEPT nodes, edge label is head_preposition.
+    """
+    prep_objects = []
+
+    for token in sent:
+        # Look for prep dependency
+        if token.dep_ == "prep":
+            prep_text = token.lemma_.lower()
+            head = token.head
+
+            # Find the object of the preposition
+            pobj = None
+            for child in token.children:
+                if child.dep_ == "pobj" and child.pos_ in {"NOUN", "PROPN"}:
+                    pobj = child
+                    break
+
+            if pobj is None:
+                continue
+
+            subject = None
+            head_word = None
+
+            # Case 1: Head is a verb (e.g., "rode through the forest")
+            if head.pos_ in {"VERB", "AUX"}:
+                head_word = head.lemma_.lower()
+                # Find the subject of the verb
+                for child in head.children:
+                    if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {"NOUN", "PROPN"}:
+                        subject = child
+                        break
+                # Also check if verb is part of a clause with a subject higher up
+                if subject is None and head.head and head.head.pos_ in {"NOUN", "PROPN"}:
+                    subject = head.head
+
+            # Case 2: Head is an adjective (e.g., "unfamiliar with the country")
+            elif head.pos_ == "ADJ":
+                head_word = head.lemma_.lower()
+                # Find the verb that the adjective is attached to
+                adj_head = head.head
+                if adj_head.pos_ in {"VERB", "AUX"}:
+                    # Find the subject of that verb
+                    for child in adj_head.children:
+                        if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {"NOUN", "PROPN"}:
+                            subject = child
+                            break
+
+            # Case 3: Head is a noun (e.g., "journey to the castle")
+            elif head.pos_ in {"NOUN", "PROPN"}:
+                head_word = head.lemma_.lower()
+                # The noun itself might be the subject, or find its governing verb
+                # For now, use the noun as subject if it's a major entity
+                subject = head
+
+            if subject is None or head_word is None:
+                continue
+
+            # Create edge label: head_preposition
+            edge_label = f"{head_word}_{prep_text}"
+
+            prep_objects.append({
+                'subject': subject.lemma_.lower(),
+                'head_word': head_word,
+                'preposition': prep_text,
+                'object': pobj.lemma_.lower(),
+                'label': edge_label,
+            })
+
+    return prep_objects

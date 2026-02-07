@@ -122,7 +122,7 @@ def process_persona_csv(
     strict_reactivate_function: bool = True,
     strict_attachament_constraint: bool = True,
     single_anchor_hub: bool = True,
-    edge_forget: Optional[int] = None,
+    edge_visibility: Optional[int] = None,
     story_text: Optional[str] = None,
     force_node: bool = False,
 ) -> None:
@@ -249,7 +249,7 @@ def process_persona_csv(
                         strict_attachament_constraint=strict_attachament_constraint,
                         single_anchor_hub=single_anchor_hub,
                         story_text=story_text,
-                        edge_forget=edge_forget,
+                        edge_visibility=edge_visibility,
                         matrix_dir_base=str(output_dir),
                         force_node=force_node,
                     )

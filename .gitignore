@@ -9,3 +9,14 @@
 *.json
 venv/
 old_code/
+*.csv
+*.pdf
+*.def
+*.txt
+*.md
+me_learning/
+amoc_v4.py
+correlation_matrix.py
+create_grid_sentences_same_persona.py
+parse_tasa.py
+quick_stats.py

@@ -18,6 +18,8 @@ from amoc.nlp.spacy_utils import (
     get_concept_lemmas,
     canonicalize_node_text,
     get_content_words_from_sent,
+    extract_adjectival_modifiers,
+    extract_prepositional_objects,
 )
 from collections import deque
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
@@ -59,7 +61,7 @@ class AMoCv4:
         max_new_concepts: int,
         max_new_properties: int,
         context_length: int,
-        edge_forget: int,
+        edge_visibility: int,
         nr_relevant_edges: int,
         spacy_nlp,
         debug: bool = False,
@@ -83,7 +85,7 @@ class AMoCv4:
         self.max_new_concepts = max_new_concepts
         self.max_new_properties = max_new_properties
         self.context_length = context_length
-        self.edge_forget = edge_forget
+        self.edge_visibility = edge_visibility
         self.nr_relevant_edges = nr_relevant_edges
 
         self.graph = Graph()
@@ -390,7 +392,7 @@ class AMoCv4:
                 subj_node,
                 obj_node,
                 edge_label,
-                self.edge_forget,
+                self.edge_visibility,
             )
             # Track added edge (for reactivation bookkeeping)
             if edge:
@@ -600,7 +602,7 @@ class AMoCv4:
                 isolated_node,
                 focus_node,
                 edge_label,
-                self.edge_forget,
+                self.edge_visibility,
                 created_at_sentence=self._current_sentence_index,
             )
 
@@ -1484,9 +1486,9 @@ class AMoCv4:
 
                 # NOTE: Per AMoC v4 paper (old_code.py ground truth):
                 # Edges are NOT deactivated at sentence start.
-                # Instead, they remain active until faded via fade_away() in STEP 7.
-                # The gradual decay mechanism is: non-relevant edges call fade_away()
-                # which decrements forget_score. When forget_score reaches 0, edge becomes inactive.
+                # Instead, they remain active until faded via reduce_visibility() in STEP 7.
+                # The gradual decay mechanism is: non-relevant edges call reduce_visibility()
+                # which decrements visibility_score. When visibility_score reaches 0, edge becomes inactive.
                 logging.debug(
                     "[Activation] Sentence %d: edges carry forward, will fade if not relevant",
                     i,
@@ -1503,6 +1505,17 @@ class AMoCv4:
                     self.get_senteces_text_based_nodes(
                         [current_sentence], create_unexistent_nodes=True
                     )
+                )
+
+                # ==========================================================================
+                # PAPER-FAITHFUL EXTRACTION: Deterministic linguistic grounding
+                # Per AMoC paper Figures 4-6: Extract adjectives and prepositional objects
+                # BEFORE LLM enrichment.
+                # ==========================================================================
+                self._extract_deterministic_structure(
+                    current_sentence,
+                    current_sentence_text_based_nodes,
+                    current_sentence_text_based_words,
                 )
 
                 # union phrase-level + explicit nodes
@@ -1671,7 +1684,7 @@ class AMoCv4:
                         source_node,
                         dest_node,
                         edge_label,
-                        self.edge_forget,
+                        self.edge_visibility,
                     )
 
                     # NOTE: Removed node_source filtering - explicit nodes are determined
@@ -2268,7 +2281,7 @@ class AMoCv4:
                 # PROPERTY edges should NOT be reactivated per paper rules
                 if not edge.is_property_edge():
                     edge.mark_as_reactivated(reset_score=True)
-                edge.forget_score = self.edge_forget
+                edge.visibility_score = self.edge_visibility
                 self._record_edge_in_graphs(edge, self._current_sentence_index)
             # Enforce connectivity even in non-strict mode
             self._enforce_graph_connectivity()
@@ -2315,7 +2328,7 @@ class AMoCv4:
             selected = set(valid_indices)
             for i in selected:
                 edge = edges[i - 1]
-                edge.forget_score = self.edge_forget
+                edge.visibility_score = self.edge_visibility
                 # Use proper state management - mark as reactivated
                 # PROPERTY edges should NOT be reactivated per paper rules
                 if not edge.is_property_edge():
@@ -2334,21 +2347,21 @@ class AMoCv4:
                 G.add_node(n)
             return nx.is_connected(G) if G.number_of_nodes() > 1 else True
 
-        # AMoC v4 STEP 7: Edge decay via fade_away()
+        # AMoC v4 STEP 7: Edge decay via reduce_visibility()
         # Per paper Section 3.1:
-        # - Non-relevant edges fade away (forget_score decrements)
-        # - When forget_score reaches 0, edge becomes inactive
+        # - Non-relevant edges fade away (visibility_score decrements)
+        # - When visibility_score reaches 0, edge becomes inactive
         for j in range(1, len(edges) + 1):
             edge = edges[j - 1]
             if j not in selected and edges[j - 1] not in newly_added_edges:
-                # Paper-faithful: use fade_away() for gradual decay
-                edge.fade_away()
+                # Paper-faithful: use reduce_visibility() for gradual decay
+                edge.reduce_visibility()
 
                 if not _active_subgraph_connected():
                     # Keep as connectivity bridge - mark as CONNECTOR, not reactivated
                     # Connectors don't count as asserted/reactivated
                     edge.mark_as_connector()
-                    edge.forget_score = 0  # lowest salience
+                    edge.visibility_score = 0  # lowest salience
                     # Record bridge edges in active_graph to prevent disconnection in plots
                     self._record_edge_in_graphs(edge, self._current_sentence_index)
                 else:
@@ -2357,9 +2370,132 @@ class AMoCv4:
         # Final connectivity sweep - ensure the entire graph remains connected
         self._enforce_graph_connectivity()
 
+    # ==========================================================================
+    # PAPER-FAITHFUL EXTRACTION: Deterministic linguistic extraction
+    # Per AMoC paper Figures 4-6: Adjectives become PROPERTY nodes, prepositional
+    # objects become CONCEPT nodes. All extraction is rule-based (no LLM).
+    # ==========================================================================
+
+    def _extract_deterministic_structure(
+        self,
+        sent: Span,
+        current_sentence_text_based_nodes: List[Node],
+        current_sentence_text_based_words: List[str],
+    ) -> None:
+        """
+        Extract deterministic linguistic structure from a sentence.
+
+        Per AMoC paper Figures 4-6:
+        1. Adjectival modifiers (amod, acomp, attr) → PROPERTY nodes with 'is' edges
+        2. Prepositional objects (prep → pobj) → CONCEPT nodes with verb_prep edges
+
+        This runs BEFORE LLM calls to ensure linguistic grounding exists first.
+        """
+        # 1. Extract adjectival modifiers → PROPERTY nodes
+        adj_modifiers = extract_adjectival_modifiers(sent)
+        for mod in adj_modifiers:
+            adj_lemma = mod['adjective']
+            head_lemma = mod['head_noun']
+
+            # Find or skip if head noun is not already a CONCEPT node
+            head_node = None
+            for node in current_sentence_text_based_nodes:
+                if head_lemma in node.lemmas:
+                    head_node = node
+                    break
+
+            if head_node is None:
+                # Head noun not in current sentence nodes - skip
+                continue
+
+            # Create PROPERTY node for the adjective
+            property_node = self.graph.add_or_get_node(
+                [adj_lemma],
+                adj_lemma,
+                NodeType.PROPERTY,
+                NodeSource.TEXT_BASED,
+            )
+
+            # Track that this is a text-based node from current sentence
+            if property_node not in current_sentence_text_based_nodes:
+                current_sentence_text_based_nodes.append(property_node)
+                current_sentence_text_based_words.append(adj_lemma)
+
+            # Create edge: concept --is--> property
+            edge = self.graph.add_edge(
+                head_node,
+                property_node,
+                "is",
+                self.edge_visibility,
+                created_at_sentence=self._current_sentence_index,
+            )
+            if edge is not None:
+                edge.mark_as_asserted(reset_score=True)
+                self._record_edge_in_graphs(edge, self._current_sentence_index)
+                logging.debug(
+                    f"[Deterministic] Created PROPERTY edge: {head_lemma} --is--> {adj_lemma}"
+                )
+
+        # 2. Extract prepositional objects → CONCEPT nodes
+        prep_objects = extract_prepositional_objects(sent)
+        for prep_obj in prep_objects:
+            subj_lemma = prep_obj['subject']
+            obj_lemma = prep_obj['object']
+            edge_label = prep_obj['label']
+
+            # Find the subject node
+            subj_node = None
+            for node in current_sentence_text_based_nodes:
+                if subj_lemma in node.lemmas:
+                    subj_node = node
+                    break
+
+            if subj_node is None:
+                # Subject not in current sentence nodes - skip
+                continue
+
+            # Create CONCEPT node for the prepositional object
+            obj_node = self.graph.add_or_get_node(
+                [obj_lemma],
+                obj_lemma,
+                NodeType.CONCEPT,
+                NodeSource.TEXT_BASED,
+            )
+
+            # Track that this is a text-based node from current sentence
+            if obj_node not in current_sentence_text_based_nodes:
+                current_sentence_text_based_nodes.append(obj_node)
+                current_sentence_text_based_words.append(obj_lemma)
+
+            # Create edge: subject --verb_prep--> object
+            edge = self.graph.add_edge(
+                subj_node,
+                obj_node,
+                edge_label,
+                self.edge_visibility,
+                created_at_sentence=self._current_sentence_index,
+            )
+            if edge is not None:
+                edge.mark_as_asserted(reset_score=True)
+                self._record_edge_in_graphs(edge, self._current_sentence_index)
+                logging.debug(
+                    f"[Deterministic] Created prep edge: {subj_lemma} --{edge_label}--> {obj_lemma}"
+                )
+
     def init_graph(self, sent: Span) -> None:
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
             self.get_senteces_text_based_nodes([sent], create_unexistent_nodes=True)
+        )
+
+        # ==========================================================================
+        # PAPER-FAITHFUL EXTRACTION: Deterministic linguistic grounding
+        # Per AMoC paper Figures 4-6: Extract adjectives and prepositional objects
+        # BEFORE LLM enrichment. This ensures "young" and "forest" appear in Sentence 1.
+        # ==========================================================================
+        self._extract_deterministic_structure(
+            sent,
+            current_sentence_text_based_nodes,
+            current_sentence_text_based_words,
         )
 
         nodes_from_text = ""
@@ -2437,7 +2573,7 @@ class AMoCv4:
                 source_node,
                 dest_node,
                 edge_label,
-                self.edge_forget,
+                self.edge_visibility,
             )
 
     def add_inferred_relationships_to_graph_step_0(
@@ -2541,7 +2677,7 @@ class AMoCv4:
                 source_node,
                 dest_node,
                 edge_label,
-                self.edge_forget,
+                self.edge_visibility,
             )
 
     def add_inferred_relationships_to_graph(
@@ -2647,7 +2783,7 @@ class AMoCv4:
                 source_node,
                 dest_node,
                 edge_label,
-                self.edge_forget,
+                self.edge_visibility,
             )
             if potential_edge:
                 added_edges.append(potential_edge)
