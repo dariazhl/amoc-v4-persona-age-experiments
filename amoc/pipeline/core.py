@@ -20,6 +20,8 @@ from amoc.nlp.spacy_utils import (
     get_content_words_from_sent,
     extract_adjectival_modifiers,
     extract_prepositional_objects,
+    canonicalize_edge_label,
+    is_adverb_token,
 )
 from collections import deque
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
@@ -992,20 +994,18 @@ class AMoCv4:
 
     def _normalize_edge_label(self, label: str) -> str:
         """
-        Normalize edge label to preserve full verb phrases per AMoC v4 paper.
+        Normalize edge label per AMoC v4 paper.
 
-        Per paper Figures 2-4, edge labels are FULL verb phrases:
-        - "rode through" (not just "ride")
-        - "was kidnapping" (not just "kidnap")
-        - "wanted to free" (not just "want free")
-        - "is unfamiliar with" (preserves copula + adjective + preposition)
+        Preserves original verb tense/form while:
+        - Absorbing adverbs into the label (adverbs modify actions, not the world)
+        - Preserving prepositions for verb+prep constructions
+        - Preserving phrasal verb particles
 
-        Key changes from previous implementation:
-        1. Preserve auxiliaries (was, were, is, has, had)
-        2. Preserve prepositions (through, to, from, with)
-        3. Preserve infinitive markers (to)
-        4. Keep original word order and tense
-        5. Only lowercase, don't lemmatize (to preserve "was kidnapping" not "be kidnap")
+        Examples:
+        - "rode through" → "rode through" (preserved)
+        - "rode fast" → "rode fast" (adverb absorbed)
+        - "was kidnapping" → "was kidnapping" (preserved)
+        - "is unfamiliar with" → "is unfamiliar with" (preserved)
         """
         if not label or not isinstance(label, str):
             return label
@@ -1014,60 +1014,10 @@ class AMoCv4:
         if not label:
             return label
 
-        doc = self.spacy_nlp(label)
-
-        # Collect tokens that form a valid verb phrase
-        # Include: VERB, AUX, ADV, ADP (prepositions), PART (particles like "to")
-        phrase_tokens = []
-        has_verb = False
-
-        for tok in doc:
-            if not getattr(tok, "is_alpha", False):
-                continue
-
-            pos = tok.pos_
-
-            # Include verbs and auxiliaries (preserving tense)
-            if pos in {"VERB", "AUX"}:
-                has_verb = True
-                # Use lowercase text to preserve tense ("was" not "be")
-                phrase_tokens.append(tok.text.lower())
-
-            # Include prepositions (through, to, from, with, etc.)
-            elif pos == "ADP":
-                phrase_tokens.append(tok.text.lower())
-
-            # Include particles (infinitive "to", phrasal verb particles "up", "down")
-            elif pos == "PART":
-                phrase_tokens.append(tok.text.lower())
-
-            # Include adverbs that modify the verb
-            elif pos == "ADV":
-                phrase_tokens.append(tok.text.lower())
-
-            # Skip nouns, adjectives (except in copula constructions)
-            # For "is unfamiliar with", we need to keep the adjective
-            elif pos == "ADJ":
-                # Only include adjective if it follows a copula (is, was, were, be)
-                # Check if previous token was a copula
-                if phrase_tokens and phrase_tokens[-1] in {
-                    "is",
-                    "was",
-                    "were",
-                    "be",
-                    "been",
-                    "being",
-                }:
-                    phrase_tokens.append(tok.text.lower())
-
-        if not has_verb:
-            # No verb found - return original label (will be rejected by validation)
-            return label
+        # Use the centralized canonicalization function
+        result = canonicalize_edge_label(self.spacy_nlp, label)
 
         # Reject malformed labels (too short, repeated syllables, non-alphabetic noise)
-        result = " ".join(phrase_tokens)
-
-        # Detect and reject malformed labels like "beidnapap", "fckilltt"
         if len(result) > 0:
             # Check for repeated character sequences (sign of corruption)
             if re.search(r"(.)\1{2,}", result):  # 3+ repeated chars

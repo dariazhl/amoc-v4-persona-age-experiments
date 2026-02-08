@@ -71,16 +71,162 @@ def get_content_words_from_sent(nlp, sent: Span) -> List[Token]:
     return content_words
 
 
-def get_verb_with_adverbs(verb: str) -> str:
+def get_verb_with_adverbs(verb_token: Token) -> str:
+    """
+    Extract verb lemma with any adverb modifiers.
+
+    Per AMoC paper: Adverbs modify actions, not the world.
+    Adverbs are absorbed into edge labels, not represented as nodes.
+
+    Args:
+        verb_token: A spaCy Token representing a verb
+
+    Returns:
+        Canonical verb form with adverbs (e.g., "ride fast", "fight bravely")
+    """
+    if verb_token is None:
+        return ""
+
+    # Get the verb lemma (canonical form)
+    verb_lemma = verb_token.lemma_.lower()
+
+    # Collect adverb modifiers (excluding negation)
     adverbs = [
-        tkn.lemma_
-        for tkn in verb.children
-        if tkn.dep_ == "advmod" and tkn.pos_ == "ADV" and tkn.lemma_ not in {"not"}
+        tkn.lemma_.lower()
+        for tkn in verb_token.children
+        if tkn.dep_ == "advmod" and tkn.pos_ == "ADV" and tkn.lemma_.lower() not in {"not", "n't"}
     ]
 
     if adverbs:
-        return f"{verb.lemma_}({' '.join(adverbs)})"
-    return verb.lemma_
+        # Format: "verb adverb" (e.g., "ride fast")
+        return f"{verb_lemma} {' '.join(adverbs)}"
+    return verb_lemma
+
+
+# ==========================================================================
+# EDGE LABEL CANONICALIZATION: Per AMoC v4 paper
+# Verbs name actions, not time. The graph remembers meaning, not surface form.
+# ==========================================================================
+
+# Negation words to exclude from adverb absorption
+EXCLUDED_ADVERBS = frozenset({"not", "n't", "never", "no"})
+
+# Auxiliaries to strip from edge labels
+AUXILIARY_VERBS = frozenset({
+    "be", "is", "am", "are", "was", "were", "been", "being",
+    "have", "has", "had", "having",
+    "do", "does", "did",
+    "will", "would", "shall", "should",
+    "can", "could", "may", "might", "must",
+})
+
+
+def canonicalize_edge_label(nlp, label: str) -> str:
+    """
+    Canonicalize an edge label per AMoC v4 paper.
+
+    Preserves original verb tense/form while:
+    - Absorbing adverbs into the label (adverbs modify actions, not the world)
+    - Preserving prepositions for verb+prep constructions
+    - Preserving phrasal verb particles
+
+    Examples:
+    - "rode through" → "rode through" (preserved)
+    - "rode fast" → "rode fast" (adverb absorbed)
+    - "was kidnapping" → "was kidnapping" (preserved)
+    - "is unfamiliar with" → "is unfamiliar with" (preserved)
+
+    Args:
+        nlp: spaCy language model
+        label: Raw edge label string
+
+    Returns:
+        Canonicalized edge label with original verb form
+    """
+    if not label or not isinstance(label, str):
+        return label
+
+    label = label.strip()
+    if not label:
+        return label
+
+    doc = nlp(label)
+    if len(doc) == 0:
+        return label
+
+    # Collect tokens in order, preserving verb forms
+    parts = []
+    has_verb = False
+
+    for tok in doc:
+        pos = tok.pos_
+
+        if pos in {"VERB", "AUX"}:
+            # Preserve original verb form (not lemmatized)
+            has_verb = True
+            parts.append(tok.text.lower())
+        elif pos == "ADV":
+            # Adverb - absorb into label if not negation
+            if tok.lemma_.lower() not in EXCLUDED_ADVERBS:
+                parts.append(tok.text.lower())
+        elif pos == "ADP":
+            # Preposition - keep for verb+prep constructions
+            parts.append(tok.text.lower())
+        elif pos == "PART":
+            # Particle (phrasal verb particles like "up", "down", or infinitive "to")
+            parts.append(tok.text.lower())
+        elif pos == "ADJ":
+            # Adjective in copula constructions (e.g., "is unfamiliar")
+            parts.append(tok.text.lower())
+
+    if not has_verb and not parts:
+        # No verb found - return original
+        return label
+
+    return " ".join(parts)
+
+
+def extract_adverbs_from_sentence(sent: Span, verb_token: Token) -> List[str]:
+    """
+    Extract adverbs that modify a specific verb in a sentence.
+
+    Per AMoC paper: Adverbs modify actions and should be absorbed
+    into edge labels, not represented as separate nodes.
+
+    Args:
+        sent: spaCy Span representing the sentence
+        verb_token: The verb Token to find adverb modifiers for
+
+    Returns:
+        List of adverb lemmas that modify the verb
+    """
+    if verb_token is None:
+        return []
+
+    adverbs = []
+    for tok in sent:
+        # Check if this token is an adverb modifying our verb
+        if (
+            tok.pos_ == "ADV"
+            and tok.dep_ == "advmod"
+            and tok.head == verb_token
+            and tok.lemma_.lower() not in EXCLUDED_ADVERBS
+        ):
+            adverbs.append(tok.lemma_.lower())
+
+    return adverbs
+
+
+def is_adverb_token(token: Token) -> bool:
+    """
+    Check if a token is an adverb.
+
+    Per AMoC paper: Adverbs must never be displayed as nodes.
+    This helper is used to filter out adverbs from node creation.
+    """
+    if token is None:
+        return False
+    return token.pos_ == "ADV"
 
 
 def get_concept_lemmas(nlp, concept: str) -> List[str]:

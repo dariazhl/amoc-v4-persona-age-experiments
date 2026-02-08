@@ -35,7 +35,7 @@ def _maybe_embed(text: str) -> Optional["np.ndarray"]:
 
 class Edge:
     # Default activation score for new edges
-    DEFAULT_ACTIVATION_SCORE: int = 3
+    DEFAULT_ACTIVATION_SCORE: int = 2
 
     def __init__(
         self,
