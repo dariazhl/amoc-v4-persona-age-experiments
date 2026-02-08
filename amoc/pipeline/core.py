@@ -73,6 +73,7 @@ class AMoCv4:
         strict_attachament_constraint: bool = True,
         single_anchor_hub: bool = True,
         matrix_dir_base: Optional[str] = None,
+        allow_multi_edges: bool = False,
     ) -> None:
         self.persona = persona_description
         self.story_text = story_text
@@ -118,6 +119,18 @@ class AMoCv4:
         self.strict_reactivate_function = strict_reactivate_function
         self.strict_attachament_constraint = strict_attachament_constraint
         self.single_anchor_hub = single_anchor_hub
+        # ==========================================================================
+        # PAPER-ALIGNED SINGLE-EDGE POLICY
+        # ==========================================================================
+        # Per AMoC paper (Figures 2–6): At most one edge exists between any ordered
+        # node pair ⟨subject, object⟩ at any time. Later relations replace earlier ones.
+        # When allow_multi_edges=False (default, paper-aligned):
+        #   - New edges between existing node pairs REPLACE the old edge
+        #   - This models memory abstraction via replacement + decay
+        # When allow_multi_edges=True (experimental):
+        #   - Multiple edges can exist between the same nodes
+        #   - Used for debugging or alternative memory models
+        self.allow_multi_edges = allow_multi_edges
         self._current_sentence_text: str = ""
         # Separate memory (cumulative) vs salience (active) graphs for auditing.
         self.cumulative_graph = nx.MultiDiGraph()
@@ -472,8 +485,8 @@ class AMoCv4:
             for other in recent:
                 if node == other:
                     continue
-                if self._has_edge_between(node, other):
-                    continue
+                # NOTE: Removed _has_edge_between pre-check.
+                # Edge replacement is now handled in _add_edge (paper-aligned single-edge policy).
                 candidate_pairs.add(frozenset((node, other)))
         if not candidate_pairs:
             return []
@@ -539,8 +552,8 @@ class AMoCv4:
             pair_key = frozenset((subj_node, obj_node))
             if pair_key not in candidate_pairs:
                 continue
-            if self._has_edge_between(subj_node, obj_node):
-                continue
+            # NOTE: Removed _has_edge_between pre-check.
+            # Edge replacement is now handled in _add_edge (paper-aligned single-edge policy).
 
             # AMoCv4 surface-relation format: direct edge between entities
             # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
@@ -603,6 +616,23 @@ class AMoCv4:
         edge_forget: int,
         created_at_sentence: Optional[int] = None,
     ) -> Optional[Edge]:
+        """
+        Add or replace an edge between source_node and dest_node.
+
+        ==========================================================================
+        PAPER-ALIGNED SINGLE-EDGE SEMANTICS (AMoC Figures 2–6)
+        ==========================================================================
+        When allow_multi_edges=False (default, paper-aligned):
+          - At most ONE edge exists between any ordered ⟨source, dest⟩ pair
+          - If an edge already exists, it is REPLACED with the new label
+          - This models memory abstraction: later actions override earlier ones
+          - The LLM proposes relations; the AMoC system decides what is remembered
+
+        When allow_multi_edges=True (experimental):
+          - Multiple edges can accumulate between the same node pair
+          - Used for debugging or alternative memory models
+        ==========================================================================
+        """
         # Canonicalize relation label before edge creation
         # Removes parser prefixes/artifacts and normalizes format
         label = Graph.canonicalize_relation_label(label)
@@ -636,7 +666,7 @@ class AMoCv4:
 
             # HARD GUARD: at least one endpoint must be attachable
             if source_node not in attachable and dest_node not in attachable:
-                return None  # ← THIS is the missing enforcement
+                return None
 
         use_sentence = (
             created_at_sentence
@@ -644,6 +674,45 @@ class AMoCv4:
             else getattr(self, "_current_sentence_index", None)
         )
 
+        # ==========================================================================
+        # SINGLE-EDGE POLICY: Replace existing edge if allow_multi_edges=False
+        # ==========================================================================
+        # Per AMoC paper: graphs display a single semantic relation between entities.
+        # Later actions override/replace earlier ones (memory abstraction).
+        if not self.allow_multi_edges:
+            existing_edge = self._get_existing_edge_between_nodes(source_node, dest_node)
+            if existing_edge is not None:
+                # REPLACE existing edge: update label, reset activation/visibility
+                old_label = existing_edge.label
+                existing_edge.label = label
+                existing_edge.visibility_score = edge_forget
+                existing_edge.created_at_sentence = use_sentence
+                existing_edge.mark_as_asserted(reset_score=True)
+
+                if self.debug:
+                    logging.debug(
+                        "[SingleEdge] Replaced edge: %s --%s--> %s (was: %s)",
+                        source_node.get_text_representer(),
+                        label,
+                        dest_node.get_text_representer(),
+                        old_label,
+                    )
+
+                # Update triplet intro tracking with new label
+                trip_id = (
+                    existing_edge.source_node.get_text_representer(),
+                    existing_edge.label,
+                    existing_edge.dest_node.get_text_representer(),
+                )
+                if trip_id not in self._triplet_intro:
+                    self._triplet_intro[trip_id] = (
+                        use_sentence if use_sentence is not None else -1
+                    )
+
+                self._record_edge_in_graphs(existing_edge, self._current_sentence_index)
+                return existing_edge
+
+        # No existing edge (or allow_multi_edges=True): create new edge
         edge = self.graph.add_edge(
             source_node,
             dest_node,
@@ -1150,16 +1219,18 @@ class AMoCv4:
         """
         Normalize edge label per AMoC v4 paper.
 
-        Preserves original verb tense/form while:
-        - Absorbing adverbs into the label (adverbs modify actions, not the world)
-        - Preserving prepositions for verb+prep constructions
-        - Preserving phrasal verb particles
+        Converts all verbs to simple present tense (canonical form):
+        - Progressive constructions are converted to present tense
+        - Absorbs adverbs into the label (adverbs modify actions, not the world)
+        - Preserves prepositions for verb+prep constructions
+        - Preserves copula + adjective constructions
 
         Examples:
-        - "rode through" → "rode through" (preserved)
-        - "rode fast" → "rode fast" (adverb absorbed)
-        - "was kidnapping" → "was kidnapping" (preserved)
-        - "is unfamiliar with" → "is unfamiliar with" (preserved)
+        - "is walking" → "walks" (progressive → present)
+        - "was kidnapping" → "kidnaps" (progressive → present)
+        - "running through" → "runs through" (gerund → present + prep)
+        - "is unfamiliar with" → "is unfamiliar with" (copula+adj preserved)
+        - "rode fast" → "rides fast" (past → present + adverb)
         """
         if not label or not isinstance(label, str):
             return label
@@ -1246,6 +1317,22 @@ class AMoCv4:
                 if relation_lemma in edge.label.lower():
                     return True
         return False
+
+    def _get_existing_edge_between_nodes(
+        self, source_node: Node, dest_node: Node
+    ) -> Optional[Edge]:
+        """
+        Find an existing DIRECTED edge from source_node to dest_node.
+
+        Per AMoC paper: edges are directed semantic propositions.
+        (A → B) is distinct from (B → A).
+
+        Returns the existing edge if found, None otherwise.
+        """
+        for edge in source_node.edges:
+            if edge.source_node == source_node and edge.dest_node == dest_node:
+                return edge
+        return None
 
     def _find_node_by_text(
         self, text: str, candidates: Iterable[Node]
@@ -1407,6 +1494,8 @@ class AMoCv4:
                 # LAYOUT POLICY: Pass activation scores for edge thickness/alpha
                 edge_activation_scores=self._get_edge_activation_scores(),
                 layout_from_active_only=True,
+                # PAPER-ALIGNED: Pass single-edge policy to plotting
+                allow_multi_edges=self.allow_multi_edges,
                 # TASK 2: Pass active triplets for overlay
                 # Triplets originate from _graph_edges_to_triplets() or triplets_override
                 active_triplets_for_overlay=active_triplets_for_overlay,

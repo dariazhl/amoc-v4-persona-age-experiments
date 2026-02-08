@@ -489,33 +489,33 @@ def _compute_label_position_curved(
     t: float = 0.5,
 ) -> Tuple[float, float]:
     """
-    Compute label position along a curved edge (quadratic Bezier approximation).
+    Compute label position along a curved edge (quadratic Bezier matching matplotlib arc3).
 
     For a curved edge from u to v with given curvature, compute the position
     at parameter t (0=start, 1=end, 0.5=middle).
 
-    The curve is approximated as a quadratic Bezier with control point
-    offset perpendicular to the edge midpoint.
+    The curve matches matplotlib's arc3 connectionstyle where the control point
+    is offset perpendicular to the midpoint by curvature * edge_length.
     """
     x1, y1 = pos[u]
     x2, y2 = pos[v]
-
-    # Midpoint
-    mx, my = (x1 + x2) / 2, (y1 + y2) / 2
 
     # Edge vector and perpendicular
     dx, dy = x2 - x1, y2 - y1
     length = math.hypot(dx, dy)
 
     if length < 1e-6:
-        return mx, my
+        return (x1 + x2) / 2, (y1 + y2) / 2
 
-    # Perpendicular unit vector (rotated 90 degrees)
+    # Midpoint
+    mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+
+    # Perpendicular unit vector (rotated 90 degrees counterclockwise)
     px, py = -dy / length, dx / length
 
-    # Control point offset by curvature * edge_length
-    # (curvature is the arc3 rad parameter, scale appropriately)
-    offset = curvature * length * 0.5
+    # Control point offset: matplotlib arc3 uses offset = rad * length
+    # where rad is the curvature parameter
+    offset = curvature * length
     cx, cy = mx + px * offset, my + py * offset
 
     # Quadratic Bezier: B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2
@@ -536,11 +536,11 @@ def _compute_label_angle_along_edge(
     """
     Compute the rotation angle (in degrees) for a label to align along the edge direction.
 
-    TASK 1 FIX: Labels must be placed ALONG the edge, not perpendicular.
+    Labels are placed ALONG the curved edge, following the tangent direction.
     This computes the tangent angle of the Bezier curve at parameter t.
 
-    For quadratic Bezier at t=0.5, the tangent is parallel to the chord (P2-P0).
-    For other t values, we compute the actual Bezier derivative.
+    For quadratic Bezier, the tangent at t is: B'(t) = 2[(1-t)(P1-P0) + t(P2-P1)]
+    This gives the direction the curve is traveling at that point.
 
     The angle is normalized to keep text readable:
     - If angle would make text upside-down (90° < angle < 270°), flip by 180°
@@ -559,16 +559,15 @@ def _compute_label_angle_along_edge(
         return 0.0  # No rotation for zero-length edges
 
     # For quadratic Bezier, tangent at t is: B'(t) = 2[(1-t)(P1-P0) + t(P2-P1)]
-    # At t=0.5, this simplifies to P2-P0 (the chord direction)
-    # For other t values with curvature, we need the control point
-    if abs(curvature) < 1e-6 or t == 0.5:
-        # No curvature or at midpoint: tangent is chord direction
+    # We need to compute the control point matching matplotlib's arc3 style
+    if abs(curvature) < 1e-6:
+        # No curvature: tangent is chord direction
         tangent_x, tangent_y = dx, dy
     else:
-        # Compute control point
+        # Compute control point (matching matplotlib arc3: offset = rad * length)
         mx, my = (x1 + x2) / 2, (y1 + y2) / 2
         px, py = -dy / length, dx / length
-        offset = curvature * length * 0.5
+        offset = curvature * length
         cx, cy = mx + px * offset, my + py * offset
 
         # Bezier derivative: B'(t) = 2[(1-t)(P1-P0) + t(P2-P1)]
@@ -703,7 +702,7 @@ def plot_amoc_triplets(
     show_all_edges: bool = False,
     edge_activation_scores: Optional[Dict[Tuple[str, str, str], int]] = None,
     layout_from_active_only: bool = True,
-    allow_multi_edges: bool = True,  # Flag to control multiple edges between same nodes
+    allow_multi_edges: bool = False,  # Paper-aligned: single edge per node pair (default)
     active_triplets_for_overlay: Optional[List[Tuple[str, str, str]]] = None,  # TASK 2: Triplet overlay
     show_triplet_overlay: bool = True,  # TASK 2: Control overlay visibility
 ) -> str:

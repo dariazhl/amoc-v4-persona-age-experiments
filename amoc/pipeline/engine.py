@@ -41,6 +41,7 @@ class AgeAwareAMoCEngine:
         story_text: Optional[str] = None,
         matrix_dir_base: Optional[str] = None,
         force_node: bool = False,
+        allow_multi_edges: bool = False,
     ) -> List[Tuple[str, str, str]]:
 
         try:
@@ -67,6 +68,7 @@ class AgeAwareAMoCEngine:
             strict_attachament_constraint=strict_attachament_constraint,
             single_anchor_hub=single_anchor_hub,
             matrix_dir_base=matrix_dir_base,
+            allow_multi_edges=allow_multi_edges,
         )
         final_triplets, sentence_triplets, cumulative_triplets = amoc.analyze(
             replace_pronouns=replace_pronouns,

@@ -177,6 +177,17 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Override the default AMoC story text; defaults to configured STORY_TEXT when omitted.",
     )
 
+    p.add_argument(
+        "--allow-multi-edges",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Allow multiple edges between the same ordered node pair (experimental). "
+            "Default (disabled) enforces paper-aligned single-edge policy where later "
+            "relations replace earlier ones."
+        ),
+    )
+
     return p.parse_args(argv)
 
 
@@ -254,6 +265,7 @@ def main(argv: List[str]) -> None:
                 edge_visibility=args.edge_visibility,
                 story_text=story_text,
                 force_node=True,
+                allow_multi_edges=args.allow_multi_edges,
             )
     finally:
         elapsed = time.time() - total_start

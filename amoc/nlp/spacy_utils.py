@@ -106,12 +106,13 @@ def get_verb_with_adverbs(verb_token: Token) -> str:
 # ==========================================================================
 # EDGE LABEL CANONICALIZATION: Per AMoC v4 paper
 # Verbs name actions, not time. The graph remembers meaning, not surface form.
+# Progressive aspect is linguistic noise and must not enter memory.
 # ==========================================================================
 
 # Negation words to exclude from adverb absorption
 EXCLUDED_ADVERBS = frozenset({"not", "n't", "never", "no"})
 
-# Auxiliaries to strip from edge labels
+# Auxiliaries to strip from edge labels (these don't carry semantic content)
 AUXILIARY_VERBS = frozenset({
     "be", "is", "am", "are", "was", "were", "been", "being",
     "have", "has", "had", "having",
@@ -120,28 +121,127 @@ AUXILIARY_VERBS = frozenset({
     "can", "could", "may", "might", "must",
 })
 
+# Copula verbs that can precede adjectives (not progressive constructions)
+COPULA_VERBS = frozenset({"be", "is", "am", "are", "was", "were", "been", "being"})
+
+
+def _is_progressive_verb(token) -> bool:
+    """
+    Check if a token is a progressive/gerund verb form (-ing).
+
+    Detects:
+    - VerbForm=Ger (gerund)
+    - Tense=Pres with Aspect=Prog (present progressive)
+    - Tag VBG (verb, gerund or present participle)
+
+    Returns True if the verb is in progressive form.
+    """
+    if token is None:
+        return False
+
+    # Check POS - must be VERB (not AUX)
+    if token.pos_ != "VERB":
+        return False
+
+    # Check morphology for gerund/progressive
+    morph = token.morph
+    verb_form = morph.get("VerbForm")
+    aspect = morph.get("Aspect")
+
+    # VerbForm=Ger indicates gerund
+    if verb_form and "Ger" in verb_form:
+        return True
+
+    # Aspect=Prog indicates progressive
+    if aspect and "Prog" in aspect:
+        return True
+
+    # Fallback: check spaCy tag (VBG = verb, gerund or present participle)
+    if token.tag_ == "VBG":
+        return True
+
+    # Final check: ends with -ing and is a verb
+    if token.text.lower().endswith("ing") and len(token.text) > 3:
+        return True
+
+    return False
+
+
+def _verb_to_present_tense(lemma: str) -> str:
+    """
+    Convert a verb lemma to simple present tense (3rd person singular).
+
+    This implements standard English morphology rules:
+    - Most verbs: add -s (walk → walks, run → runs)
+    - Verbs ending in -s, -sh, -ch, -x, -z, -o: add -es (go → goes, watch → watches)
+    - Verbs ending in consonant + y: change y to -ies (fly → flies)
+
+    Per AMoC paper: Graph stores canonical semantic actions, not tense.
+    We use present tense as the canonical form.
+    """
+    if not lemma:
+        return lemma
+
+    lemma = lemma.lower().strip()
+
+    # Irregular verbs
+    irregulars = {
+        "be": "is",
+        "have": "has",
+        "do": "does",
+        "go": "goes",
+    }
+    if lemma in irregulars:
+        return irregulars[lemma]
+
+    # Verbs ending in -s, -sh, -ch, -x, -z, -o: add -es
+    if lemma.endswith(("s", "sh", "ch", "x", "z", "o")):
+        return lemma + "es"
+
+    # Verbs ending in consonant + y: change y to -ies
+    if lemma.endswith("y") and len(lemma) > 1:
+        prev_char = lemma[-2]
+        if prev_char not in "aeiou":
+            return lemma[:-1] + "ies"
+
+    # Default: add -s
+    return lemma + "s"
+
 
 def canonicalize_edge_label(nlp, label: str) -> str:
     """
     Canonicalize an edge label per AMoC v4 paper.
 
-    Preserves original verb tense/form while:
+    ==========================================================================
+    PRESENT-TENSE NORMALIZATION (Paper-Aligned)
+    ==========================================================================
+    Per AMoC Figures 2–6:
+    - Relations are canonical semantic actions
+    - Verb tense does not encode narrative time
+    - Progressive aspect (-ing) is never represented in the graph
+    - Memory stores WHAT happened, not HOW it was phrased
+
+    Progressive constructions are converted to simple present tense:
+    - "is walking" → "walks"
+    - "was kidnapping" → "kidnaps"
+    - "is fighting" → "fights"
+    - "running through" → "runs through"
+
+    Copula + adjective constructions are preserved:
+    - "is unfamiliar with" → "is unfamiliar with" (this is NOT progressive)
+
+    Also handles:
     - Absorbing adverbs into the label (adverbs modify actions, not the world)
     - Preserving prepositions for verb+prep constructions
     - Preserving phrasal verb particles
-
-    Examples:
-    - "rode through" → "rode through" (preserved)
-    - "rode fast" → "rode fast" (adverb absorbed)
-    - "was kidnapping" → "was kidnapping" (preserved)
-    - "is unfamiliar with" → "is unfamiliar with" (preserved)
+    ==========================================================================
 
     Args:
         nlp: spaCy language model
         label: Raw edge label string
 
     Returns:
-        Canonicalized edge label with original verb form
+        Canonicalized edge label in simple present tense
     """
     if not label or not isinstance(label, str):
         return label
@@ -154,36 +254,116 @@ def canonicalize_edge_label(nlp, label: str) -> str:
     if len(doc) == 0:
         return label
 
-    # Collect tokens in order, preserving verb forms
-    parts = []
-    has_verb = False
+    # ==========================================================================
+    # PHASE 1: Analyze structure to detect progressive vs copula+adjective
+    # ==========================================================================
+    tokens = list(doc)
+    auxiliaries = []
+    main_verb = None
+    adjective = None
+    other_parts = []  # prepositions, particles, adverbs
 
-    for tok in doc:
+    for tok in tokens:
         pos = tok.pos_
 
-        if pos in {"VERB", "AUX"}:
-            # Preserve original verb form (not lemmatized)
-            has_verb = True
-            parts.append(tok.text.lower())
-        elif pos == "ADV":
-            # Adverb - absorb into label if not negation
-            if tok.lemma_.lower() not in EXCLUDED_ADVERBS:
-                parts.append(tok.text.lower())
+        if pos == "AUX":
+            # Auxiliary verb (is, was, were, have, etc.)
+            auxiliaries.append(tok)
+        elif pos == "VERB":
+            # Main verb - check if it's progressive
+            if main_verb is None:
+                main_verb = tok
+        elif pos == "ADJ":
+            # Adjective - might be copula+adjective construction
+            adjective = tok
         elif pos == "ADP":
             # Preposition - keep for verb+prep constructions
-            parts.append(tok.text.lower())
+            other_parts.append(("prep", tok.text.lower()))
         elif pos == "PART":
-            # Particle (phrasal verb particles like "up", "down", or infinitive "to")
-            parts.append(tok.text.lower())
-        elif pos == "ADJ":
-            # Adjective in copula constructions (e.g., "is unfamiliar")
-            parts.append(tok.text.lower())
+            # Particle (phrasal verb particles or infinitive "to")
+            other_parts.append(("part", tok.text.lower()))
+        elif pos == "ADV":
+            # Adverb - absorb if not negation
+            if tok.lemma_.lower() not in EXCLUDED_ADVERBS:
+                other_parts.append(("adv", tok.text.lower()))
 
-    if not has_verb and not parts:
-        # No verb found - return original
-        return label
+    # ==========================================================================
+    # PHASE 2: Determine construction type and normalize
+    # ==========================================================================
 
-    return " ".join(parts)
+    # Case 1: Copula + Adjective (e.g., "is unfamiliar with")
+    # This is NOT progressive - preserve the structure
+    if auxiliaries and adjective and main_verb is None:
+        # Check if auxiliary is a copula (be-verb)
+        aux_lemmas = {aux.lemma_.lower() for aux in auxiliaries}
+        if aux_lemmas & COPULA_VERBS:
+            # This is copula + adjective - preserve "is" + adjective
+            parts = ["is", adjective.text.lower()]
+            # Add prepositions/particles that follow
+            for part_type, part_text in other_parts:
+                if part_type in ("prep", "part"):
+                    parts.append(part_text)
+            return " ".join(parts)
+
+    # Case 2: Progressive construction (AUX + VBG like "is walking", "was fighting")
+    if main_verb and _is_progressive_verb(main_verb):
+        # Convert progressive to simple present tense
+        verb_lemma = main_verb.lemma_.lower()
+        present_tense = _verb_to_present_tense(verb_lemma)
+
+        # Build result: present-tense verb + prepositions/particles
+        parts = [present_tense]
+        for part_type, part_text in other_parts:
+            if part_type in ("prep", "part"):
+                parts.append(part_text)
+            elif part_type == "adv":
+                # Include adverbs after verb
+                parts.append(part_text)
+        return " ".join(parts)
+
+    # Case 3: Standalone gerund without auxiliary (e.g., "running through")
+    if main_verb and main_verb.text.lower().endswith("ing"):
+        # Convert to present tense even without auxiliary
+        verb_lemma = main_verb.lemma_.lower()
+        present_tense = _verb_to_present_tense(verb_lemma)
+
+        parts = [present_tense]
+        for part_type, part_text in other_parts:
+            if part_type in ("prep", "part"):
+                parts.append(part_text)
+            elif part_type == "adv":
+                parts.append(part_text)
+        return " ".join(parts)
+
+    # Case 4: Regular verb (not progressive) - convert to present tense for consistency
+    if main_verb:
+        verb_lemma = main_verb.lemma_.lower()
+        # Check if already in present tense (simple form)
+        if main_verb.tag_ in {"VBZ", "VBP"}:
+            # Already present tense - keep as is
+            verb_form = main_verb.text.lower()
+        else:
+            # Convert to present tense
+            verb_form = _verb_to_present_tense(verb_lemma)
+
+        parts = [verb_form]
+        for part_type, part_text in other_parts:
+            if part_type in ("prep", "part"):
+                parts.append(part_text)
+            elif part_type == "adv":
+                parts.append(part_text)
+        return " ".join(parts)
+
+    # Case 5: No main verb found - return adjective if present, else original
+    if adjective:
+        parts = [adjective.text.lower()]
+        for part_type, part_text in other_parts:
+            if part_type in ("prep", "part"):
+                parts.append(part_text)
+        return " ".join(parts)
+
+    # Fallback: return original label
+    return label
 
 
 def extract_adverbs_from_sentence(sent: Span, verb_token: Token) -> List[str]:
