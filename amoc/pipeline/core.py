@@ -23,6 +23,8 @@ from amoc.nlp.spacy_utils import (
     extract_prepositional_objects,
     canonicalize_edge_label,
     is_adverb_token,
+    are_semantically_equivalent,
+    get_semantic_class,
 )
 from collections import deque
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
@@ -201,10 +203,14 @@ class AMoCv4:
         """
         Validate that a candidate node lemma has valid story provenance.
 
-        Per AMoC v4 paper:
-        - A node may only be created if its lemma appears in story text
+        ==========================================================================
+        STRICT PROVENANCE VALIDATION (AMoC v4 Paper-Aligned)
+        ==========================================================================
+        Per AMoC v4 paper Figures 2–6:
+        - A node may ONLY be created if its lemma appears in story text
         - Persona-only concepts must NEVER become graph nodes
         - LLM-inferred nodes must be validated against story tokens
+        - NO permissive fallbacks - rejection is the default
 
         Args:
             lemma: The candidate lemma to validate
@@ -215,7 +221,7 @@ class AMoCv4:
         """
         lemma_lower = lemma.lower()
 
-        # HARD GATE: Reject persona-only lemmas
+        # HARD GATE 1: Reject persona-only lemmas
         if lemma_lower in self._persona_only_lemmas:
             if self.debug:
                 logging.debug(
@@ -223,25 +229,25 @@ class AMoCv4:
                 )
             return False
 
-        # SOFT VALIDATION: Check if lemma appears in story text
-        # This is a sanity check - story_lemmas should contain all valid sources
+        # HARD GATE 2: Must appear in story text
         if lemma_lower in self.story_lemmas:
             return True
 
         # Additional validation: check current sentence if provided
+        # This allows nodes from the current sentence being processed
         if current_sentence_text:
             sent_doc = self.spacy_nlp(current_sentence_text)
             sent_lemmas = {tok.lemma_.lower() for tok in sent_doc if tok.is_alpha}
             if lemma_lower in sent_lemmas:
                 return True
 
-        # If not found in story, log warning but allow (for inference flexibility)
-        # The LLM may infer semantically valid nodes that don't match exact lemmas
+        # STRICT: Not in story text - REJECT
+        # Per AMoC paper: only story-grounded nodes allowed
         if self.debug:
             logging.debug(
-                f"PROVENANCE WARNING: Lemma '{lemma_lower}' not found in story lemmas"
+                f"PROVENANCE GATE: Rejected lemma '{lemma_lower}' - not in story_lemmas"
             )
-        return True  # Allow with warning - strict mode would return False
+        return False  # STRICT: Reject nodes not in story text
 
     def _validate_node_provenance_strict(
         self,
@@ -675,42 +681,66 @@ class AMoCv4:
         )
 
         # ==========================================================================
-        # SINGLE-EDGE POLICY: Replace existing edge if allow_multi_edges=False
+        # SINGLE-EDGE POLICY WITH SEMANTIC EQUIVALENCE (AMoC v4 Paper-Aligned)
         # ==========================================================================
         # Per AMoC paper: graphs display a single semantic relation between entities.
-        # Later actions override/replace earlier ones (memory abstraction).
+        #
+        # SEMANTIC REPLACEMENT RULES:
+        # 1. If existing edge is SEMANTICALLY EQUIVALENT → REPLACE with new label
+        #    (e.g., "traverses" and "rides_through" are both MOTION)
+        # 2. If existing edge is SEMANTICALLY INCOMPATIBLE → REJECT new edge
+        #    (e.g., "kidnaps" (CAPTURE) vs "fights" (COMBAT) are different)
+        #
+        # This prevents paraphrase accumulation while allowing semantic updates.
         if not self.allow_multi_edges:
             existing_edge = self._get_existing_edge_between_nodes(source_node, dest_node)
             if existing_edge is not None:
-                # REPLACE existing edge: update label, reset activation/visibility
                 old_label = existing_edge.label
-                existing_edge.label = label
-                existing_edge.visibility_score = edge_forget
-                existing_edge.created_at_sentence = use_sentence
-                existing_edge.mark_as_asserted(reset_score=True)
 
-                if self.debug:
-                    logging.debug(
-                        "[SingleEdge] Replaced edge: %s --%s--> %s (was: %s)",
-                        source_node.get_text_representer(),
-                        label,
-                        dest_node.get_text_representer(),
-                        old_label,
+                # Check semantic equivalence
+                if are_semantically_equivalent(old_label, label):
+                    # REPLACE: semantically equivalent, update to newer form
+                    existing_edge.label = label
+                    existing_edge.visibility_score = edge_forget
+                    existing_edge.created_at_sentence = use_sentence
+                    existing_edge.mark_as_asserted(reset_score=True)
+
+                    if self.debug:
+                        logging.debug(
+                            "[SingleEdge] REPLACED equivalent edge: %s --%s--> %s (was: %s, class: %s)",
+                            source_node.get_text_representer(),
+                            label,
+                            dest_node.get_text_representer(),
+                            old_label,
+                            get_semantic_class(label.split("_")[0] if "_" in label else label),
+                        )
+
+                    # Update triplet intro tracking with new label
+                    trip_id = (
+                        existing_edge.source_node.get_text_representer(),
+                        existing_edge.label,
+                        existing_edge.dest_node.get_text_representer(),
                     )
+                    if trip_id not in self._triplet_intro:
+                        self._triplet_intro[trip_id] = (
+                            use_sentence if use_sentence is not None else -1
+                        )
 
-                # Update triplet intro tracking with new label
-                trip_id = (
-                    existing_edge.source_node.get_text_representer(),
-                    existing_edge.label,
-                    existing_edge.dest_node.get_text_representer(),
-                )
-                if trip_id not in self._triplet_intro:
-                    self._triplet_intro[trip_id] = (
-                        use_sentence if use_sentence is not None else -1
-                    )
-
-                self._record_edge_in_graphs(existing_edge, self._current_sentence_index)
-                return existing_edge
+                    self._record_edge_in_graphs(existing_edge, self._current_sentence_index)
+                    return existing_edge
+                else:
+                    # REJECT: semantically incompatible, keep existing edge
+                    if self.debug:
+                        logging.debug(
+                            "[SingleEdge] REJECTED incompatible edge: %s --%s--> %s (keeping: %s, classes: %s vs %s)",
+                            source_node.get_text_representer(),
+                            label,
+                            dest_node.get_text_representer(),
+                            old_label,
+                            get_semantic_class(label.split("_")[0] if "_" in label else label),
+                            get_semantic_class(old_label.split("_")[0] if "_" in old_label else old_label),
+                        )
+                    return None
 
         # No existing edge (or allow_multi_edges=True): create new edge
         edge = self.graph.add_edge(
@@ -822,8 +852,18 @@ class AMoCv4:
                 explanation,
             )
 
-            # Step 4: Create the edge
-            edge = self.graph.add_edge(
+            # Step 4: Normalize and create the edge through centralized path
+            edge_label = self._normalize_edge_label(edge_label)
+            if not edge_label:
+                logging.warning(
+                    "[Connectivity] Edge label rejected after normalization: %s --%s--> %s",
+                    node_a_text,
+                    result.get("label", "relates to"),
+                    node_b_text,
+                )
+                continue
+
+            edge = self._add_edge(
                 isolated_node,
                 focus_node,
                 edge_label,
@@ -1219,18 +1259,24 @@ class AMoCv4:
         """
         Normalize edge label per AMoC v4 paper.
 
-        Converts all verbs to simple present tense (canonical form):
-        - Progressive constructions are converted to present tense
-        - Absorbs adverbs into the label (adverbs modify actions, not the world)
-        - Preserves prepositions for verb+prep constructions
-        - Preserves copula + adjective constructions
+        ==========================================================================
+        AMoC v4 CANONICAL EDGE LABELS
+        ==========================================================================
+        - Converts all verbs to simple present tense (canonical form)
+        - Uses underscore formatting for multi-word labels
+        - REJECTS modal/intentional verbs entirely (returns "")
+        - Removes copula from adjective constructions
 
         Examples:
-        - "is walking" → "walks" (progressive → present)
-        - "was kidnapping" → "kidnaps" (progressive → present)
-        - "running through" → "runs through" (gerund → present + prep)
-        - "is unfamiliar with" → "is unfamiliar with" (copula+adj preserved)
-        - "rode fast" → "rides fast" (past → present + adverb)
+        - "is walking" → "walks"
+        - "was kidnapping" → "kidnaps"
+        - "running through" → "runs_through"
+        - "is unfamiliar with" → "unfamiliar_with"
+        - "rode through" → "rides_through"
+
+        REJECTIONS (returns ""):
+        - "wants to free" → "" (modal verb)
+        - "tries to escape" → "" (intentional verb)
         """
         if not label or not isinstance(label, str):
             return label
@@ -1665,8 +1711,11 @@ class AMoCv4:
                 # are explicit by definition
 
                 # Populate _anchor_nodes from first sentence's explicit nodes
-                # to ensure connectivity checks have a valid anchor set
-                self._anchor_nodes = set(current_sentence_text_based_nodes)
+                # Per AMoC paper: anchors are CONCEPT nodes only (not PROPERTY)
+                self._anchor_nodes = {
+                    n for n in current_sentence_text_based_nodes
+                    if n.node_type != NodeType.PROPERTY
+                }
                 inferred_concept_relationships, inferred_property_relationships = (
                     self.infer_new_relationships_step_0(sent)
                 )
@@ -1972,10 +2021,11 @@ class AMoCv4:
 
                 # Update anchor nodes to include current explicit nodes and
                 # nodes with active edges to maintain connectivity across sentences
+                # Per AMoC paper: anchors are CONCEPT nodes only (not PROPERTY)
                 self._anchor_nodes = (
                     self._anchor_nodes
-                    | set(current_sentence_text_based_nodes)
-                    | self._get_nodes_with_active_edges()
+                    | {n for n in current_sentence_text_based_nodes if n.node_type != NodeType.PROPERTY}
+                    | {n for n in self._get_nodes_with_active_edges() if n.node_type != NodeType.PROPERTY}
                 )
 
                 # ACTIVE CONNECTIVITY PRESERVATION (per AMoC v4 paper)
@@ -2643,8 +2693,8 @@ class AMoCv4:
                 current_sentence_text_based_nodes.append(property_node)
                 current_sentence_text_based_words.append(adj_lemma)
 
-            # Create edge: concept --is--> property
-            edge = self.graph.add_edge(
+            # Create edge: concept --is--> property (through centralized path)
+            edge = self._add_edge(
                 head_node,
                 property_node,
                 "is",
@@ -2652,8 +2702,6 @@ class AMoCv4:
                 created_at_sentence=self._current_sentence_index,
             )
             if edge is not None:
-                edge.mark_as_asserted(reset_score=True)
-                self._record_edge_in_graphs(edge, self._current_sentence_index)
                 logging.debug(
                     f"[Deterministic] Created PROPERTY edge: {head_lemma} --is--> {adj_lemma}"
                 )
@@ -2698,8 +2746,12 @@ class AMoCv4:
                 current_sentence_text_based_nodes.append(obj_node)
                 current_sentence_text_based_words.append(obj_lemma)
 
-            # Create edge: subject --verb_prep--> object
-            edge = self.graph.add_edge(
+            # Normalize and create edge through centralized path
+            edge_label = self._normalize_edge_label(edge_label)
+            if not edge_label:
+                continue
+
+            edge = self._add_edge(
                 subj_node,
                 obj_node,
                 edge_label,
@@ -2707,8 +2759,6 @@ class AMoCv4:
                 created_at_sentence=self._current_sentence_index,
             )
             if edge is not None:
-                edge.mark_as_asserted(reset_score=True)
-                self._record_edge_in_graphs(edge, self._current_sentence_index)
                 logging.debug(
                     f"[Deterministic] Created prep edge: {subj_lemma} --{edge_label}--> {obj_lemma}"
                 )

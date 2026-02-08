@@ -124,6 +124,133 @@ AUXILIARY_VERBS = frozenset({
 # Copula verbs that can precede adjectives (not progressive constructions)
 COPULA_VERBS = frozenset({"be", "is", "am", "are", "was", "were", "been", "being"})
 
+# ==========================================================================
+# MODAL VERBS: Must cause edge REJECTION per AMoC v4 paper
+# ==========================================================================
+# Modal/intentional verbs encode mental states, not world-state changes.
+# Edges like "wants to free" or "tries to escape" must be rejected entirely.
+# The graph stores WHAT happened, not intentions or attempts.
+MODAL_VERBS = frozenset({
+    "want", "wants", "wanted", "wanting",
+    "try", "tries", "tried", "trying",
+    "plan", "plans", "planned", "planning",
+    "intend", "intends", "intended", "intending",
+    "hope", "hopes", "hoped", "hoping",
+    "wish", "wishes", "wished", "wishing",
+    "need", "needs", "needed", "needing",
+    "expect", "expects", "expected", "expecting",
+    "decide", "decides", "decided", "deciding",
+    "attempt", "attempts", "attempted", "attempting",
+    "desire", "desires", "desired", "desiring",
+    "prefer", "prefers", "preferred", "preferring",
+})
+
+# ==========================================================================
+# SEMANTIC CLASSES: For edge equivalence checking
+# ==========================================================================
+# Edges in the same semantic class between the same node pair are equivalent.
+# Only one edge per semantic class is allowed between any ordered node pair.
+SEMANTIC_CLASSES = {
+    # MOTION: verbs describing movement
+    "MOTION": frozenset({
+        "go", "goes", "ride", "rides", "walk", "walks", "run", "runs",
+        "travel", "travels", "move", "moves", "come", "comes", "leave", "leaves",
+        "enter", "enters", "exit", "exits", "pass", "passes", "cross", "crosses",
+        "traverse", "traverses", "journey", "journeys", "wander", "wanders",
+        "gallop", "gallops", "trot", "trots", "march", "marches",
+    }),
+    # LOCATION: verbs describing position/presence
+    "LOCATION": frozenset({
+        "is", "be", "stay", "stays", "remain", "remains", "sit", "sits",
+        "stand", "stands", "live", "lives", "dwell", "dwells", "reside", "resides",
+        "locate", "locates", "exist", "exists", "inhabit", "inhabits",
+    }),
+    # CAPTURE: verbs describing taking/holding
+    "CAPTURE": frozenset({
+        "kidnap", "kidnaps", "capture", "captures", "take", "takes",
+        "seize", "seizes", "grab", "grabs", "hold", "holds", "imprison", "imprisons",
+        "abduct", "abducts", "detain", "detains", "trap", "traps",
+    }),
+    # COMBAT: verbs describing fighting
+    "COMBAT": frozenset({
+        "fight", "fights", "battle", "battles", "attack", "attacks",
+        "strike", "strikes", "hit", "hits", "defeat", "defeats", "slay", "slays",
+        "kill", "kills", "wound", "wounds", "combat", "combats",
+    }),
+    # RESCUE: verbs describing saving/freeing
+    "RESCUE": frozenset({
+        "save", "saves", "rescue", "rescues", "free", "frees",
+        "liberate", "liberates", "release", "releases", "protect", "protects",
+        "defend", "defends", "help", "helps", "aid", "aids",
+    }),
+    # COMMUNICATION: verbs describing speaking/telling
+    "COMMUNICATION": frozenset({
+        "say", "says", "tell", "tells", "speak", "speaks", "ask", "asks",
+        "answer", "answers", "call", "calls", "announce", "announces",
+        "inform", "informs", "warn", "warns", "advise", "advises",
+    }),
+    # POSSESSION: verbs describing having/owning
+    "POSSESSION": frozenset({
+        "have", "has", "own", "owns", "possess", "possesses",
+        "keep", "keeps", "carry", "carries", "bear", "bears",
+    }),
+    # PERCEPTION: verbs describing seeing/knowing
+    "PERCEPTION": frozenset({
+        "see", "sees", "know", "knows", "hear", "hears", "notice", "notices",
+        "recognize", "recognizes", "understand", "understands", "realize", "realizes",
+        "discover", "discovers", "find", "finds", "learn", "learns",
+    }),
+}
+
+# Build reverse lookup: verb -> semantic class
+_VERB_TO_CLASS = {}
+for class_name, verbs in SEMANTIC_CLASSES.items():
+    for verb in verbs:
+        _VERB_TO_CLASS[verb] = class_name
+
+
+def get_semantic_class(verb: str) -> str:
+    """
+    Get the semantic class for a verb.
+
+    Returns the class name (e.g., "MOTION", "CAPTURE") or "OTHER" if not classified.
+    """
+    verb_lower = verb.lower().strip()
+    return _VERB_TO_CLASS.get(verb_lower, "OTHER")
+
+
+def are_semantically_equivalent(label1: str, label2: str) -> bool:
+    """
+    Check if two edge labels are semantically equivalent.
+
+    Two labels are equivalent if:
+    1. Their main verbs belong to the same semantic class, OR
+    2. They are string-equal after normalization
+
+    This is used to determine if a new edge should replace an existing one.
+    """
+    # Normalize both labels
+    l1 = label1.lower().strip().replace("_", " ")
+    l2 = label2.lower().strip().replace("_", " ")
+
+    # String equality
+    if l1 == l2:
+        return True
+
+    # Extract main verb (first word)
+    v1 = l1.split()[0] if l1 else ""
+    v2 = l2.split()[0] if l2 else ""
+
+    # Same semantic class
+    c1 = get_semantic_class(v1)
+    c2 = get_semantic_class(v2)
+
+    # Both in same non-OTHER class
+    if c1 != "OTHER" and c1 == c2:
+        return True
+
+    return False
+
 
 def _is_progressive_verb(token) -> bool:
     """
@@ -213,27 +340,26 @@ def canonicalize_edge_label(nlp, label: str) -> str:
     Canonicalize an edge label per AMoC v4 paper.
 
     ==========================================================================
-    PRESENT-TENSE NORMALIZATION (Paper-Aligned)
+    AMoC v4 EDGE LABEL CANONICALIZATION (Paper-Aligned)
     ==========================================================================
     Per AMoC Figures 2–6:
     - Relations are canonical semantic actions
     - Verb tense does not encode narrative time
     - Progressive aspect (-ing) is never represented in the graph
     - Memory stores WHAT happened, not HOW it was phrased
+    - Multi-word labels use underscore format: rides_through, unfamiliar_with
 
-    Progressive constructions are converted to simple present tense:
+    TRANSFORMATIONS:
     - "is walking" → "walks"
     - "was kidnapping" → "kidnaps"
-    - "is fighting" → "fights"
-    - "running through" → "runs through"
+    - "running through" → "runs_through"
+    - "is unfamiliar with" → "unfamiliar_with" (copula removed, adjective preserved)
+    - "rode through" → "rides_through"
 
-    Copula + adjective constructions are preserved:
-    - "is unfamiliar with" → "is unfamiliar with" (this is NOT progressive)
+    REJECTIONS (return empty string):
+    - Modal verbs: "wants to free", "tries to escape" → "" (REJECTED)
+    - Intentional verbs encode mental states, not world changes
 
-    Also handles:
-    - Absorbing adverbs into the label (adverbs modify actions, not the world)
-    - Preserving prepositions for verb+prep constructions
-    - Preserving phrasal verb particles
     ==========================================================================
 
     Args:
@@ -241,18 +367,26 @@ def canonicalize_edge_label(nlp, label: str) -> str:
         label: Raw edge label string
 
     Returns:
-        Canonicalized edge label in simple present tense
+        Canonicalized edge label with underscores, or "" if rejected
     """
     if not label or not isinstance(label, str):
-        return label
+        return ""
 
     label = label.strip()
     if not label:
-        return label
+        return ""
 
     doc = nlp(label)
     if len(doc) == 0:
-        return label
+        return ""
+
+    # ==========================================================================
+    # PHASE 0: Check for modal/intentional verbs - REJECT ENTIRE EDGE
+    # ==========================================================================
+    for tok in doc:
+        if tok.lemma_.lower() in MODAL_VERBS or tok.text.lower() in MODAL_VERBS:
+            logging.debug("[EdgeLabel] REJECTED modal verb: %r in %r", tok.text, label)
+            return ""
 
     # ==========================================================================
     # PHASE 1: Analyze structure to detect progressive vs copula+adjective
@@ -281,7 +415,9 @@ def canonicalize_edge_label(nlp, label: str) -> str:
             other_parts.append(("prep", tok.text.lower()))
         elif pos == "PART":
             # Particle (phrasal verb particles or infinitive "to")
-            other_parts.append(("part", tok.text.lower()))
+            # Skip infinitive "to" marker
+            if tok.text.lower() != "to":
+                other_parts.append(("part", tok.text.lower()))
         elif pos == "ADV":
             # Adverb - absorb if not negation
             if tok.lemma_.lower() not in EXCLUDED_ADVERBS:
@@ -292,38 +428,31 @@ def canonicalize_edge_label(nlp, label: str) -> str:
     # ==========================================================================
 
     # Case 1: Copula + Adjective (e.g., "is unfamiliar with")
-    # This is NOT progressive - preserve the structure
+    # Per AMoC paper: remove copula, keep adjective + preposition
+    # "is unfamiliar with" → "unfamiliar_with"
     if auxiliaries and adjective and main_verb is None:
-        # Check if auxiliary is a copula (be-verb)
         aux_lemmas = {aux.lemma_.lower() for aux in auxiliaries}
         if aux_lemmas & COPULA_VERBS:
-            # This is copula + adjective - preserve "is" + adjective
-            parts = ["is", adjective.text.lower()]
-            # Add prepositions/particles that follow
+            # Remove copula, keep adjective + prepositions
+            parts = [adjective.text.lower()]
             for part_type, part_text in other_parts:
                 if part_type in ("prep", "part"):
                     parts.append(part_text)
-            return " ".join(parts)
+            return "_".join(parts)
 
     # Case 2: Progressive construction (AUX + VBG like "is walking", "was fighting")
     if main_verb and _is_progressive_verb(main_verb):
-        # Convert progressive to simple present tense
         verb_lemma = main_verb.lemma_.lower()
         present_tense = _verb_to_present_tense(verb_lemma)
 
-        # Build result: present-tense verb + prepositions/particles
         parts = [present_tense]
         for part_type, part_text in other_parts:
             if part_type in ("prep", "part"):
                 parts.append(part_text)
-            elif part_type == "adv":
-                # Include adverbs after verb
-                parts.append(part_text)
-        return " ".join(parts)
+        return "_".join(parts)
 
     # Case 3: Standalone gerund without auxiliary (e.g., "running through")
     if main_verb and main_verb.text.lower().endswith("ing"):
-        # Convert to present tense even without auxiliary
         verb_lemma = main_verb.lemma_.lower()
         present_tense = _verb_to_present_tense(verb_lemma)
 
@@ -331,39 +460,62 @@ def canonicalize_edge_label(nlp, label: str) -> str:
         for part_type, part_text in other_parts:
             if part_type in ("prep", "part"):
                 parts.append(part_text)
-            elif part_type == "adv":
-                parts.append(part_text)
-        return " ".join(parts)
+        return "_".join(parts)
 
-    # Case 4: Regular verb (not progressive) - convert to present tense for consistency
+    # Case 4: Regular verb (not progressive) - convert to present tense
     if main_verb:
         verb_lemma = main_verb.lemma_.lower()
-        # Check if already in present tense (simple form)
         if main_verb.tag_ in {"VBZ", "VBP"}:
-            # Already present tense - keep as is
             verb_form = main_verb.text.lower()
         else:
-            # Convert to present tense
             verb_form = _verb_to_present_tense(verb_lemma)
 
         parts = [verb_form]
         for part_type, part_text in other_parts:
             if part_type in ("prep", "part"):
                 parts.append(part_text)
-            elif part_type == "adv":
-                parts.append(part_text)
-        return " ".join(parts)
+        return "_".join(parts)
 
-    # Case 5: No main verb found - return adjective if present, else original
+    # Case 5: No main verb found - return adjective if present
     if adjective:
         parts = [adjective.text.lower()]
         for part_type, part_text in other_parts:
             if part_type in ("prep", "part"):
                 parts.append(part_text)
-        return " ".join(parts)
+        return "_".join(parts)
 
-    # Fallback: return original label
-    return label
+    # Fallback: return original with underscores
+    result = "_".join(label.lower().split())
+
+    # ==========================================================================
+    # FINAL SAFETY CHECK: No -ing or -ed forms allowed in output
+    # ==========================================================================
+    # Per AMoC paper: edge labels must be canonical present tense.
+    # Progressive (-ing) and past tense (-ed) must NEVER appear.
+    parts = result.split("_")
+    cleaned_parts = []
+    for part in parts:
+        # Check for -ing (progressive)
+        if part.endswith("ing") and len(part) > 3:
+            base = part[:-3]
+            if len(base) > 1 and base[-1] == base[-2]:
+                base = base[:-1]  # running -> run
+            cleaned_parts.append(_verb_to_present_tense(base) if base else part)
+        # Check for -ed (past tense) - common regular verbs
+        elif part.endswith("ed") and len(part) > 3:
+            # Try to get base form by removing -ed
+            base = part[:-2]
+            if part.endswith("ied"):
+                # hurried -> hurry
+                base = part[:-3] + "y"
+            elif part.endswith("ed") and len(part) > 3 and part[-3] == part[-4]:
+                # kidnapped -> kidnap (double consonant)
+                base = part[:-3]
+            cleaned_parts.append(_verb_to_present_tense(base) if base else part)
+        else:
+            cleaned_parts.append(part)
+
+    return "_".join(cleaned_parts)
 
 
 def extract_adverbs_from_sentence(sent: Span, verb_token: Token) -> List[str]:
