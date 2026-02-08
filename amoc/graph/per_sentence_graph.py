@@ -22,6 +22,8 @@ if TYPE_CHECKING:
     from amoc.graph.edge import Edge
     from amoc.graph.graph import Graph
 
+from amoc.graph.node import NodeType
+
 
 @dataclass
 class PerSentenceGraph:
@@ -160,14 +162,26 @@ class PerSentenceGraphBuilder:
         Carry-over nodes are those reachable from explicit nodes
         within max_distance hops via active edges. This is the
         "working memory" that persists across sentences.
+
+        CRITICAL (Paper-Aligned):
+        PROPERTY nodes are EXCLUDED from carry-over logic.
+        Per AMoC v4 paper: PROPERTY nodes have no independent activation.
+        They only appear when their property edge is active in the current sentence.
+        BFS should not traverse through or include PROPERTY nodes as carry-over.
         """
         if not self._explicit_nodes:
             self._carryover_nodes = set()
             return self
 
-        # BFS from explicit nodes
-        distances: Dict["Node", int] = {n: 0 for n in self._explicit_nodes}
-        queue: deque = deque(self._explicit_nodes)
+        # BFS from explicit nodes - EXCLUDING PROPERTY nodes from propagation
+        # Per paper: only CONCEPT nodes participate in carry-over / distance logic
+        concept_explicit = {
+            n for n in self._explicit_nodes
+            if n.node_type != NodeType.PROPERTY
+        }
+
+        distances: Dict["Node", int] = {n: 0 for n in concept_explicit}
+        queue: deque = deque(concept_explicit)
 
         while queue:
             node = queue.popleft()
@@ -190,13 +204,19 @@ class PerSentenceGraphBuilder:
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
 
+                # CRITICAL: Skip PROPERTY nodes in BFS traversal
+                # Per paper: PROPERTY nodes don't propagate activation
+                if neighbor.node_type == NodeType.PROPERTY:
+                    continue
+
                 if neighbor in distances:
                     continue
 
                 distances[neighbor] = current_dist + 1
                 queue.append(neighbor)
 
-        # Carry-over = reachable nodes that aren't explicit
+        # Carry-over = reachable CONCEPT nodes that aren't explicit
+        # PROPERTY nodes are NEVER carry-over (per paper alignment)
         self._carryover_nodes = set(distances.keys()) - self._explicit_nodes
         return self
 
@@ -232,29 +252,69 @@ class PerSentenceGraphBuilder:
         - Only active nodes (explicit + carry-over) are included
         - Only edges with BOTH endpoints active are included
         - Property edges only included in their origin sentence (per AMoC paper)
+        - PROPERTY nodes only included if they have an active property edge
         - The result is guaranteed connected (or empty)
         """
         self._sentence_index = sentence_index
-        active_nodes = self._explicit_nodes | self._carryover_nodes
+
+        # CRITICAL (Paper-Aligned):
+        # PROPERTY nodes are NOT included in active_nodes via carry-over.
+        # They are only included if they have an active property edge in this sentence.
+        # First, collect CONCEPT nodes (explicit + carry-over)
+        concept_nodes = {
+            n for n in (self._explicit_nodes | self._carryover_nodes)
+            if n.node_type != NodeType.PROPERTY
+        }
 
         # Filter edges: only those where BOTH endpoints are active
         # CRITICAL: Also enforce property edge sentence constraints
         active_edges: Set["Edge"] = set()
+        property_nodes_with_active_edges: Set["Node"] = set()
+
         for edge in self.cumulative_graph.edges:
             if not edge.active:
                 continue
+
             # Property edges must only be active in their origin sentence
             # Per AMoC paper: properties attach via "is" edges in their sentence only
             if edge.is_property_edge():
                 if edge.violates_property_sentence_constraint(sentence_index):
                     continue
-            if edge.source_node in active_nodes and edge.dest_node in active_nodes:
-                active_edges.add(edge)
+                # This property edge is valid - check if it connects to an active concept
+                src_is_property = edge.source_node.node_type == NodeType.PROPERTY
+                dst_is_property = edge.dest_node.node_type == NodeType.PROPERTY
+                concept_end = edge.dest_node if src_is_property else edge.source_node
+                property_end = edge.source_node if src_is_property else edge.dest_node
+
+                # Only include if the CONCEPT end is in active nodes
+                if concept_end in concept_nodes:
+                    active_edges.add(edge)
+                    property_nodes_with_active_edges.add(property_end)
+            else:
+                # Non-property edge: both endpoints must be active CONCEPT nodes
+                if edge.source_node in concept_nodes and edge.dest_node in concept_nodes:
+                    active_edges.add(edge)
+
+        # CRITICAL: PROPERTY nodes are only visible if they have an active property edge
+        # This implements: "PROPERTY nodes are visible in the ACTIVE graph if and only if
+        # at least one PROPERTY edge involving that node is active in the current sentence"
+        active_nodes = concept_nodes | property_nodes_with_active_edges
+
+        # Also filter explicit_nodes and carryover_nodes for consistency
+        # (PROPERTY nodes should never be in carryover, but filter explicit too)
+        explicit_concepts = {
+            n for n in self._explicit_nodes
+            if n.node_type != NodeType.PROPERTY or n in property_nodes_with_active_edges
+        }
+        carryover_concepts = {
+            n for n in self._carryover_nodes
+            if n.node_type != NodeType.PROPERTY
+        }
 
         return PerSentenceGraph(
             sentence_index=sentence_index,
-            explicit_nodes=frozenset(self._explicit_nodes),
-            carryover_nodes=frozenset(self._carryover_nodes),
+            explicit_nodes=frozenset(explicit_concepts),
+            carryover_nodes=frozenset(carryover_concepts),
             active_nodes=frozenset(active_nodes),
             active_edges=frozenset(active_edges),
             anchor_nodes=self.anchor_nodes,

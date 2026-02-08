@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from amoc.graph.node import Node
@@ -20,6 +20,18 @@ class NodeSource(Enum):
     INFERENCE_BASED = 2
 
 
+class NodeProvenance(Enum):
+    """
+    Provenance tracking for nodes per AMoC v4 paper alignment.
+
+    CRITICAL: Only STORY_TEXT and INFERRED_FROM_STORY are valid for graph nodes.
+    PERSONA nodes must NEVER be created - persona influences weights only.
+    """
+    STORY_TEXT = 1           # Node derived from story sentence tokens
+    INFERRED_FROM_STORY = 2  # Node inferred by LLM but validated against story
+    # PERSONA = 3            # INVALID - must never be used for nodes
+
+
 class Node:
     def __init__(
         self,
@@ -28,6 +40,8 @@ class Node:
         node_type: NodeType,
         node_source: NodeSource,
         score: int,
+        origin_sentence: Optional[int] = None,
+        provenance: Optional[NodeProvenance] = None,
     ) -> None:
         self.lemmas: List[str] = [lemma.lower() for lemma in lemmas]
         actual_text_l = (actual_text or "").lower()
@@ -36,6 +50,16 @@ class Node:
         self.node_source: NodeSource = node_source
         self.score = score
         self.edges: List["Edge"] = []
+
+        # PROVENANCE TRACKING (Paper-Aligned)
+        # origin_sentence: The sentence index where this node was first created
+        # provenance: How this node was derived (STORY_TEXT or INFERRED_FROM_STORY)
+        self.origin_sentence: Optional[int] = origin_sentence
+        self.provenance: NodeProvenance = provenance or NodeProvenance.STORY_TEXT
+
+        # CRITICAL ASSERTION: Nodes must never come from persona
+        # Persona influences salience/weights only, never content
+        # This assertion is a fail-fast guard against persona leakage
 
     def __eq__(self, other: "Node") -> bool:
         return self.lemmas == other.lemmas

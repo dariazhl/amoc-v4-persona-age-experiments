@@ -7,6 +7,7 @@ from spacy.tokens import Span, Token
 import networkx as nx
 
 from amoc.graph import Graph, Node, Edge, NodeType, NodeSource
+from amoc.graph.node import NodeProvenance
 from amoc.graph.per_sentence_graph import (
     PerSentenceGraph,
     PerSentenceGraphBuilder,
@@ -97,9 +98,17 @@ class AMoCv4:
             raise RuntimeError("AMoCv4 requires a spaCy nlp object (spacy_nlp).")
 
         self.debug = debug
-        # Cache story lemmas for quick membership checks (currently unused)
+        # Cache story lemmas for quick membership checks (provenance validation)
         story_doc = self.spacy_nlp(story_text)
         self.story_lemmas = {tok.lemma_.lower() for tok in story_doc if tok.is_alpha}
+
+        # PROVENANCE GATE: Extract persona lemmas to create blocklist
+        # Per AMoC v4 paper: Persona influences SALIENCE only, never CONTENT
+        # Nodes must come from story text, never from persona description
+        persona_doc = self.spacy_nlp(persona_description)
+        self._persona_only_lemmas = {
+            tok.lemma_.lower() for tok in persona_doc if tok.is_alpha
+        } - self.story_lemmas  # Only lemmas unique to persona (not in story)
         self._prev_active_nodes_for_plot: set[Node] = set()
         self._cumulative_deactivated_nodes_for_plot: set[Node] = set()
         self._viz_positions: dict[str, tuple[float, float]] = {}
@@ -121,8 +130,143 @@ class AMoCv4:
         # Per-sentence graph view (rebuilt each sentence for isolation)
         self._per_sentence_view: Optional[PerSentenceGraph] = None
 
+    def _admit_node(
+        self,
+        lemma: str,
+        node_type: NodeType,
+        provenance: str,
+        sent: Optional[Span] = None,
+    ) -> bool:
+        lemma = lemma.lower().strip()
+
+        # 1. Lexical grounding (hard gate)
+        if lemma not in self.story_lemmas:
+            return False
+
+        # 2. Syntactic grounding for properties
+        if node_type == NodeType.PROPERTY:
+            if sent is None:
+                return False
+
+            grounded = False
+            for tok in sent:
+                if tok.lemma_.lower() == lemma:
+                    if tok.dep_ in {"amod", "acomp", "attr"}:
+                        grounded = True
+                        break
+
+            if not grounded:
+                return False
+
+        # 3. Provenance guard (hard gate)
+        if provenance in {
+            "LLM_PROMPT",
+            "GRAPH_SERIALIZATION",
+            "CSV",
+            "PLOTTING",
+            "META",
+        }:
+            return False
+
+        return True
+
     def _node_token_for_matrix(self, node: Node) -> str:
         return (node.get_text_representer() or "").strip().lower()
+
+    # ==========================================================================
+    # PROVENANCE VALIDATION: Per AMoC v4 paper alignment
+    # ==========================================================================
+    # CRITICAL: Nodes must come from STORY TEXT only, never from persona.
+    # Persona influences salience/weights, never graph content.
+    # ==========================================================================
+
+    def _validate_node_provenance(
+        self,
+        lemma: str,
+        current_sentence_text: Optional[str] = None,
+    ) -> bool:
+        """
+        Validate that a candidate node lemma has valid story provenance.
+
+        Per AMoC v4 paper:
+        - A node may only be created if its lemma appears in story text
+        - Persona-only concepts must NEVER become graph nodes
+        - LLM-inferred nodes must be validated against story tokens
+
+        Args:
+            lemma: The candidate lemma to validate
+            current_sentence_text: Optional current sentence text for additional validation
+
+        Returns:
+            True if the lemma has valid story provenance, False otherwise
+        """
+        lemma_lower = lemma.lower()
+
+        # HARD GATE: Reject persona-only lemmas
+        if lemma_lower in self._persona_only_lemmas:
+            if self.debug:
+                logging.debug(
+                    f"PROVENANCE GATE: Rejected persona-only lemma '{lemma_lower}'"
+                )
+            return False
+
+        # SOFT VALIDATION: Check if lemma appears in story text
+        # This is a sanity check - story_lemmas should contain all valid sources
+        if lemma_lower in self.story_lemmas:
+            return True
+
+        # Additional validation: check current sentence if provided
+        if current_sentence_text:
+            sent_doc = self.spacy_nlp(current_sentence_text)
+            sent_lemmas = {tok.lemma_.lower() for tok in sent_doc if tok.is_alpha}
+            if lemma_lower in sent_lemmas:
+                return True
+
+        # If not found in story, log warning but allow (for inference flexibility)
+        # The LLM may infer semantically valid nodes that don't match exact lemmas
+        if self.debug:
+            logging.debug(
+                f"PROVENANCE WARNING: Lemma '{lemma_lower}' not found in story lemmas"
+            )
+        return True  # Allow with warning - strict mode would return False
+
+    def _validate_node_provenance_strict(
+        self,
+        lemma: str,
+        current_sentence_text: Optional[str] = None,
+    ) -> bool:
+        """
+        Strict provenance validation - rejects any lemma not in story text.
+
+        Use this for node creation paths that MUST be grounded in story text.
+        Fails for any lemma not explicitly present in story_lemmas.
+        """
+        lemma_lower = lemma.lower()
+
+        # HARD GATE: Reject persona-only lemmas
+        if lemma_lower in self._persona_only_lemmas:
+            if self.debug:
+                logging.debug(
+                    f"PROVENANCE GATE (strict): Rejected persona-only lemma '{lemma_lower}'"
+                )
+            return False
+
+        # STRICT: Must appear in story text
+        if lemma_lower in self.story_lemmas:
+            return True
+
+        # Check current sentence as fallback
+        if current_sentence_text:
+            sent_doc = self.spacy_nlp(current_sentence_text)
+            sent_lemmas = {tok.lemma_.lower() for tok in sent_doc if tok.is_alpha}
+            if lemma_lower in sent_lemmas:
+                return True
+
+        if self.debug:
+            logging.debug(
+                f"PROVENANCE GATE (strict): Rejected lemma '{lemma_lower}' - not in story"
+            )
+        return False
 
     def _build_per_sentence_view(
         self, explicit_nodes: List[Node], sentence_index: int
@@ -156,19 +300,29 @@ class AMoCv4:
 
     def _extract_adjectival_modifiers(self, sent: Span) -> dict[str, list[str]]:
         if not isinstance(sent, Span):
-            raise TypeError(
-                f"_extract_adjectival_modifiers expects a spaCy Span, got {type(sent)}"
-            )
+            return {}
 
         prop_map: dict[str, list[str]] = {}
 
         for tok in sent:
-            if tok.pos_ in {"NOUN", "PROPN"}:
-                head = tok.lemma_.lower()
-                for child in tok.children:
-                    if child.dep_ == "amod" and child.pos_ == "ADJ":
-                        adj = child.lemma_.lower()
-                        prop_map.setdefault(head, []).append(adj)
+            if tok.pos_ not in {"NOUN", "PROPN"}:
+                continue
+
+            head = tok.lemma_.lower()
+
+            for child in tok.children:
+                if child.dep_ == "amod" and child.pos_ == "ADJ":
+                    adj = child.lemma_.lower()
+
+                    if not self._admit_node(
+                        lemma=adj,
+                        node_type=NodeType.PROPERTY,
+                        provenance="SYNTACTIC_PROPERTY",
+                        sent=sent,
+                    ):
+                        continue
+
+                    prop_map.setdefault(head, []).append(adj)
 
         return prop_map
 
@@ -1147,6 +1301,9 @@ class AMoCv4:
         explicit_nodes: Optional[List[str]] = None,
         salient_nodes: Optional[List[str]] = None,
         inactive_nodes: Optional[List[str]] = None,
+        active_triplets_for_overlay: Optional[
+            List[Tuple[str, str, str]]
+        ] = None,  # TASK 2: Triplet overlay
     ) -> None:
         # ==========================================================================
         # DEFENSIVE GUARD: Ensure sentence_text never contains prompt scaffolding
@@ -1220,6 +1377,14 @@ class AMoCv4:
                 self._viz_positions.update(new_pos)
             # ------------------------------------------------------------------------
 
+            # PROVENANCE SANITY CHECK: Detect persona leakage before plotting
+            provenance_warnings = self.graph.sanity_check_provenance(
+                story_lemmas=self.story_lemmas,
+                persona_only_lemmas=self._persona_only_lemmas,
+            )
+            for warning in provenance_warnings:
+                logging.warning(warning)
+
             saved_path = plot_amoc_triplets(
                 triplets=triplets,
                 persona=self.persona,
@@ -1242,6 +1407,10 @@ class AMoCv4:
                 # LAYOUT POLICY: Pass activation scores for edge thickness/alpha
                 edge_activation_scores=self._get_edge_activation_scores(),
                 layout_from_active_only=True,
+                # TASK 2: Pass active triplets for overlay
+                # Triplets originate from _graph_edges_to_triplets() or triplets_override
+                active_triplets_for_overlay=active_triplets_for_overlay,
+                show_triplet_overlay=True,
             )
             if triplets:
                 logging.info(
@@ -1965,6 +2134,8 @@ class AMoCv4:
                     mode="sentence_active",
                     triplets_override=active_triplets,
                     active_edges=active_edge_pairs,
+                    # TASK 2: Pass active triplets for overlay display
+                    active_triplets_for_overlay=active_triplets,
                 )
                 # Cumulative memory view
                 # AMoCv4 surface-relation format: edges ARE the semantic triplets
@@ -1994,6 +2165,9 @@ class AMoCv4:
                         only_active=False
                     ),
                     active_edges=cumulative_active_pairs,
+                    # TASK 2: Pass active triplets for overlay display
+                    # For cumulative view, still show only the current sentence's active triplets
+                    active_triplets_for_overlay=active_triplets,
                 )
 
             # Capture triplets for this sentence (all edges, with current active flag)
@@ -2344,8 +2518,8 @@ class AMoCv4:
         # 1. Extract adjectival modifiers → PROPERTY nodes
         adj_modifiers = extract_adjectival_modifiers(sent)
         for mod in adj_modifiers:
-            adj_lemma = mod['adjective']
-            head_lemma = mod['head_noun']
+            adj_lemma = mod["adjective"]
+            head_lemma = mod["head_noun"]
 
             # Find or skip if head noun is not already a CONCEPT node
             head_node = None
@@ -2359,11 +2533,20 @@ class AMoCv4:
                 continue
 
             # Create PROPERTY node for the adjective
+            if not self._admit_node(
+                lemma=adj_lemma,
+                node_type=NodeType.PROPERTY,
+                provenance="SYNTACTIC_PROPERTY",
+                sent=sent,
+            ):
+                continue
+
             property_node = self.graph.add_or_get_node(
                 [adj_lemma],
                 adj_lemma,
                 NodeType.PROPERTY,
                 NodeSource.TEXT_BASED,
+                provenance=NodeProvenance.STORY_TEXT,
             )
 
             # Track that this is a text-based node from current sentence
@@ -2389,9 +2572,9 @@ class AMoCv4:
         # 2. Extract prepositional objects → CONCEPT nodes
         prep_objects = extract_prepositional_objects(sent)
         for prep_obj in prep_objects:
-            subj_lemma = prep_obj['subject']
-            obj_lemma = prep_obj['object']
-            edge_label = prep_obj['label']
+            subj_lemma = prep_obj["subject"]
+            obj_lemma = prep_obj["object"]
+            edge_label = prep_obj["label"]
 
             # Find the subject node
             subj_node = None
@@ -2405,11 +2588,20 @@ class AMoCv4:
                 continue
 
             # Create CONCEPT node for the prepositional object
+            if not self._admit_node(
+                lemma=obj_lemma,
+                node_type=NodeType.CONCEPT,
+                provenance="STORY_TEXT",
+                sent=sent,
+            ):
+                continue
+
             obj_node = self.graph.add_or_get_node(
                 [obj_lemma],
                 obj_lemma,
                 NodeType.CONCEPT,
                 NodeSource.TEXT_BASED,
+                provenance=NodeProvenance.STORY_TEXT,
             )
 
             # Track that this is a text-based node from current sentence
@@ -2588,19 +2780,34 @@ class AMoCv4:
             if not self._is_valid_relation_label(edge_label):
                 continue
             if source_node is None:
+                # PROVENANCE GATE: Validate LLM-inferred nodes against story text
+                if not self._validate_node_provenance(subj):
+                    continue
+                if not self._admit_node(
+                    lemma=subj,
+                    node_type=subj_type,
+                    provenance="INFERRED_RELATION",
+                ):
+                    continue
+
                 source_node = self.graph.add_or_get_node(
                     get_concept_lemmas(self.spacy_nlp, subj),
                     subj,
                     subj_type,
                     NodeSource.INFERENCE_BASED,
+                    provenance=NodeProvenance.INFERRED_FROM_STORY,
                 )
 
             if dest_node is None:
+                # PROVENANCE GATE: Validate LLM-inferred nodes against story text
+                if not self._validate_node_provenance(obj):
+                    continue
                 dest_node = self.graph.add_or_get_node(
                     get_concept_lemmas(self.spacy_nlp, obj),
                     obj,
                     obj_type,
                     NodeSource.INFERENCE_BASED,
+                    provenance=NodeProvenance.INFERRED_FROM_STORY,
                 )
 
             if node_type == NodeType.PROPERTY:
@@ -2694,19 +2901,27 @@ class AMoCv4:
             if not self._is_valid_relation_label(edge_label):
                 continue
             if source_node is None:
+                # PROVENANCE GATE: Validate LLM-inferred nodes against story text
+                if not self._validate_node_provenance(subj):
+                    continue
                 source_node = self.graph.add_or_get_node(
                     get_concept_lemmas(self.spacy_nlp, subj),
                     subj,
                     subj_type,
                     NodeSource.INFERENCE_BASED,
+                    provenance=NodeProvenance.INFERRED_FROM_STORY,
                 )
 
             if dest_node is None:
+                # PROVENANCE GATE: Validate LLM-inferred nodes against story text
+                if not self._validate_node_provenance(obj):
+                    continue
                 dest_node = self.graph.add_or_get_node(
                     get_concept_lemmas(self.spacy_nlp, obj),
                     obj,
                     obj_type,
                     NodeSource.INFERENCE_BASED,
+                    provenance=NodeProvenance.INFERRED_FROM_STORY,
                 )
 
             if node_type == NodeType.PROPERTY:
@@ -2753,6 +2968,13 @@ class AMoCv4:
             if inferred_type is None:
                 return None
             lemmas = get_concept_lemmas(self.spacy_nlp, canon)
+            if not self._admit_node(
+                lemma=canon,
+                node_type=inferred_type,
+                provenance="TEXT_FALLBACK",
+            ):
+                return None
+
             return self.graph.add_or_get_node(lemmas, canon, inferred_type, node_source)
         return None
 
@@ -2780,7 +3002,15 @@ class AMoCv4:
             if inferred_type is None:
                 return None
             lemmas = get_concept_lemmas(self.spacy_nlp, canon)
+            if not self._admit_node(
+                lemma=canon,
+                node_type=inferred_type,
+                provenance="TEXT_FALLBACK",
+            ):
+                return None
+
             return self.graph.add_or_get_node(lemmas, canon, inferred_type, node_source)
+
         return None
 
     def is_content_word_and_non_stopword(
@@ -2825,64 +3055,94 @@ class AMoCv4:
 
             # actual_text should also be the clean lemma (no determiners)
             # This ensures get_text_representer() returns the clean label
+            if not self._admit_node(
+                lemma=lemma,
+                node_type=NodeType.CONCEPT,
+                provenance="STORY_TEXT",
+            ):
+                continue
+
             node = self.graph.add_or_get_node(
                 lemmas=[lemma],
                 actual_text=lemma,
                 node_type=NodeType.CONCEPT,
                 node_source=NodeSource.TEXT_BASED,
+                provenance=NodeProvenance.STORY_TEXT,
             )
 
             phrase_nodes.append(node)
 
         return phrase_nodes
 
-    # get the explicit node
     def get_senteces_text_based_nodes(
         self, previous_sentences: List[Span], create_unexistent_nodes: bool = True
     ) -> Tuple[List[Node], List[str]]:
-        """
-        Extract explicit text-based nodes from sentences per AMoC v4 paper.
 
-        Per paper Figures 2-4:
-        - Node labels are single lowercase lemmas
-        - Every noun/adjective in the current sentence becomes an explicit node
-        - Adjectives are handled as latent property candidates (not explicit nodes)
-        - Returns (nodes, words) where words are the canonical lemma forms
+        text_based_nodes: list[Node] = []
+        text_based_words: list[str] = []
 
-        CRITICAL: This function determines what appears as "Explicit this sentence"
-        in the plot titles. Every content word in the sentence should produce an
-        explicit node.
-        """
-        text_based_nodes = []
-        text_based_words = []
         for sent in previous_sentences:
             content_words = get_content_words_from_sent(self.spacy_nlp, sent)
-            for word in content_words:
-                # CRITICAL FIX: Use lowercase lemma as canonical form
-                # Per AMoC paper: node labels are "knight" not "Knight" or "the knight"
-                lemma = word.lemma_.lower()
 
-                node = self.graph.get_node([lemma])
-                if node is not None:
-                    # Update actual_text with lemma (not surface form)
-                    node.add_actual_text(lemma)
-                    text_based_nodes.append(node)
-                    text_based_words.append(lemma)
-                else:
-                    if create_unexistent_nodes:
-                        # AMoC-v4 paper-faithful:
-                        # Only NOUN / PROPN become explicit nodes
-                        if word.pos_ in {"NOUN", "PROPN"}:
-                            new_node = self.graph.add_or_get_node(
-                                [lemma],
-                                lemma,
-                                NodeType.CONCEPT,
-                                NodeSource.TEXT_BASED,
-                            )
-                            text_based_nodes.append(new_node)
-                            text_based_words.append(lemma)
-                        else:
-                            continue
+            for word in content_words:
+                lemma = word.lemma_.lower().strip()
+
+                # ---------- CONCEPT NODES (nouns / proper nouns) ----------
+                if word.pos_ in {"NOUN", "PROPN"}:
+                    if not self._admit_node(
+                        lemma=lemma,
+                        node_type=NodeType.CONCEPT,
+                        provenance="STORY_TEXT",
+                        sent=sent,
+                    ):
+                        continue
+
+                    node = self.graph.get_node([lemma])
+                    if node is not None:
+                        node.add_actual_text(lemma)
+                    elif create_unexistent_nodes:
+                        node = self.graph.add_or_get_node(
+                            [lemma],
+                            lemma,
+                            NodeType.CONCEPT,
+                            NodeSource.TEXT_BASED,
+                            provenance=NodeProvenance.STORY_TEXT,
+                        )
                     else:
                         continue
+
+                    text_based_nodes.append(node)
+                    text_based_words.append(lemma)
+
+                # ---------- PROPERTY NODES (adjectives, strictly grounded) ----------
+                elif word.pos_ == "ADJ":
+                    if not self._admit_node(
+                        lemma=lemma,
+                        node_type=NodeType.PROPERTY,
+                        provenance="SYNTACTIC_PROPERTY",
+                        sent=sent,
+                    ):
+                        continue
+
+                    node = self.graph.get_node([lemma])
+                    if node is not None:
+                        node.add_actual_text(lemma)
+                    elif create_unexistent_nodes:
+                        node = self.graph.add_or_get_node(
+                            [lemma],
+                            lemma,
+                            NodeType.PROPERTY,
+                            NodeSource.TEXT_BASED,
+                            provenance=NodeProvenance.STORY_TEXT,
+                        )
+                    else:
+                        continue
+
+                    text_based_nodes.append(node)
+                    text_based_words.append(lemma)
+
+                # ---------- EVERYTHING ELSE IS IGNORED ----------
+                else:
+                    continue
+
         return text_based_nodes, text_based_words

@@ -412,14 +412,21 @@ def _choose_angles_in_gaps(
 
 def _compute_edge_curvatures(
     edges_with_keys: List[Tuple[str, str, str]],
-) -> Dict[Tuple[str, str, str], float]:
+) -> Tuple[Dict[Tuple[str, str, str], float], Dict[Tuple[str, str, str], float]]:
     """
-    Compute curvature values for edges to prevent overlap of parallel edges.
+    Compute curvature values and label t-parameters for edges to prevent overlap.
 
     For edges between the same pair of nodes (including reciprocals), assign
     different curvature radii so they curve differently and don't overlap.
 
-    Returns a dict mapping (u, v, key) -> curvature radius for arc3 connectionstyle.
+    MULTI-EDGE LABEL PLACEMENT: Also assigns staggered t-parameters (position
+    along the curve) to prevent label overlap when multiple edges exist between
+    the same node pair. Labels are placed at t=0.35, 0.5, 0.65 etc.
+
+    Returns:
+        Tuple of:
+        - curvatures: dict mapping (u, v, key) -> curvature radius for arc3
+        - label_t_params: dict mapping (u, v, key) -> t parameter (0.0-1.0) for label position
     """
     # Group edges by their node pair (undirected for overlap detection)
     from collections import defaultdict
@@ -431,12 +438,14 @@ def _compute_edge_curvatures(
         pair_edges[pair_key].append((u, v, k))
 
     curvatures: Dict[Tuple[str, str, str], float] = {}
+    label_t_params: Dict[Tuple[str, str, str], float] = {}
 
     for pair_key, edges in pair_edges.items():
         n_edges = len(edges)
         if n_edges == 1:
-            # Single edge - no curvature needed
+            # Single edge - no curvature needed, label at midpoint
             curvatures[edges[0]] = 0.0
+            label_t_params[edges[0]] = 0.5
         else:
             # Multiple edges between same node pair - assign varying curvatures
             # Spread curvatures symmetrically around 0
@@ -444,14 +453,22 @@ def _compute_edge_curvatures(
             base_rad = 0.15  # Base curvature radius
             max_rad = 0.35   # Maximum curvature to prevent extreme curves
 
+            # MULTI-EDGE LABEL PLACEMENT: Stagger t-parameters
+            # For 2 edges: [0.4, 0.6], for 3: [0.35, 0.5, 0.65], etc.
+            t_spread = 0.15  # How far from 0.5 to spread labels
+            t_min = max(0.3, 0.5 - t_spread * (n_edges - 1) / 2)
+            t_max = min(0.7, 0.5 + t_spread * (n_edges - 1) / 2)
+
             for idx, (u, v, k) in enumerate(edges):
                 if n_edges == 2:
                     # Two edges: one curves up, one curves down
                     rad = base_rad if idx == 0 else -base_rad
+                    t_val = 0.4 if idx == 0 else 0.6
                 else:
                     # More edges: spread evenly
                     spread = min(max_rad, base_rad * (n_edges - 1) / 2)
                     rad = -spread + (2 * spread * idx / (n_edges - 1))
+                    t_val = t_min + (t_max - t_min) * idx / (n_edges - 1)
 
                 # For reciprocal edges (A->B vs B->A), ensure they curve opposite
                 # by checking if this is the "reverse" direction
@@ -459,8 +476,9 @@ def _compute_edge_curvatures(
                     rad = -rad  # Flip for reverse direction
 
                 curvatures[(u, v, k)] = rad
+                label_t_params[(u, v, k)] = t_val
 
-    return curvatures
+    return curvatures, label_t_params
 
 
 def _compute_label_position_curved(
@@ -572,6 +590,96 @@ def _compute_label_angle_along_edge(
     return angle_deg
 
 
+# ==========================================================================
+# TASK 2: ACTIVE TRIPLET OVERLAY
+# ==========================================================================
+# This function renders active triplets as a text overlay on the plot.
+# IMPORTANT: This is VISUALIZATION ONLY - it does not recompute triplets.
+# Triplets are passed from core.py via the active_triplets_for_overlay parameter.
+# The triplet structure originates from:
+#   - core.py: _graph_edges_to_triplets() or _reconstruct_semantic_triplets()
+#   - runner.py: collected as final_triplets, sentence_triplets, cumulative_triplets
+# ==========================================================================
+
+def _draw_triplet_overlay(
+    ax,
+    triplets: List[Tuple[str, str, str]],
+    active_nodes: Optional[set] = None,
+    max_triplets: int = 12,
+    font_size: int = 8,
+) -> None:
+    """
+    Draw an overlay of active triplets in the top-right corner of the plot.
+
+    VISUALIZATION ONLY: This function renders pre-computed triplets.
+    It does NOT derive triplets from the graph - triplets are passed from
+    the AMoC pipeline (core.py/runner.py).
+
+    Args:
+        ax: Matplotlib axes object
+        triplets: List of (subject, relation, object) tuples from the pipeline
+        active_nodes: Optional set of active node names for filtering.
+                      If provided, only triplets where BOTH nodes are active are shown.
+        max_triplets: Maximum number of triplets to display (to avoid clutter)
+        font_size: Font size for triplet text
+    """
+    if not triplets:
+        return
+
+    # Filter triplets to only those involving active nodes
+    if active_nodes is not None:
+        filtered_triplets = [
+            (s, r, o) for s, r, o in triplets
+            if s in active_nodes and o in active_nodes
+        ]
+    else:
+        filtered_triplets = triplets
+
+    if not filtered_triplets:
+        return
+
+    # Limit to max_triplets to avoid overwhelming the plot
+    display_triplets = filtered_triplets[:max_triplets]
+    truncated = len(filtered_triplets) > max_triplets
+
+    # Format triplets for display
+    triplet_lines = []
+    for s, r, o in display_triplets:
+        # Clean up and truncate long text
+        s_clean = _pretty_text(s)[:20]
+        r_clean = _pretty_text(r)[:15]
+        o_clean = _pretty_text(o)[:20]
+        triplet_lines.append(f"({s_clean}, {r_clean}, {o_clean})")
+
+    if truncated:
+        remaining = len(filtered_triplets) - max_triplets
+        triplet_lines.append(f"... and {remaining} more")
+
+    # Build overlay text
+    overlay_text = "Active Triplets:\n" + "\n".join(triplet_lines)
+
+    # Draw text box in top-right corner using axes coordinates
+    # axes coordinates: (0,0) = bottom-left, (1,1) = top-right
+    ax.text(
+        0.98,  # x position (right side)
+        0.98,  # y position (top)
+        overlay_text,
+        transform=ax.transAxes,
+        fontsize=font_size,
+        fontfamily="monospace",
+        verticalalignment="top",
+        horizontalalignment="right",
+        bbox=dict(
+            facecolor="white",
+            edgecolor="gray",
+            alpha=0.85,
+            pad=8,
+            boxstyle="round,pad=0.5",
+        ),
+        zorder=100,  # Ensure overlay is on top of everything
+    )
+
+
 def plot_amoc_triplets(
     triplets: List[Tuple[str, str, str]],
     persona: str,
@@ -595,7 +703,9 @@ def plot_amoc_triplets(
     show_all_edges: bool = False,
     edge_activation_scores: Optional[Dict[Tuple[str, str, str], int]] = None,
     layout_from_active_only: bool = True,
-    allow_multi_edges: bool = True,  # NEW: Flag to control multiple edges between same nodes
+    allow_multi_edges: bool = True,  # Flag to control multiple edges between same nodes
+    active_triplets_for_overlay: Optional[List[Tuple[str, str, str]]] = None,  # TASK 2: Triplet overlay
+    show_triplet_overlay: bool = True,  # TASK 2: Control overlay visibility
 ) -> str:
 
     def expand_by_anchor(
@@ -1212,8 +1322,9 @@ def plot_amoc_triplets(
 
     # Compute curvatures for all edges to handle parallel edges
     # This ensures edges between same node pairs curve differently for visibility
+    # MULTI-EDGE LABEL PLACEMENT: Also get staggered t-parameters for labels
     all_edges_with_keys = list(G.edges(keys=True))
-    edge_curvatures = _compute_edge_curvatures(all_edges_with_keys)
+    edge_curvatures, edge_label_t_params = _compute_edge_curvatures(all_edges_with_keys)
 
     normal_edges = []
     implicit_edges = []
@@ -1408,20 +1519,23 @@ def plot_amoc_triplets(
     # TASK 1 FIX: Draw edge labels ALONG the edge direction, not perpendicular
     # ==========================================================================
     # Labels are:
-    # 1. Positioned at the midpoint of each edge's curve
+    # 1. Positioned along each edge's curve using staggered t-parameter
     # 2. ROTATED to follow the edge tangent direction
     # 3. Kept readable (flipped if angle would make text upside-down)
-    # This ensures parallel edges have labels aligned with their direction.
+    # MULTI-EDGE LABEL PLACEMENT: Parallel edges use different t-parameters
+    # (0.35, 0.5, 0.65 etc.) to prevent label overlap.
     for u, v, k in G.edges(keys=True):
         if (u, v, k) not in edge_labels:
             continue
 
-        # Get curvature for this edge to compute correct label position and angle
+        # Get curvature and t-parameter for this edge
+        # MULTI-EDGE LABEL PLACEMENT: t-parameter varies per parallel edge
         curvature = edge_curvatures.get((u, v, k), 0.0)
-        lx, ly = _compute_label_position_curved(pos, u, v, curvature, t=0.5)
+        label_t = edge_label_t_params.get((u, v, k), 0.5)
+        lx, ly = _compute_label_position_curved(pos, u, v, curvature, t=label_t)
 
         # TASK 1: Compute rotation angle to align label along edge direction
-        label_angle = _compute_label_angle_along_edge(pos, u, v, curvature, t=0.5)
+        label_angle = _compute_label_angle_along_edge(pos, u, v, curvature, t=label_t)
 
         label_text = edge_labels[(u, v, k)]
         status = edge_status.get((u, v, k), "normal")
@@ -1617,6 +1731,26 @@ def plot_amoc_triplets(
         style="italic",
         color="darkblue",
     )
+
+    # ==========================================================================
+    # TASK 2: Draw active triplet overlay in top-right corner
+    # ==========================================================================
+    # VISUALIZATION ONLY: This uses pre-computed triplets from the pipeline.
+    # Triplets originate from core.py (_graph_edges_to_triplets, _reconstruct_semantic_triplets)
+    # and are passed via active_triplets_for_overlay parameter.
+    # Only triplets where BOTH nodes are active are displayed.
+    if show_triplet_overlay and active_triplets_for_overlay:
+        # Build set of active nodes for filtering
+        # Active nodes = all nodes NOT in inactive_node_set
+        active_nodes_for_filter = plotted_nodes - inactive_node_set
+        _draw_triplet_overlay(
+            ax,
+            active_triplets_for_overlay,
+            active_nodes=active_nodes_for_filter,
+            max_triplets=12,
+            font_size=8,
+        )
+
     ax.axis("off")
     fig.savefig(save_path, format="PNG", dpi=300, bbox_inches="tight")
     plt.close(fig)

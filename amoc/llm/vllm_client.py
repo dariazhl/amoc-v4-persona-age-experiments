@@ -91,14 +91,21 @@ class VLLMClient:
 
     def call_vllm(self, prompt: str, persona: str) -> str:
         # Inject persona into system prompt
+        # CRITICAL (AMoC v4 Paper Alignment):
+        # Persona influences SALIENCE (what the LLM considers important), never CONTENT.
+        # All nodes/edges must come from STORY TEXT, never from persona.
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are a knowledge graph builder and reasoning agent.\n"
-                    "You must reason about the following persona and age, and extract factual relationships about them (and related concepts) only when they are supported by the text.\n\n"
-                    f"Persona description:\n{persona}\n\n"
-                    "Do not invent new attributes or relationships that are not supported by the persona description itself."
+                    "You are a knowledge graph builder and reasoning agent.\n\n"
+                    "IMPORTANT: You are processing story text to build a knowledge graph.\n"
+                    "- ALL concepts, properties, and relationships must come from THE STORY TEXT provided.\n"
+                    "- The persona below is provided ONLY to help you understand what aspects of the story are most relevant or salient.\n"
+                    "- Do NOT create nodes or edges from the persona description itself.\n"
+                    "- The persona influences what you focus on, not what you extract.\n\n"
+                    f"Persona (for salience weighting only):\n{persona}\n\n"
+                    "Use this persona to guide which story elements deserve emphasis, but ensure every node and edge you output is grounded in the story text."
                 ),
             },
             {"role": "user", "content": prompt},

@@ -1,9 +1,10 @@
 from amoc.graph.node import Node
-from amoc.graph.node import NodeType, NodeSource
+from amoc.graph.node import NodeType, NodeSource, NodeProvenance
 from amoc.graph.edge import Edge
 from collections import deque
-from typing import List, Set, Dict, Optional, Tuple
+from typing import List, Set, Dict, Optional, Tuple, Callable
 import re
+import logging
 
 
 class Graph:
@@ -13,16 +14,49 @@ class Graph:
 
     def add_or_get_node(
         self,
-        lemmas: List[str],
+        lemmas: list[str],
         actual_text: str,
         node_type: NodeType,
         node_source: NodeSource,
-    ) -> Node:
+        *,
+        admit: Optional[Callable] = None,
+        admit_kwargs: dict | None = None,
+        origin_sentence: Optional[int] = None,
+        provenance: Optional[NodeProvenance] = None,
+    ):
+        """
+        Add a new node or get existing node with matching lemmas.
+
+        PROVENANCE TRACKING (Paper-Aligned):
+        - origin_sentence: The sentence index where this node was created
+        - provenance: How this node was derived (STORY_TEXT or INFERRED_FROM_STORY)
+
+        CRITICAL: Nodes must only come from story text, never from persona.
+        Persona influences salience/weights only, never graph content.
+        """
         lemmas = [lemma.lower() for lemma in lemmas]
+        if not lemmas or not lemmas[0] or not lemmas[0].isalpha():
+            return None
+        FORBIDDEN = {"edge", "node", "property", "label", "target", "source"}
+        if any(l in FORBIDDEN for l in lemmas):
+            return None
+        if admit is not None:
+            admit_kwargs = admit_kwargs or {}
+            if not admit(lemma=lemmas[0], node_type=node_type, **admit_kwargs):
+                return None
+
         actual_text_l = (actual_text or "").lower()
         node = self.get_node(lemmas)
         if node is None:
-            node = Node(lemmas, actual_text_l, node_type, node_source, 0)
+            node = Node(
+                lemmas,
+                actual_text_l,
+                node_type,
+                node_source,
+                0,
+                origin_sentence=origin_sentence,
+                provenance=provenance or NodeProvenance.STORY_TEXT,
+            )
             self.nodes.add(node)
         else:
             node.add_actual_text(actual_text_l)
@@ -171,6 +205,7 @@ class Graph:
 
         Per AMoC v4 paper requirements:
         - PROPERTY edges must NEVER be reactivated (strict rule)
+        - PROPERTY nodes don't participate in BFS (no propagation through properties)
         - Reactivation is sparse: limited to MAX_REACTIVATION_COUNT edges (≈1-3)
         - Only edges within graph_distance ≤ max_distance are candidates
 
@@ -180,9 +215,15 @@ class Graph:
             return set()
 
         # BFS to find candidate edges within distance
-        # We collect candidates first, then select the best ones (sparse reactivation)
-        reachable_nodes: Dict[Node, int] = {n: 0 for n in explicit_nodes}
-        queue: deque = deque(explicit_nodes)
+        # CRITICAL (Paper-Aligned): Only CONCEPT nodes participate in BFS
+        # PROPERTY nodes have no independent activation and don't propagate
+        concept_seeds = {n for n in explicit_nodes if n.node_type != NodeType.PROPERTY}
+
+        if not concept_seeds:
+            return set()
+
+        reachable_nodes: Dict[Node, int] = {n: 0 for n in concept_seeds}
+        queue: deque = deque(concept_seeds)
         visited_edges: Set[Edge] = set()
         candidate_edges: list[tuple[int, Edge]] = []  # (distance, edge)
 
@@ -200,6 +241,9 @@ class Graph:
 
                 # STRICT RULE: PROPERTY edges must NEVER be reactivated
                 # Property edges fade permanently if not reasserted in current sentence
+                if edge.is_property_edge():
+                    continue
+
                 if edge.violates_property_sentence_constraint(current_sentence):
                     continue
 
@@ -211,9 +255,12 @@ class Graph:
                 candidate_edges.append((dist, edge))
 
                 # Continue BFS to neighbors (for finding more candidates)
+                # CRITICAL: Skip PROPERTY nodes in traversal
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
+                if neighbor.node_type == NodeType.PROPERTY:
+                    continue
                 if neighbor not in reachable_nodes:
                     reachable_nodes[neighbor] = dist + 1
                     queue.append(neighbor)
@@ -416,9 +463,20 @@ class Graph:
         Per AMoC v4: Activation distance is computed bidirectionally (semantic edges
         connect concepts regardless of direction). Direction matters for meaning,
         not for activation propagation.
+
+        CRITICAL (Paper-Aligned):
+        PROPERTY nodes are EXCLUDED from BFS traversal and distance computation.
+        Per paper: PROPERTY nodes have no independent activation and don't propagate
+        activation to/from other nodes. Only CONCEPT nodes participate in BFS.
         """
         distances = {}
-        queue = deque([(node, 0) for node in activated_nodes])
+        # Filter out PROPERTY nodes from starting set
+        # Per paper: only CONCEPT nodes can be activation seeds
+        concept_seeds = [
+            node for node in activated_nodes if node.node_type != NodeType.PROPERTY
+        ]
+
+        queue = deque([(node, 0) for node in concept_seeds])
         while queue:
             curr_node, curr_distance = queue.popleft()
             if curr_node not in distances:
@@ -445,6 +503,14 @@ class Graph:
                         if edge.dest_node == curr_node:
                             next_node = edge.source_node
 
+                    # CRITICAL: Skip PROPERTY nodes in BFS traversal
+                    # Per paper: PROPERTY nodes don't propagate activation
+                    if (
+                        next_node is not None
+                        and next_node.node_type == NodeType.PROPERTY
+                    ):
+                        continue
+
                     if next_node is not None:
                         queue.append((next_node, curr_distance + 1))
         return distances
@@ -452,9 +518,24 @@ class Graph:
     def set_nodes_score_based_on_distance_from_active_nodes(
         self, activated_nodes: List[Node]
     ) -> None:
+        """
+        Update node scores based on BFS distance from activated nodes.
+
+        CRITICAL (Paper-Aligned):
+        PROPERTY nodes are excluded from distance-based scoring.
+        Per paper: PROPERTY nodes have no independent activation and
+        their "closeness" to active CONCEPT nodes does NOT make them active.
+        PROPERTY nodes keep a high score (100) to prevent them from being
+        selected as carry-over nodes based on score alone.
+        """
         distances_to_activated_nodes = self.bfs_from_activated_nodes(activated_nodes)
         for node in self.nodes:
-            node.score = distances_to_activated_nodes.get(node, 100)
+            # PROPERTY nodes always get high score (inactive by distance)
+            # Per paper: they only become visible via active property edges
+            if node.node_type == NodeType.PROPERTY:
+                node.score = 100  # Never selected by distance-based logic
+            else:
+                node.score = distances_to_activated_nodes.get(node, 100)
 
     def get_word_lemma_score(self, word_lemmas: List[str]) -> Optional[float]:
         for node in self.nodes:
@@ -481,10 +562,20 @@ class Graph:
     def get_active_nodes(
         self, score_threshold: int, only_text_based: bool = False
     ) -> List[Node]:
+        """
+        Get nodes within the score threshold (close to active nodes).
+
+        CRITICAL (Paper-Aligned):
+        PROPERTY nodes are EXCLUDED from score-based selection.
+        Per paper: PROPERTY nodes have no independent activation.
+        They only appear in the active graph if they have an active property edge.
+        Score-based selection applies ONLY to CONCEPT nodes.
+        """
         return [
             node
             for node in self.nodes
             if node.score <= score_threshold
+            and node.node_type != NodeType.PROPERTY  # Per paper: no PROPERTY carry-over
             and (not only_text_based or node.node_source == NodeSource.TEXT_BASED)
         ]
 
@@ -611,7 +702,11 @@ class Graph:
             G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
 
         if G_active.number_of_nodes() <= 1:
-            return ([set(G_active.nodes())], 0) if G_active.number_of_nodes() == 1 else ([], -1)
+            return (
+                ([set(G_active.nodes())], 0)
+                if G_active.number_of_nodes() == 1
+                else ([], -1)
+            )
 
         components = [set(c) for c in nx.connected_components(G_active)]
 
@@ -887,8 +982,7 @@ class Graph:
         """
         # CONSTRAINT 1: No forbidden edge labels
         forbidden_edges = [
-            edge for edge in self.edges
-            if edge.label in self.FORBIDDEN_EDGE_LABELS
+            edge for edge in self.edges if edge.label in self.FORBIDDEN_EDGE_LABELS
         ]
         assert not forbidden_edges, (
             f"AMoCv4 VIOLATION: Found {len(forbidden_edges)} forbidden edge(s) with "
@@ -925,3 +1019,49 @@ class Graph:
             )
 
         return True
+
+    def sanity_check_provenance(
+        self,
+        story_lemmas: set,
+        persona_only_lemmas: set,
+    ) -> list:
+        """
+        AMoC v4 PROVENANCE SANITY CHECK: Detect potential persona leakage.
+
+        Per AMoC v4 paper: Nodes must come from STORY TEXT only.
+        Persona influences salience (weights), never content (nodes/edges).
+
+        Args:
+            story_lemmas: Set of lemmas from the story text
+            persona_only_lemmas: Set of lemmas unique to persona (not in story)
+
+        Returns:
+            List of warning strings for any detected violations.
+            Empty list if all nodes pass provenance check.
+        """
+        warnings = []
+
+        for node in self.nodes:
+            # Check each lemma in the node
+            for lemma in node.lemmas:
+                lemma_lower = lemma.lower()
+
+                # CRITICAL CHECK: Node lemma appears ONLY in persona
+                if lemma_lower in persona_only_lemmas:
+                    warnings.append(
+                        f"PROVENANCE VIOLATION: Node '{node.get_text_representer()}' "
+                        f"contains lemma '{lemma_lower}' which appears ONLY in persona, "
+                        f"not in story text. Provenance: {node.provenance}"
+                    )
+
+                # SOFT CHECK: Node lemma not found in story
+                # (This might be OK for inferred nodes, but worth flagging)
+                elif lemma_lower not in story_lemmas:
+                    if node.provenance != NodeProvenance.INFERRED_FROM_STORY:
+                        warnings.append(
+                            f"PROVENANCE WARNING: Node '{node.get_text_representer()}' "
+                            f"contains lemma '{lemma_lower}' not found in story text. "
+                            f"Provenance: {node.provenance}"
+                        )
+
+        return warnings
