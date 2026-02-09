@@ -38,6 +38,11 @@ else
     echo "No story file provided"
 fi
 
+STORY_ARG=""
+if [[ -n "${STORY_FILE}" ]]; then
+    STORY_ARG="--story-text ${STORY_FILE}"
+fi
+
 bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
     --models "Qwen/Qwen3-30B-A3B-Instruct-2507" \
     --tp 2 \
@@ -47,4 +52,4 @@ bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
     --file "${INPUT_FILE}" \
     --strict-reactivate-function \
     --strict-attachament-constraint \
-    --story-text "${STORY_FILE}" 
+    ${STORY_ARG}
