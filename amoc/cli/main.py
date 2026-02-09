@@ -3,6 +3,7 @@ import sys
 import time
 import logging
 import argparse
+import re
 from typing import List
 
 # --- Multiprocessing safety (vLLM + CUDA) ---
@@ -195,6 +196,26 @@ def is_leader() -> bool:
     return os.environ.get("SLURM_ARRAY_TASK_ID") in (None, "0")
 
 
+def load_story_text_from_arg(story_text_arg: str) -> str:
+    if story_text_arg is None:
+        return None
+
+    if os.path.isfile(story_text_arg):
+        if not story_text_arg.lower().endswith(".txt"):
+            raise ValueError(f"Story text file must be a .txt file: {story_text_arg}")
+
+        with open(story_text_arg, "r", encoding="utf-8") as f:
+            text = f.read()
+
+        # Normalize line endings
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = re.sub(r"\n{3,}", "\n\n", text)  # Collapse multiple newlines to max 2
+
+        return text.strip()
+
+    return story_text_arg.strip()
+
+
 # ==========================================
 # MAIN
 # ==========================================
@@ -228,7 +249,11 @@ def main(argv: List[str]) -> None:
 
     total_start = time.time()
 
-    story_text = args.story_text if args.story_text is not None else STORY_TEXT
+    if args.story_text is not None:
+        story_text = load_story_text_from_arg(args.story_text)
+    else:
+        story_text = STORY_TEXT
+
     story_is_default = (story_text or "").strip() == (STORY_TEXT or "").strip()
     highlight_nodes = (
         BLUE_NODES if story_is_default else blue_nodes_from_text(story_text, spacy_nlp)

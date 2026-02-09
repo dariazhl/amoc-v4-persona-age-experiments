@@ -156,18 +156,8 @@ class AMoCv4:
 
         # 1. Lexical grounding (hard gate)
         if lemma not in self.story_lemmas:
-            return False
+            pass
 
-        # ==========================================================================
-        # AMoC-v4 FIGURE 7 COMPLIANCE: Relaxed adjective admission
-        # ==========================================================================
-        # Per AMoC-v4 Figure 7: Adjectives like "young", "beautiful", "scorched"
-        # MUST become PROPERTY nodes when they appear in the sentence.
-        #
-        # Lexical presence in story text is SUFFICIENT grounding.
-        # Specific dependency labels (amod, acomp, attr) are NOT required as a hard gate.
-        # Any adjective (pos_ == "ADJ") appearing in the sentence text can be admitted.
-        # ==========================================================================
         if node_type == NodeType.PROPERTY:
             if sent is None:
                 return False
@@ -193,6 +183,12 @@ class AMoCv4:
         }:
             return False
 
+        if lemma not in self.story_lemmas and provenance not in {
+            "INFERRED_RELATION",
+            "INFERENCE_BASED",
+        }:
+            return False
+
         return True
 
     def _node_token_for_matrix(self, node: Node) -> str:
@@ -209,6 +205,8 @@ class AMoCv4:
         self,
         lemma: str,
         current_sentence_text: Optional[str] = None,
+        *,
+        allow_bootstrap: bool = False,
     ) -> bool:
         """
         Validate that a candidate node lemma has valid story provenance.
@@ -225,13 +223,16 @@ class AMoCv4:
         Args:
             lemma: The candidate lemma to validate
             current_sentence_text: Optional current sentence text for additional validation
+            allow_bootstrap: If True, allow node admission even if not in story tokens,
+                             ONLY when node will be immediately connected by an edge.
+                             This enables LLM-inferred semantic relations (e.g., knight→forest).
 
         Returns:
             True if the lemma has valid story provenance, False otherwise
         """
         lemma_lower = lemma.lower()
 
-        # HARD GATE 1: Reject persona-only lemmas
+        # HARD GATE 1: Reject persona-only lemmas (never bypassed)
         if lemma_lower in self._persona_only_lemmas:
             if self.debug:
                 logging.debug(
@@ -251,13 +252,36 @@ class AMoCv4:
             if lemma_lower in sent_lemmas:
                 return True
 
-        # STRICT: Not in story text - REJECT
-        # Per AMoC paper: only story-grounded nodes allowed
+        # GRAPH GROUNDING: Allow concepts that already exist in the graph
+        # This enables semantic inference chains:
+        # - Sentence 1: knight → danger (danger bootstrapped)
+        # - Sentence 2: danger → threat (danger now exists, threat can bootstrap)
+        # Per AMoC v4 Figures 2-4: abstract concepts like "danger", "threat", "goal"
+        # can appear when semantically connected to grounded concepts
+        existing_node = self.graph.get_node([lemma_lower])
+        if existing_node is not None:
+            if self.debug:
+                logging.debug(
+                    f"PROVENANCE GATE: Graph grounding for '{lemma_lower}' (exists in graph)"
+                )
+            return True
+
+        # BOOTSTRAP PATH: Allow inferred nodes that will be connected by an edge
+        # This enables semantic relations from LLM extraction (e.g., "knight" → "danger")
+        # where "danger" may not be a direct token but is semantically inferred.
+        if allow_bootstrap:
+            if self.debug:
+                logging.debug(
+                    f"PROVENANCE GATE: BOOTSTRAP allowed for '{lemma_lower}' (will be connected)"
+                )
+            return True
+
+        # STRICT: Not in story text and not grounded - REJECT
         if self.debug:
             logging.debug(
-                f"PROVENANCE GATE: Rejected lemma '{lemma_lower}' - not in story_lemmas"
+                f"PROVENANCE GATE: Rejected lemma '{lemma_lower}' - not grounded"
             )
-        return False  # STRICT: Reject nodes not in story text
+        return False
 
     def _validate_node_provenance_strict(
         self,
@@ -633,23 +657,6 @@ class AMoCv4:
         created_at_sentence: Optional[int] = None,
         bypass_attachment_constraint: bool = False,
     ) -> Optional[Edge]:
-        """
-        Add or replace an edge between source_node and dest_node.
-
-        ==========================================================================
-        PAPER-ALIGNED SINGLE-EDGE SEMANTICS (AMoC Figures 2–6)
-        ==========================================================================
-        When allow_multi_edges=False (default, paper-aligned):
-          - At most ONE edge exists between any ordered ⟨source, dest⟩ pair
-          - If an edge already exists, it is REPLACED with the new label
-          - This models memory abstraction: later actions override earlier ones
-          - The LLM proposes relations; the AMoC system decides what is remembered
-
-        When allow_multi_edges=True (experimental):
-          - Multiple edges can accumulate between the same node pair
-          - Used for debugging or alternative memory models
-        ==========================================================================
-        """
         # Canonicalize relation label before edge creation
         # Removes parser prefixes/artifacts and normalizes format
         label = Graph.canonicalize_relation_label(label)
@@ -661,6 +668,12 @@ class AMoCv4:
             self.strict_attachament_constraint
             and self.graph.edges
             and not bypass_attachment_constraint
+            and not (
+                source_node.node_source == NodeSource.INFERENCE_BASED
+                or dest_node.node_source == NodeSource.INFERENCE_BASED
+                or source_node not in self.graph.nodes
+                or dest_node not in self.graph.nodes
+            )
         ):
             # Build undirected view of current graph
             G = nx.Graph()
@@ -750,26 +763,58 @@ class AMoCv4:
                     )
                     return existing_edge
                 else:
-                    # REJECT: semantically incompatible, keep existing edge
-                    if self.debug:
-                        logging.debug(
-                            "[SingleEdge] REJECTED incompatible edge: %s --%s--> %s (keeping: %s, classes: %s vs %s)",
-                            source_node.get_text_representer(),
-                            label,
-                            dest_node.get_text_representer(),
-                            old_label,
-                            get_semantic_class(
-                                label.split("_")[0] if "_" in label else label
-                            ),
-                            get_semantic_class(
-                                old_label.split("_")[0]
-                                if "_" in old_label
-                                else old_label
-                            ),
-                        )
-                    return None
+                    # ==========================================================================
+                    # INCOMPATIBILITY DECAY: Both edges coexist, decay resolves conflict
+                    # ==========================================================================
+                    # Per AMoC v4 paper alignment: competing relations age out gradually.
+                    # DO NOT reject the new edge or replace the old edge.
+                    # Instead:
+                    # 1. Decay the existing edge (reduce visibility)
+                    # 2. Create new edge with NORMAL visibility (marked as asserted)
+                    # 3. Let natural decay resolve which relation survives
+                    #
+                    # If existing edge becomes inactive (visibility <= 0), remove it
+                    # and only then add the new edge as the sole edge.
+                    # ==========================================================================
+                    existing_edge.reduce_visibility()
 
-        # No existing edge (or allow_multi_edges=True): create new edge
+                    # If old edge decayed to inactive, remove it and add the new edge
+                    if not existing_edge.active:
+                        self.graph.remove_edge(existing_edge)
+                        # Fall through to create new edge below
+                    else:
+                        # BOTH EDGES COEXIST: old edge still active, add new edge alongside
+                        # New edge has NORMAL visibility and is marked as asserted
+                        new_edge = self.graph.add_edge(
+                            source_node,
+                            dest_node,
+                            label,
+                            visibility_score=edge_forget,  # NORMAL visibility
+                            created_at_sentence=use_sentence,
+                        )
+
+                        if new_edge:
+                            # Mark as properly asserted with normal activation
+                            new_edge.mark_as_asserted(reset_score=True)
+
+                            trip_id = (
+                                new_edge.source_node.get_text_representer(),
+                                new_edge.label,
+                                new_edge.dest_node.get_text_representer(),
+                            )
+                            if trip_id not in self._triplet_intro:
+                                self._triplet_intro[trip_id] = (
+                                    use_sentence if use_sentence is not None else -1
+                                )
+
+                            self._record_edge_in_graphs(
+                                new_edge, self._current_sentence_index
+                            )
+                            return new_edge
+
+                        return None  # Failed to create competing edge
+
+        # No existing edge (or allow_multi_edges=True, or old edge was removed): create new edge
         edge = self.graph.add_edge(
             source_node,
             dest_node,
@@ -996,30 +1041,15 @@ class AMoCv4:
 
     # STEP 5 from paper - HARD RESET: Only explicit nodes from current sentence are active
     def _restrict_active_to_current_explicit(self, explicit_nodes: List[Node]) -> None:
-        """
-        AMoC v4 STEP 5: Hard reset of active graph.
-
-        Per paper Section 3.1:
-        - After sentence processing, active_nodes ← explicit_nodes (current sentence only)
-        - This is a HARD RESET - no carry-over unless reactivated next sentence
-        - Activation is purely graph-theoretic: BFS distance from explicit nodes
-
-        This function delegates to set_nodes_score_based_on_distance_from_active_nodes
-        which computes shortest-path distance. Nodes with score > max_distance are inactive.
-
-        CRITICAL FIX: Expand seed set to include nodes connected by edges asserted
-        THIS sentence. This ensures adjective PROPERTY nodes are marked active when
-        introduced (per AMoC-v4 Figure 7).
-        """
         # Start with explicit nodes from sentence text
         seed_nodes = set(explicit_nodes)
 
-        # Expand to include nodes connected by edges asserted THIS sentence
-        # This ensures PROPERTY nodes (e.g., "young") are active when their
-        # "is" edge is asserted in the current sentence
         for edge in self.graph.edges:
-            if edge.asserted_this_sentence and edge.is_property_edge():
-                seed_nodes.add(edge.source_node)
+            if (
+                edge.is_property_edge()
+                and edge.source_node in seed_nodes
+                and edge.visibility_score > 0
+            ):
                 seed_nodes.add(edge.dest_node)
 
         # The BFS function will compute distances from these seed nodes
@@ -1101,7 +1131,7 @@ class AMoCv4:
             )
 
         # Active projection (salience)
-        if edge.active:
+        if edge.active or edge.visibility_score > 0:
             self.active_graph.add_edge(
                 u,
                 v,
@@ -1114,10 +1144,7 @@ class AMoCv4:
             )
         else:
             if self.active_graph.has_edge(u, v, key=edge_key):
-                try:
-                    self.active_graph.remove_edge(u, v, key=edge_key)
-                except Exception:
-                    pass
+                self.active_graph.remove_edge(u, v, key=edge_key)
 
     def _graph_to_triplets(self, graph: nx.MultiDiGraph) -> List[Tuple[str, str, str]]:
         trips: List[Tuple[str, str, str]] = []
@@ -1431,13 +1458,39 @@ class AMoCv4:
                 return node
         return None
 
-    def _appears_in_story(self, text: str) -> bool:
+    def _appears_in_story(self, text: str, *, check_graph: bool = False) -> bool:
+        """
+        Check if text has grounding in story or graph.
+
+        Per AMoC v4 paper alignment:
+        - Literal grounding: lemma appears in story_lemmas (strict)
+        - Graph grounding: node already exists in cumulative graph (for inference chains)
+
+        Args:
+            text: The text to check
+            check_graph: If True, also allow concepts that exist in the graph.
+                        This enables semantic inference chains like:
+                        knight → danger → threat (where danger bridges)
+
+        Returns:
+            True if the text is grounded (literal or graph-based), False otherwise
+        """
         if not text:
             return False
         doc = self.spacy_nlp(text)
-        return any(
-            tok.lemma_.lower() in self.story_lemmas for tok in doc if tok.is_alpha
-        )
+
+        # Check literal lemma presence in story
+        for tok in doc:
+            if tok.is_alpha and tok.lemma_.lower() in self.story_lemmas:
+                return True
+
+        # Check graph membership (allows inference chains)
+        if check_graph:
+            lemmas = get_concept_lemmas(self.spacy_nlp, text)
+            if self.graph.get_node(lemmas) is not None:
+                return True
+
+        return False
 
     def _classify_canonical_node_text(self, canon: str) -> Optional[NodeType]:
         if not canon:
@@ -1822,10 +1875,6 @@ class AMoCv4:
                 logging.debug(
                     "[Activation] Sentence %d: edges carry forward, will fade if not relevant",
                     i,
-                )
-
-                self.graph.enforce_property_sentence_constraints(
-                    self._current_sentence_index
                 )
 
                 # phrase level nodes
@@ -2649,6 +2698,9 @@ class AMoCv4:
                 # Use proper state management - mark as reactivated
                 # PROPERTY edges should NOT be reactivated per paper rules
                 if not edge.is_property_edge():
+                    edge.active = True
+                    self._record_edge_in_graphs(edge, self._current_sentence_index)
+                else:
                     edge.mark_as_reactivated(reset_score=True)
                 edge.visibility_score = self.edge_visibility
                 self._record_edge_in_graphs(edge, self._current_sentence_index)
@@ -2751,15 +2803,6 @@ class AMoCv4:
         current_sentence_text_based_nodes: List[Node],
         current_sentence_text_based_words: List[str],
     ) -> None:
-        """
-        Extract deterministic linguistic structure from a sentence.
-
-        Per AMoC paper Figures 4-6:
-        1. Adjectival modifiers (amod, acomp, attr) → PROPERTY nodes with 'is' edges
-        2. Prepositional objects (prep → pobj) → CONCEPT nodes with verb_prep edges
-
-        This runs BEFORE LLM calls to ensure linguistic grounding exists first.
-        """
         # 1. Extract adjectival modifiers → PROPERTY nodes
         adj_modifiers = extract_adjectival_modifiers(sent)
         for mod in adj_modifiers:
@@ -2825,19 +2868,6 @@ class AMoCv4:
             obj_lemma = prep_obj["object"]
             edge_label = prep_obj["label"]
 
-            # Find the subject node
-            # ==========================================================================
-            # PREPOSITIONAL EDGE ADMISSION: Subject can be ANY existing graph node
-            # ==========================================================================
-            # Unlike copular/property edges (which require text-explicit subjects),
-            # prepositional relations attach to any active entity in the graph.
-            # This allows: "knight --rode_through--> forest" even when "knight"
-            # was introduced in a previous sentence.
-            #
-            # Lookup order:
-            # 1. Current sentence text-based nodes (preferred - most explicit)
-            # 2. All existing graph nodes (allows cross-sentence attachment)
-            # ==========================================================================
             subj_node = None
 
             # First: check current sentence text-based nodes
@@ -2885,25 +2915,26 @@ class AMoCv4:
 
             # Normalize and create edge through centralized path
             original_label = edge_label
-            edge_label = self._normalize_edge_label(edge_label)
-            if not edge_label:
+            norm_label = self._normalize_edge_label(edge_label)
+            if not norm_label:
                 logging.debug(
-                    f"[Deterministic] SKIP prep: edge label normalization failed for '{original_label}'"
+                    f"[Deterministic] Prep edge rejected, but node kept: "
+                    f"{subj_lemma} --X--> {obj_lemma}"
                 )
                 continue
-
             edge = self._add_edge(
                 subj_node,
                 obj_node,
-                edge_label,
+                norm_label,
                 self.edge_visibility,
                 created_at_sentence=self._current_sentence_index,
                 bypass_attachment_constraint=True,
             )
             if edge is not None:
                 logging.debug(
-                    f"[Deterministic] Created prep edge: {subj_lemma} --{edge_label}--> {obj_lemma}"
+                    f"[Deterministic] Created prep edge: {subj_lemma} --{norm_label}--> {obj_lemma}"
                 )
+
             else:
                 logging.debug(
                     f"[Deterministic] SKIP prep: _add_edge returned None for "
@@ -3029,9 +3060,12 @@ class AMoCv4:
             norm_obj = self._normalize_endpoint_text(relationship[2], is_subject=False)
             if norm_subj is None or norm_obj is None:
                 continue
+            # RELAXED: Allow semantic inferences where at least one endpoint is grounded
+            # (literally in story text OR exists in graph from prior inference)
+            # This enables abstract concepts like "danger", "threat", "goal" per paper Figures 2-4
             if not (
-                self._appears_in_story(relationship[0])
-                or self._appears_in_story(relationship[2])
+                self._appears_in_story(relationship[0], check_graph=True)
+                or self._appears_in_story(relationship[2], check_graph=True)
             ):
                 continue
             if not self._passes_attachment_constraint(
@@ -3067,7 +3101,10 @@ class AMoCv4:
                 continue
             if source_node is None:
                 # PROVENANCE GATE: Validate LLM-inferred nodes against story text
-                if not self._validate_node_provenance(subj):
+                # BOOTSTRAP: allow if dest_node already exists (one endpoint grounded)
+                if not self._validate_node_provenance(
+                    subj, allow_bootstrap=(dest_node is not None)
+                ):
                     continue
                 if not self._admit_node(
                     lemma=subj,
@@ -3086,7 +3123,10 @@ class AMoCv4:
 
             if dest_node is None:
                 # PROVENANCE GATE: Validate LLM-inferred nodes against story text
-                if not self._validate_node_provenance(obj):
+                # BOOTSTRAP: allow if source_node already exists (one endpoint grounded)
+                if not self._validate_node_provenance(
+                    obj, allow_bootstrap=(source_node is not None)
+                ):
                     continue
                 dest_node = self.graph.add_or_get_node(
                     get_concept_lemmas(self.spacy_nlp, obj),
@@ -3095,11 +3135,6 @@ class AMoCv4:
                     NodeSource.INFERENCE_BASED,
                     provenance=NodeProvenance.INFERRED_FROM_STORY,
                 )
-
-            if node_type == NodeType.PROPERTY:
-                # PROPERTY edges only allowed in origin sentence
-                if self._current_sentence_index != 1:
-                    continue
 
             # DIRECTION CANONICALIZATION: Normalize passive voice to active
             canon_label, canon_src, canon_dst, was_swapped = (
@@ -3148,9 +3183,12 @@ class AMoCv4:
             norm_obj = self._normalize_endpoint_text(relationship[2], is_subject=False)
             if norm_subj is None or norm_obj is None:
                 continue
+            # RELAXED: Allow semantic inferences where at least one endpoint is grounded
+            # (literally in story text OR exists in graph from prior inference)
+            # This enables abstract concepts like "danger", "threat", "goal" per paper Figures 2-4
             if not (
-                self._appears_in_story(relationship[0])
-                or self._appears_in_story(relationship[2])
+                self._appears_in_story(relationship[0], check_graph=True)
+                or self._appears_in_story(relationship[2], check_graph=True)
             ):
                 continue
             if not self._passes_attachment_constraint(
@@ -3188,7 +3226,10 @@ class AMoCv4:
                 continue
             if source_node is None:
                 # PROVENANCE GATE: Validate LLM-inferred nodes against story text
-                if not self._validate_node_provenance(subj):
+                # BOOTSTRAP: allow if dest_node already exists (one endpoint grounded)
+                if not self._validate_node_provenance(
+                    subj, allow_bootstrap=(dest_node is not None)
+                ):
                     continue
                 source_node = self.graph.add_or_get_node(
                     get_concept_lemmas(self.spacy_nlp, subj),
@@ -3200,7 +3241,10 @@ class AMoCv4:
 
             if dest_node is None:
                 # PROVENANCE GATE: Validate LLM-inferred nodes against story text
-                if not self._validate_node_provenance(obj):
+                # BOOTSTRAP: allow if source_node already exists (one endpoint grounded)
+                if not self._validate_node_provenance(
+                    obj, allow_bootstrap=(source_node is not None)
+                ):
                     continue
                 dest_node = self.graph.add_or_get_node(
                     get_concept_lemmas(self.spacy_nlp, obj),
@@ -3209,11 +3253,6 @@ class AMoCv4:
                     NodeSource.INFERENCE_BASED,
                     provenance=NodeProvenance.INFERRED_FROM_STORY,
                 )
-
-            if node_type == NodeType.PROPERTY:
-                # PROPERTY edges only allowed in origin sentence
-                if self._current_sentence_index != 1:
-                    continue
 
             # DIRECTION CANONICALIZATION: Normalize passive voice to active
             canon_label, canon_src, canon_dst, was_swapped = (

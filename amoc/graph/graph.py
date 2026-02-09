@@ -1058,3 +1058,11 @@ class Graph:
                         )
 
         return warnings
+
+    def remove_edge(self, edge: Edge) -> None:
+        if edge in self.edges:
+            self.edges.remove(edge)
+        if edge.source_node and edge in edge.source_node.edges:
+            edge.source_node.edges.remove(edge)
+        if edge.dest_node and edge in edge.dest_node.edges:
+            edge.dest_node.edges.remove(edge)

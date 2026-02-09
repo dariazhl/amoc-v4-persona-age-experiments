@@ -114,6 +114,7 @@ class Edge:
         """
         self.visibility_score -= 1
         if self.visibility_score <= 0:
+            self.visibility_score = 0
             self.active = False  # Hidden from active graph, NOT deleted
 
     def reset_for_sentence_start(self) -> None:
@@ -147,10 +148,9 @@ class Edge:
             self.activation_score = self.DEFAULT_ACTIVATION_SCORE
 
     def mark_as_reactivated(self, reset_score: bool = True) -> None:
-        """
-        Mark edge as reactivated this sentence (brought back from memory).
-        PROPERTY edges should NEVER be reactivated - caller must check.
-        """
+        # HARD GUARD: PROPERTY edges can NEVER be reactivated
+        if self.is_property_edge():
+            return
         if self.activation_role == "connector":
             return
         self.active = True
@@ -161,16 +161,9 @@ class Edge:
             self.activation_score = self.DEFAULT_ACTIVATION_SCORE
 
     def mark_as_connector(self) -> None:
-        """
-        Mark edge as a connector (promoted to preserve active graph connectivity).
-        Connector edges:
-        - Must already exist in the cumulative graph
-        - Must NOT be PROPERTY edges (caller must check)
-        - Do NOT count as asserted or reactivated
-        - Do NOT increase activation scores
-        - Are NOT eligible for inference
-        - Exist only to preserve structural connectivity
-        """
+        # HARD GUARD: PROPERTY edges can NEVER be connectors
+        if self.is_property_edge():
+            return  # Silently refuse - PROPERTY edges don't maintain connectivity
         self.active = True
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = False
@@ -350,16 +343,4 @@ class Edge:
         return self.__str__()
 
     def violates_property_sentence_constraint(self, current_sentence: int) -> bool:
-        """
-        Check if this PROPERTY edge violates the sentence constraint.
-
-        Per AMoC-v4 paper: PROPERTY edges are active only in their origin sentence
-        unless explicitly reasserted. They decay normally like other edges.
-
-        Returns True if this is a PROPERTY edge outside its origin sentence.
-        """
-        if not self.is_property_edge():
-            return False
-        if self.origin_sentence is None:
-            return False
-        return current_sentence != self.origin_sentence
+        return False
