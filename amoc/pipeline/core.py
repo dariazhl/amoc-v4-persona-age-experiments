@@ -631,6 +631,7 @@ class AMoCv4:
         label: str,
         edge_forget: int,
         created_at_sentence: Optional[int] = None,
+        bypass_attachment_constraint: bool = False,
     ) -> Optional[Edge]:
         """
         Add or replace an edge between source_node and dest_node.
@@ -656,7 +657,11 @@ class AMoCv4:
             return None
 
         # STRICT MODE: enforce structural connectivity guarantee
-        if self.strict_attachament_constraint and self.graph.edges:
+        if (
+            self.strict_attachament_constraint
+            and self.graph.edges
+            and not bypass_attachment_constraint
+        ):
             # Build undirected view of current graph
             G = nx.Graph()
             for e in self.graph.edges:
@@ -1013,7 +1018,7 @@ class AMoCv4:
         # This ensures PROPERTY nodes (e.g., "young") are active when their
         # "is" edge is asserted in the current sentence
         for edge in self.graph.edges:
-            if edge.asserted_this_sentence:
+            if edge.asserted_this_sentence and edge.is_property_edge():
                 seed_nodes.add(edge.source_node)
                 seed_nodes.add(edge.dest_node)
 
@@ -2809,20 +2814,47 @@ class AMoCv4:
 
         # 2. Extract prepositional objects → CONCEPT nodes
         prep_objects = extract_prepositional_objects(sent)
+        logging.debug(
+            f"[Deterministic] Extracted {len(prep_objects)} prep objects from: {sent.text}"
+        )
+        for prep_obj in prep_objects:
+            logging.debug(f"[Deterministic] Processing prep object: {prep_obj}")
+
         for prep_obj in prep_objects:
             subj_lemma = prep_obj["subject"]
             obj_lemma = prep_obj["object"]
             edge_label = prep_obj["label"]
 
             # Find the subject node
+            # ==========================================================================
+            # PREPOSITIONAL EDGE ADMISSION: Subject can be ANY existing graph node
+            # ==========================================================================
+            # Unlike copular/property edges (which require text-explicit subjects),
+            # prepositional relations attach to any active entity in the graph.
+            # This allows: "knight --rode_through--> forest" even when "knight"
+            # was introduced in a previous sentence.
+            #
+            # Lookup order:
+            # 1. Current sentence text-based nodes (preferred - most explicit)
+            # 2. All existing graph nodes (allows cross-sentence attachment)
+            # ==========================================================================
             subj_node = None
+
+            # First: check current sentence text-based nodes
             for node in current_sentence_text_based_nodes:
                 if subj_lemma in node.lemmas:
                     subj_node = node
                     break
 
+            # Second: check all existing graph nodes (for cross-sentence attachment)
             if subj_node is None:
-                # Subject not in current sentence nodes - skip
+                subj_node = self.graph.get_node([subj_lemma])
+
+            if subj_node is None:
+                # Subject not in graph at all - skip
+                logging.debug(
+                    f"[Deterministic] SKIP prep: subject '{subj_lemma}' not in graph"
+                )
                 continue
 
             # Create CONCEPT node for the prepositional object
@@ -2832,6 +2864,10 @@ class AMoCv4:
                 provenance="STORY_TEXT",
                 sent=sent,
             ):
+                logging.debug(
+                    f"[Deterministic] SKIP prep: _admit_node rejected '{obj_lemma}'. "
+                    f"In story_lemmas: {obj_lemma in self.story_lemmas}"
+                )
                 continue
 
             obj_node = self.graph.add_or_get_node(
@@ -2848,8 +2884,12 @@ class AMoCv4:
                 current_sentence_text_based_words.append(obj_lemma)
 
             # Normalize and create edge through centralized path
+            original_label = edge_label
             edge_label = self._normalize_edge_label(edge_label)
             if not edge_label:
+                logging.debug(
+                    f"[Deterministic] SKIP prep: edge label normalization failed for '{original_label}'"
+                )
                 continue
 
             edge = self._add_edge(
@@ -2858,10 +2898,16 @@ class AMoCv4:
                 edge_label,
                 self.edge_visibility,
                 created_at_sentence=self._current_sentence_index,
+                bypass_attachment_constraint=True,
             )
             if edge is not None:
                 logging.debug(
                     f"[Deterministic] Created prep edge: {subj_lemma} --{edge_label}--> {obj_lemma}"
+                )
+            else:
+                logging.debug(
+                    f"[Deterministic] SKIP prep: _add_edge returned None for "
+                    f"{subj_lemma} --{edge_label}--> {obj_lemma}"
                 )
 
     def init_graph(self, sent: Span) -> None:
@@ -3356,13 +3402,13 @@ class AMoCv4:
 
                 # ---------- ADJECTIVE NODES (per AMoC-v4 Figure 7) ----------
                 # Per AMoC-v4: adjectives are explicit nodes in their origin sentence.
-                # They are treated as CONCEPT nodes (not PROPERTY) and are active
+                # They are treated as PROPERTY nodes (per AMoC v4 Figure 7)
                 # only in the sentence they appear, becoming inactive in later sentences
                 # unless reasserted.
                 elif word.pos_ == "ADJ":
                     if not self._admit_node(
                         lemma=lemma,
-                        node_type=NodeType.CONCEPT,
+                        node_type=NodeType.PROPERTY,
                         provenance="STORY_TEXT",
                         sent=sent,
                     ):
@@ -3375,7 +3421,7 @@ class AMoCv4:
                         node = self.graph.add_or_get_node(
                             [lemma],
                             lemma,
-                            NodeType.CONCEPT,
+                            NodeType.PROPERTY,
                             NodeSource.TEXT_BASED,
                             provenance=NodeProvenance.STORY_TEXT,
                         )

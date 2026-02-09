@@ -176,8 +176,7 @@ class PerSentenceGraphBuilder:
         # BFS from explicit nodes - EXCLUDING PROPERTY nodes from propagation
         # Per paper: only CONCEPT nodes participate in carry-over / distance logic
         concept_explicit = {
-            n for n in self._explicit_nodes
-            if n.node_type != NodeType.PROPERTY
+            n for n in self._explicit_nodes if n.node_type != NodeType.PROPERTY
         }
 
         distances: Dict["Node", int] = {n: 0 for n in concept_explicit}
@@ -262,7 +261,10 @@ class PerSentenceGraphBuilder:
         # They are only included if they have an active property edge in this sentence.
         # First, collect CONCEPT nodes (explicit + carry-over)
         concept_nodes = {
-            n for n in (self._explicit_nodes | self._carryover_nodes)
+            n
+            for n in (
+                self._explicit_nodes | self._carryover_nodes | set(self.anchor_nodes)
+            )
             if n.node_type != NodeType.PROPERTY
         }
 
@@ -292,7 +294,10 @@ class PerSentenceGraphBuilder:
                     property_nodes_with_active_edges.add(property_end)
             else:
                 # Non-property edge: both endpoints must be active CONCEPT nodes
-                if edge.source_node in concept_nodes and edge.dest_node in concept_nodes:
+                if (
+                    edge.source_node in concept_nodes
+                    and edge.dest_node in concept_nodes
+                ):
                     active_edges.add(edge)
 
         # CRITICAL: PROPERTY nodes are only visible if they have an active property edge
@@ -303,12 +308,12 @@ class PerSentenceGraphBuilder:
         # Also filter explicit_nodes and carryover_nodes for consistency
         # (PROPERTY nodes should never be in carryover, but filter explicit too)
         explicit_concepts = {
-            n for n in self._explicit_nodes
+            n
+            for n in self._explicit_nodes
             if n.node_type != NodeType.PROPERTY or n in property_nodes_with_active_edges
         }
         carryover_concepts = {
-            n for n in self._carryover_nodes
-            if n.node_type != NodeType.PROPERTY
+            n for n in self._carryover_nodes if n.node_type != NodeType.PROPERTY
         }
 
         return PerSentenceGraph(

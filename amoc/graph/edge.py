@@ -244,6 +244,10 @@ class Edge:
 
         src_type = self.source_node.node_type
         dst_type = self.dest_node.node_type
+
+        if self.label != "is":
+            return False
+
         return (src_type == NodeType.CONCEPT and dst_type == NodeType.PROPERTY) or (
             src_type == NodeType.PROPERTY and dst_type == NodeType.CONCEPT
         )

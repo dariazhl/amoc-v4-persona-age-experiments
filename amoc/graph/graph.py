@@ -217,7 +217,11 @@ class Graph:
         # BFS to find candidate edges within distance
         # CRITICAL (Paper-Aligned): Only CONCEPT nodes participate in BFS
         # PROPERTY nodes have no independent activation and don't propagate
-        concept_seeds = {n for n in explicit_nodes if n.node_type != NodeType.PROPERTY}
+        concept_seeds = {
+            n
+            for n in (explicit_nodes | set(self.get_active_nodes(max_distance)))
+            if n.node_type != NodeType.PROPERTY
+        }
 
         if not concept_seeds:
             return set()
@@ -288,25 +292,6 @@ class Graph:
         activation_threshold: int = 0,
         current_sentence: Optional[int] = None,
     ) -> Tuple[Set[Node], Set[Edge]]:
-        """
-        Get the active subgraph for layout computation.
-
-        Per AMoC v4 paper:
-        - Active graph = explicit nodes + nodes within MaxDistance
-        - Property edges are INCLUDED if they don't violate sentence constraint
-        - Properties attach via "is" edges (e.g., "princess - is - beautiful")
-
-        Args:
-            activation_threshold: Minimum activation_score for edge inclusion.
-                                  0 means only currently active edges.
-            current_sentence: Current sentence index for property edge validation.
-                             If None, property edges are excluded.
-
-        Returns:
-            Tuple of (active_nodes, active_edges) where:
-            - active_edges: Edges that are active AND meet threshold
-            - active_nodes: Nodes connected by active_edges
-        """
         active_edges: Set[Edge] = set()
         active_nodes: Set[Node] = set()
 
@@ -322,6 +307,14 @@ class Graph:
                     continue  # Can't validate - skip property edges
                 if edge.violates_property_sentence_constraint(current_sentence):
                     continue  # Not in origin sentence - skip
+                # PROPERTY edges must be anchored to an active CONCEPT
+                concept_end = (
+                    edge.source_node
+                    if edge.source_node.node_type == NodeType.CONCEPT
+                    else edge.dest_node
+                )
+                if concept_end not in active_nodes:
+                    continue
                 # Property edge is valid - include it
 
             if edge.activation_score > activation_threshold:
