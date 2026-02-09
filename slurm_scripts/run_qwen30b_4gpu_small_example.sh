@@ -14,8 +14,11 @@ set -euo pipefail
 
 PROJECT_ROOT="/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments"
 CHUNKS_DIR="${PROJECT_ROOT}/personas_dfs/personas_refined_age/chunks"
+
 # Optional story file (may be empty)
 STORY_FILE="${1:-}"
+
+MULTI_EDGES
 
 # list of chunk files
 CHUNK_FILES=($(ls ${CHUNKS_DIR}/*.csv | sort))
@@ -47,4 +50,5 @@ bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
     --file "${INPUT_FILE}" \
     --strict-reactivate-function \
     --strict-attachament-constraint \
-    --story-text "${STORY_FILE}"
+    --story-text "${STORY_FILE}" \
+    --allow-multi-edges
