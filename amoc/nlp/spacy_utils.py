@@ -94,7 +94,9 @@ def get_verb_with_adverbs(verb_token: Token) -> str:
     adverbs = [
         tkn.lemma_.lower()
         for tkn in verb_token.children
-        if tkn.dep_ == "advmod" and tkn.pos_ == "ADV" and tkn.lemma_.lower() not in {"not", "n't"}
+        if tkn.dep_ == "advmod"
+        and tkn.pos_ == "ADV"
+        and tkn.lemma_.lower() not in {"not", "n't"}
     ]
 
     if adverbs:
@@ -113,13 +115,34 @@ def get_verb_with_adverbs(verb_token: Token) -> str:
 EXCLUDED_ADVERBS = frozenset({"not", "n't", "never", "no"})
 
 # Auxiliaries to strip from edge labels (these don't carry semantic content)
-AUXILIARY_VERBS = frozenset({
-    "be", "is", "am", "are", "was", "were", "been", "being",
-    "have", "has", "had", "having",
-    "do", "does", "did",
-    "will", "would", "shall", "should",
-    "can", "could", "may", "might", "must",
-})
+AUXILIARY_VERBS = frozenset(
+    {
+        "be",
+        "is",
+        "am",
+        "are",
+        "was",
+        "were",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "having",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "shall",
+        "should",
+        "can",
+        "could",
+        "may",
+        "might",
+        "must",
+    }
+)
 
 # Copula verbs that can precede adjectives (not progressive constructions)
 COPULA_VERBS = frozenset({"be", "is", "am", "are", "was", "were", "been", "being"})
@@ -130,20 +153,58 @@ COPULA_VERBS = frozenset({"be", "is", "am", "are", "was", "were", "been", "being
 # Modal/intentional verbs encode mental states, not world-state changes.
 # Edges like "wants to free" or "tries to escape" must be rejected entirely.
 # The graph stores WHAT happened, not intentions or attempts.
-MODAL_VERBS = frozenset({
-    "want", "wants", "wanted", "wanting",
-    "try", "tries", "tried", "trying",
-    "plan", "plans", "planned", "planning",
-    "intend", "intends", "intended", "intending",
-    "hope", "hopes", "hoped", "hoping",
-    "wish", "wishes", "wished", "wishing",
-    "need", "needs", "needed", "needing",
-    "expect", "expects", "expected", "expecting",
-    "decide", "decides", "decided", "deciding",
-    "attempt", "attempts", "attempted", "attempting",
-    "desire", "desires", "desired", "desiring",
-    "prefer", "prefers", "preferred", "preferring",
-})
+MODAL_VERBS = frozenset(
+    {
+        "want",
+        "wants",
+        "wanted",
+        "wanting",
+        "try",
+        "tries",
+        "tried",
+        "trying",
+        "plan",
+        "plans",
+        "planned",
+        "planning",
+        "intend",
+        "intends",
+        "intended",
+        "intending",
+        "hope",
+        "hopes",
+        "hoped",
+        "hoping",
+        "wish",
+        "wishes",
+        "wished",
+        "wishing",
+        "need",
+        "needs",
+        "needed",
+        "needing",
+        "expect",
+        "expects",
+        "expected",
+        "expecting",
+        "decide",
+        "decides",
+        "decided",
+        "deciding",
+        "attempt",
+        "attempts",
+        "attempted",
+        "attempting",
+        "desire",
+        "desires",
+        "desired",
+        "desiring",
+        "prefer",
+        "prefers",
+        "preferred",
+        "preferring",
+    }
+)
 
 # ==========================================================================
 # SEMANTIC CLASSES: For edge equivalence checking
@@ -152,54 +213,213 @@ MODAL_VERBS = frozenset({
 # Only one edge per semantic class is allowed between any ordered node pair.
 SEMANTIC_CLASSES = {
     # MOTION: verbs describing movement
-    "MOTION": frozenset({
-        "go", "goes", "ride", "rides", "walk", "walks", "run", "runs",
-        "travel", "travels", "move", "moves", "come", "comes", "leave", "leaves",
-        "enter", "enters", "exit", "exits", "pass", "passes", "cross", "crosses",
-        "traverse", "traverses", "journey", "journeys", "wander", "wanders",
-        "gallop", "gallops", "trot", "trots", "march", "marches",
-    }),
+    "MOTION": frozenset(
+        {
+            "go",
+            "goes",
+            "ride",
+            "rides",
+            "walk",
+            "walks",
+            "run",
+            "runs",
+            "travel",
+            "travels",
+            "move",
+            "moves",
+            "come",
+            "comes",
+            "leave",
+            "leaves",
+            "enter",
+            "enters",
+            "exit",
+            "exits",
+            "pass",
+            "passes",
+            "cross",
+            "crosses",
+            "traverse",
+            "traverses",
+            "journey",
+            "journeys",
+            "wander",
+            "wanders",
+            "gallop",
+            "gallops",
+            "trot",
+            "trots",
+            "march",
+            "marches",
+        }
+    ),
     # LOCATION: verbs describing position/presence
-    "LOCATION": frozenset({
-        "is", "be", "stay", "stays", "remain", "remains", "sit", "sits",
-        "stand", "stands", "live", "lives", "dwell", "dwells", "reside", "resides",
-        "locate", "locates", "exist", "exists", "inhabit", "inhabits",
-    }),
+    "LOCATION": frozenset(
+        {
+            "is",
+            "be",
+            "stay",
+            "stays",
+            "remain",
+            "remains",
+            "sit",
+            "sits",
+            "stand",
+            "stands",
+            "live",
+            "lives",
+            "dwell",
+            "dwells",
+            "reside",
+            "resides",
+            "locate",
+            "locates",
+            "exist",
+            "exists",
+            "inhabit",
+            "inhabits",
+        }
+    ),
     # CAPTURE: verbs describing taking/holding
-    "CAPTURE": frozenset({
-        "kidnap", "kidnaps", "capture", "captures", "take", "takes",
-        "seize", "seizes", "grab", "grabs", "hold", "holds", "imprison", "imprisons",
-        "abduct", "abducts", "detain", "detains", "trap", "traps",
-    }),
+    "CAPTURE": frozenset(
+        {
+            "kidnap",
+            "kidnaps",
+            "capture",
+            "captures",
+            "take",
+            "takes",
+            "seize",
+            "seizes",
+            "grab",
+            "grabs",
+            "hold",
+            "holds",
+            "imprison",
+            "imprisons",
+            "abduct",
+            "abducts",
+            "detain",
+            "detains",
+            "trap",
+            "traps",
+        }
+    ),
     # COMBAT: verbs describing fighting
-    "COMBAT": frozenset({
-        "fight", "fights", "battle", "battles", "attack", "attacks",
-        "strike", "strikes", "hit", "hits", "defeat", "defeats", "slay", "slays",
-        "kill", "kills", "wound", "wounds", "combat", "combats",
-    }),
+    "COMBAT": frozenset(
+        {
+            "fight",
+            "fights",
+            "battle",
+            "battles",
+            "attack",
+            "attacks",
+            "strike",
+            "strikes",
+            "hit",
+            "hits",
+            "defeat",
+            "defeats",
+            "slay",
+            "slays",
+            "kill",
+            "kills",
+            "wound",
+            "wounds",
+            "combat",
+            "combats",
+        }
+    ),
     # RESCUE: verbs describing saving/freeing
-    "RESCUE": frozenset({
-        "save", "saves", "rescue", "rescues", "free", "frees",
-        "liberate", "liberates", "release", "releases", "protect", "protects",
-        "defend", "defends", "help", "helps", "aid", "aids",
-    }),
+    "RESCUE": frozenset(
+        {
+            "save",
+            "saves",
+            "rescue",
+            "rescues",
+            "free",
+            "frees",
+            "liberate",
+            "liberates",
+            "release",
+            "releases",
+            "protect",
+            "protects",
+            "defend",
+            "defends",
+            "help",
+            "helps",
+            "aid",
+            "aids",
+        }
+    ),
     # COMMUNICATION: verbs describing speaking/telling
-    "COMMUNICATION": frozenset({
-        "say", "says", "tell", "tells", "speak", "speaks", "ask", "asks",
-        "answer", "answers", "call", "calls", "announce", "announces",
-        "inform", "informs", "warn", "warns", "advise", "advises",
-    }),
+    "COMMUNICATION": frozenset(
+        {
+            "say",
+            "says",
+            "tell",
+            "tells",
+            "speak",
+            "speaks",
+            "ask",
+            "asks",
+            "answer",
+            "answers",
+            "call",
+            "calls",
+            "announce",
+            "announces",
+            "inform",
+            "informs",
+            "warn",
+            "warns",
+            "advise",
+            "advises",
+        }
+    ),
     # POSSESSION: verbs describing having/owning
-    "POSSESSION": frozenset({
-        "have", "has", "own", "owns", "possess", "possesses",
-        "keep", "keeps", "carry", "carries", "bear", "bears",
-    }),
+    "POSSESSION": frozenset(
+        {
+            "have",
+            "has",
+            "own",
+            "owns",
+            "possess",
+            "possesses",
+            "keep",
+            "keeps",
+            "carry",
+            "carries",
+            "bear",
+            "bears",
+        }
+    ),
     # PERCEPTION: verbs describing seeing/knowing
-    "PERCEPTION": frozenset({
-        "see", "sees", "know", "knows", "hear", "hears", "notice", "notices",
-        "recognize", "recognizes", "understand", "understands", "realize", "realizes",
-        "discover", "discovers", "find", "finds", "learn", "learns",
-    }),
+    "PERCEPTION": frozenset(
+        {
+            "see",
+            "sees",
+            "know",
+            "knows",
+            "hear",
+            "hears",
+            "notice",
+            "notices",
+            "recognize",
+            "recognizes",
+            "understand",
+            "understands",
+            "realize",
+            "realizes",
+            "discover",
+            "discovers",
+            "find",
+            "finds",
+            "learn",
+            "learns",
+        }
+    ),
 }
 
 # Build reverse lookup: verb -> semantic class
@@ -337,185 +557,80 @@ def _verb_to_present_tense(lemma: str) -> str:
 
 def canonicalize_edge_label(nlp, label: str) -> str:
     """
-    Canonicalize an edge label per AMoC v4 paper.
-
-    ==========================================================================
-    AMoC v4 EDGE LABEL CANONICALIZATION (Paper-Aligned)
-    ==========================================================================
-    Per AMoC Figures 2–6:
-    - Relations are canonical semantic actions
-    - Verb tense does not encode narrative time
-    - Progressive aspect (-ing) is never represented in the graph
-    - Memory stores WHAT happened, not HOW it was phrased
-    - Multi-word labels use underscore format: rides_through, unfamiliar_with
-
-    TRANSFORMATIONS:
-    - "is walking" → "walks"
-    - "was kidnapping" → "kidnaps"
-    - "running through" → "runs_through"
-    - "is unfamiliar with" → "unfamiliar_with" (copula removed, adjective preserved)
-    - "rode through" → "rides_through"
-
-    REJECTIONS (return empty string):
-    - Modal verbs: "wants to free", "tries to escape" → "" (REJECTED)
-    - Intentional verbs encode mental states, not world changes
-
-    ==========================================================================
-
-    Args:
-        nlp: spaCy language model
-        label: Raw edge label string
-
-    Returns:
-        Canonicalized edge label with underscores, or "" if rejected
+    AMoC v4 rule:
+    - Relations must be VERB-headed
+    - Copula + adjective constructions NEVER produce relations
+    - Adjectives are handled as PROPERTY nodes elsewhere
+    - Phrasal verbs are canonicalized by inflecting the verb head and preserving particles
+      e.g., "fight for" → "fights_for", "ride through" → "rides_through"
     """
     if not label or not isinstance(label, str):
         return ""
 
-    label = label.strip()
-    if not label:
+    # -------------------------------------------------------------------------
+    # PHRASAL VERB FIX: Normalize underscores to spaces for proper tokenization
+    # Labels like "ride_through" must be parsed as "ride through" so spaCy can
+    # identify the verb head and preposition/particle separately.
+    # -------------------------------------------------------------------------
+    label_normalized = label.strip().replace("_", " ")
+    doc = nlp(label_normalized)
+    if not doc:
         return ""
 
-    doc = nlp(label)
-    if len(doc) == 0:
-        return ""
-
-    # ==========================================================================
-    # PHASE 0: Check for modal/intentional verbs - REJECT ENTIRE EDGE
-    # ==========================================================================
+    # -------------------------------------------------------------------------
+    # Reject modal / intentional verbs
+    # -------------------------------------------------------------------------
     for tok in doc:
-        if tok.lemma_.lower() in MODAL_VERBS or tok.text.lower() in MODAL_VERBS:
-            logging.debug("[EdgeLabel] REJECTED modal verb: %r in %r", tok.text, label)
+        if tok.lemma_.lower() in MODAL_VERBS:
             return ""
 
-    # ==========================================================================
-    # PHASE 1: Analyze structure to detect progressive vs copula+adjective
-    # ==========================================================================
-    tokens = list(doc)
     auxiliaries = []
     main_verb = None
     adjective = None
-    other_parts = []  # prepositions, particles, adverbs
+    preps = []
 
-    for tok in tokens:
-        pos = tok.pos_
-
-        if pos == "AUX":
-            # Auxiliary verb (is, was, were, have, etc.)
+    for tok in doc:
+        if tok.pos_ == "AUX":
             auxiliaries.append(tok)
-        elif pos == "VERB":
-            # Main verb - check if it's progressive
-            if main_verb is None:
-                main_verb = tok
-        elif pos == "ADJ":
-            # Adjective - might be copula+adjective construction
+        elif tok.pos_ == "VERB" and main_verb is None:
+            main_verb = tok
+        elif tok.pos_ == "ADJ":
             adjective = tok
-        elif pos == "ADP":
-            # Preposition - keep for verb+prep constructions
-            other_parts.append(("prep", tok.text.lower()))
-        elif pos == "PART":
-            # Particle (phrasal verb particles or infinitive "to")
-            # Skip infinitive "to" marker
-            if tok.text.lower() != "to":
-                other_parts.append(("part", tok.text.lower()))
-        elif pos == "ADV":
-            # Adverb - absorb if not negation
-            if tok.lemma_.lower() not in EXCLUDED_ADVERBS:
-                other_parts.append(("adv", tok.text.lower()))
+        elif tok.pos_ == "ADP":
+            preps.append(tok.lemma_.lower())
 
-    # ==========================================================================
-    # PHASE 2: Determine construction type and normalize
-    # ==========================================================================
-
-    # Case 1: Copula + Adjective (e.g., "is unfamiliar with")
-    # Per AMoC paper: remove copula, keep adjective + preposition
-    # "is unfamiliar with" → "unfamiliar_with"
+    # -------------------------------------------------------------------------
+    # ### FIX 1: Copula + adjective → REJECT
+    # e.g. "is unfamiliar with" must NOT become a relation
+    # -------------------------------------------------------------------------
     if auxiliaries and adjective and main_verb is None:
         aux_lemmas = {aux.lemma_.lower() for aux in auxiliaries}
         if aux_lemmas & COPULA_VERBS:
-            # Remove copula, keep adjective + prepositions
-            parts = [adjective.text.lower()]
-            for part_type, part_text in other_parts:
-                if part_type in ("prep", "part"):
-                    parts.append(part_text)
-            return "_".join(parts)
+            return ""
 
-    # Case 2: Progressive construction (AUX + VBG like "is walking", "was fighting")
-    if main_verb and _is_progressive_verb(main_verb):
-        verb_lemma = main_verb.lemma_.lower()
-        present_tense = _verb_to_present_tense(verb_lemma)
-
-        parts = [present_tense]
-        for part_type, part_text in other_parts:
-            if part_type in ("prep", "part"):
-                parts.append(part_text)
-        return "_".join(parts)
-
-    # Case 3: Standalone gerund without auxiliary (e.g., "running through")
-    if main_verb and main_verb.text.lower().endswith("ing"):
-        verb_lemma = main_verb.lemma_.lower()
-        present_tense = _verb_to_present_tense(verb_lemma)
-
-        parts = [present_tense]
-        for part_type, part_text in other_parts:
-            if part_type in ("prep", "part"):
-                parts.append(part_text)
-        return "_".join(parts)
-
-    # Case 4: Regular verb (not progressive) - convert to present tense
+    # -------------------------------------------------------------------------
+    # Verb cases (allowed)
+    # -------------------------------------------------------------------------
     if main_verb:
-        verb_lemma = main_verb.lemma_.lower()
-        if main_verb.tag_ in {"VBZ", "VBP"}:
-            verb_form = main_verb.text.lower()
-        else:
-            verb_form = _verb_to_present_tense(verb_lemma)
+        base = _verb_to_present_tense(main_verb.lemma_.lower())
+        parts = [base] + preps
+        result = "_".join(parts)
 
-        parts = [verb_form]
-        for part_type, part_text in other_parts:
-            if part_type in ("prep", "part"):
-                parts.append(part_text)
-        return "_".join(parts)
+        # -------------------------------------------------------------------------
+        # DEFENSIVE ASSERTION: Reject if first token is an adjective
+        # This catches any edge cases where adjective-headed labels slip through.
+        # Per AMoC v4: edge labels MUST be verb-headed.
+        # -------------------------------------------------------------------------
+        result_doc = nlp(result.replace("_", " "))
+        if result_doc and result_doc[0].pos_ == "ADJ":
+            return ""
 
-    # Case 5: No main verb found - return adjective if present
-    if adjective:
-        parts = [adjective.text.lower()]
-        for part_type, part_text in other_parts:
-            if part_type in ("prep", "part"):
-                parts.append(part_text)
-        return "_".join(parts)
+        return result
 
-    # Fallback: return original with underscores
-    result = "_".join(label.lower().split())
-
-    # ==========================================================================
-    # FINAL SAFETY CHECK: No -ing or -ed forms allowed in output
-    # ==========================================================================
-    # Per AMoC paper: edge labels must be canonical present tense.
-    # Progressive (-ing) and past tense (-ed) must NEVER appear.
-    parts = result.split("_")
-    cleaned_parts = []
-    for part in parts:
-        # Check for -ing (progressive)
-        if part.endswith("ing") and len(part) > 3:
-            base = part[:-3]
-            if len(base) > 1 and base[-1] == base[-2]:
-                base = base[:-1]  # running -> run
-            cleaned_parts.append(_verb_to_present_tense(base) if base else part)
-        # Check for -ed (past tense) - common regular verbs
-        elif part.endswith("ed") and len(part) > 3:
-            # Try to get base form by removing -ed
-            base = part[:-2]
-            if part.endswith("ied"):
-                # hurried -> hurry
-                base = part[:-3] + "y"
-            elif part.endswith("ed") and len(part) > 3 and part[-3] == part[-4]:
-                # kidnapped -> kidnap (double consonant)
-                base = part[:-3]
-            cleaned_parts.append(_verb_to_present_tense(base) if base else part)
-        else:
-            cleaned_parts.append(part)
-
-    return "_".join(cleaned_parts)
+    # -------------------------------------------------------------------------
+    # ### FIX 2: No adjective-only fallback
+    # -------------------------------------------------------------------------
+    return ""
 
 
 def extract_adverbs_from_sentence(sent: Span, verb_token: Token) -> List[str]:
@@ -595,8 +710,7 @@ def canonicalize_node_text(nlp, text: str) -> str:
     # CRITICAL FIX: Filter out determiners (DET) first - per AMoC paper requirement
     # Node labels are NEVER "the country", always just "country"
     content_tokens = [
-        t for t in doc
-        if getattr(t, "is_alpha", False) and t.pos_ != "DET"
+        t for t in doc if getattr(t, "is_alpha", False) and t.pos_ != "DET"
     ]
 
     if not content_tokens:
@@ -604,7 +718,9 @@ def canonicalize_node_text(nlp, text: str) -> str:
         alpha_tokens = [t for t in doc if getattr(t, "is_alpha", False)]
         if not alpha_tokens:
             root = doc[:].root
-            return (root.lemma_ if getattr(root, "lemma_", None) else text).strip().lower()
+            return (
+                (root.lemma_ if getattr(root, "lemma_", None) else text).strip().lower()
+            )
         content_tokens = alpha_tokens
 
     root = doc[:].root
@@ -639,64 +755,41 @@ def has_noun(nlp, text: str) -> bool:
 # extracted deterministically before LLM enrichment.
 # ==========================================================================
 
+
 def extract_adjectival_modifiers(sent: Span) -> List[dict]:
     """
-    Extract adjectival modifiers from a sentence per AMoC paper.
-
-    Detects:
-    - amod: adjectival modifier (e.g., "young knight")
-    - acomp: adjectival complement (e.g., "knight is brave")
-    - attr: attribute (e.g., "knight was young")
-
-    Returns list of dicts: {
-        'adjective': str (lemma),
-        'head_noun': str (lemma),
-        'relation': str ('is')
-    }
-
-    Per paper: These become PROPERTY nodes attached via 'is' edge.
+    Adjectives → PROPERTY nodes ONLY
     """
-    modifiers = []
+    mods = []
 
-    for token in sent:
-        # amod: "young knight" -> young modifies knight
-        if token.dep_ == "amod" and token.pos_ == "ADJ":
-            head = token.head
+    for tok in sent:
+        if tok.pos_ == "ADJ":
+            head = tok.head
             if head.pos_ in {"NOUN", "PROPN"}:
-                modifiers.append({
-                    'adjective': token.lemma_.lower(),
-                    'head_noun': head.lemma_.lower(),
-                    'relation': 'is',
-                })
+                mods.append(
+                    {
+                        "adjective": tok.lemma_.lower(),
+                        "head_noun": head.lemma_.lower(),
+                        "relation": "is",
+                    }
+                )
 
-        # acomp: "knight is brave" -> brave is complement of is, knight is subject
-        elif token.dep_ == "acomp" and token.pos_ == "ADJ":
-            verb = token.head
-            if verb.pos_ == "AUX" or verb.lemma_ in {"be", "become", "seem", "appear"}:
-                # Find the subject of the verb
-                for child in verb.children:
-                    if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {"NOUN", "PROPN"}:
-                        modifiers.append({
-                            'adjective': token.lemma_.lower(),
-                            'head_noun': child.lemma_.lower(),
-                            'relation': 'is',
-                        })
+            elif tok.dep_ in {"acomp", "attr"}:
+                for child in tok.head.children:
+                    if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {
+                        "NOUN",
+                        "PROPN",
+                    }:
+                        mods.append(
+                            {
+                                "adjective": tok.lemma_.lower(),
+                                "head_noun": child.lemma_.lower(),
+                                "relation": "is",
+                            }
+                        )
                         break
 
-        # attr: "knight was young" -> young is attribute, knight is subject
-        elif token.dep_ == "attr" and token.pos_ == "ADJ":
-            verb = token.head
-            if verb.pos_ == "AUX" or verb.lemma_ in {"be", "become", "seem", "appear"}:
-                for child in verb.children:
-                    if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {"NOUN", "PROPN"}:
-                        modifiers.append({
-                            'adjective': token.lemma_.lower(),
-                            'head_noun': child.lemma_.lower(),
-                            'relation': 'is',
-                        })
-                        break
-
-    return modifiers
+    return mods
 
 
 def extract_prepositional_objects(sent: Span) -> List[dict]:
@@ -744,24 +837,26 @@ def extract_prepositional_objects(sent: Span) -> List[dict]:
                 head_word = head.lemma_.lower()
                 # Find the subject of the verb
                 for child in head.children:
-                    if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {"NOUN", "PROPN"}:
+                    if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {
+                        "NOUN",
+                        "PROPN",
+                    }:
                         subject = child
                         break
                 # Also check if verb is part of a clause with a subject higher up
-                if subject is None and head.head and head.head.pos_ in {"NOUN", "PROPN"}:
+                if (
+                    subject is None
+                    and head.head
+                    and head.head.pos_ in {"NOUN", "PROPN"}
+                ):
                     subject = head.head
 
-            # Case 2: Head is an adjective (e.g., "unfamiliar with the country")
+            # Case 2: ADJ heads → SKIP ENTIRELY
+            # Per AMoC v4: adjectives become PROPERTY nodes, NOT edge labels.
+            # "unfamiliar with the country" is handled as PROPERTY(knight, unfamiliar),
+            # NOT as an edge label "unfamiliar_with".
             elif head.pos_ == "ADJ":
-                head_word = head.lemma_.lower()
-                # Find the verb that the adjective is attached to
-                adj_head = head.head
-                if adj_head.pos_ in {"VERB", "AUX"}:
-                    # Find the subject of that verb
-                    for child in adj_head.children:
-                        if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {"NOUN", "PROPN"}:
-                            subject = child
-                            break
+                continue  # Skip extraction for adjective heads
 
             # Case 3: Head is a noun (e.g., "journey to the castle")
             elif head.pos_ in {"NOUN", "PROPN"}:
@@ -776,12 +871,14 @@ def extract_prepositional_objects(sent: Span) -> List[dict]:
             # Create edge label: head_preposition
             edge_label = f"{head_word}_{prep_text}"
 
-            prep_objects.append({
-                'subject': subject.lemma_.lower(),
-                'head_word': head_word,
-                'preposition': prep_text,
-                'object': pobj.lemma_.lower(),
-                'label': edge_label,
-            })
+            prep_objects.append(
+                {
+                    "subject": subject.lemma_.lower(),
+                    "head_word": head_word,
+                    "preposition": prep_text,
+                    "object": pobj.lemma_.lower(),
+                    "label": edge_label,
+                }
+            )
 
     return prep_objects

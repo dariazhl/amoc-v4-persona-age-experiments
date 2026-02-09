@@ -423,6 +423,11 @@ def _compute_edge_curvatures(
     along the curve) to prevent label overlap when multiple edges exist between
     the same node pair. Labels are placed at t=0.35, 0.5, 0.65 etc.
 
+    DIRECTION INVARIANT: Curvature affects only the PATH shape, NOT arrow direction.
+    The edge direction (u → v) is preserved from the original triplet ordering.
+    Curvature simply determines whether the edge curves "above" or "below" the
+    straight line between nodes for visual separation of parallel/reciprocal edges.
+
     Returns:
         Tuple of:
         - curvatures: dict mapping (u, v, key) -> curvature radius for arc3
@@ -802,7 +807,10 @@ def plot_amoc_triplets(
     # Build sets for node categorization (needed for layout decision)
     inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
 
-    # Track edges seen per node pair when allow_multi_edges=False
+    # Track edges seen per UNORDERED node pair when allow_multi_edges=False
+    # Using unordered pairs ensures consistency with curvature logic which groups
+    # by tuple(sorted([u, v])). The first triplet for each unordered pair wins,
+    # preserving its original direction (subject → object).
     seen_node_pairs: set[Tuple[str, str]] = set()
 
     for src, rel, dst in triplets:
@@ -815,11 +823,14 @@ def plot_amoc_triplets(
             continue
 
         # Multi-edge control: when allow_multi_edges=False, skip duplicate edges
-        # between the same node pair (keep only the first edge)
+        # between the same UNORDERED node pair (keep only the first edge).
+        # This ensures one edge per entity pair, with the surviving edge direction
+        # corresponding to the original triplet (subject → object).
         if not allow_multi_edges:
-            if (src, dst) in seen_node_pairs:
+            pair_key = tuple(sorted((src, dst)))
+            if pair_key in seen_node_pairs:
                 continue
-            seen_node_pairs.add((src, dst))
+            seen_node_pairs.add(pair_key)
 
         is_structural = rel.startswith("structural::")
         clean_rel = rel.replace("structural::", "").strip()
@@ -827,6 +838,12 @@ def plot_amoc_triplets(
         # Unique key per semantic relation
         edge_key = f"{clean_rel}"
 
+        # =========================================================================
+        # DIRECTION INVARIANT: Edge direction must always follow triplet ordering.
+        # Triplet (subject, predicate, object) maps to edge (subject → object).
+        # This ensures: subject ──▶ object in the visual rendering.
+        # The invariant holds regardless of edge multiplicity or curvature.
+        # =========================================================================
         G.add_edge(src, dst, key=edge_key)
 
         edge_labels[(src, dst, edge_key)] = clean_rel
@@ -1404,6 +1421,12 @@ def plot_amoc_triplets(
             normal_edge_alphas.append(0.4)
 
     # Draw normal edges as solid lines with per-edge curvature for parallel edges
+    # =========================================================================
+    # DIRECTION INVARIANT: Edges are drawn with arrows pointing from u to v.
+    # The (u, v) order comes directly from the triplet (subject, _, object).
+    # Curvature affects only the PATH shape, NOT the arrow direction.
+    # This ensures: subject ──▶ object regardless of edge multiplicity.
+    # =========================================================================
     if normal_edges:
         # Group edges by (alpha, curvature) for efficient drawing
         # Each unique (alpha, curvature) combination gets its own draw call
@@ -1414,6 +1437,7 @@ def plot_amoc_triplets(
             edge_draw_groups[(alpha, curvature)].append((idx, u, v, k))
 
         for (alpha_val, curvature), edge_group in edge_draw_groups.items():
+            # INVARIANT: (u, v) preserves triplet direction - arrow points u → v
             group_edges = [(u, v) for idx, u, v, k in edge_group]
             group_colors = [normal_edge_colors[idx] for idx, u, v, k in edge_group]
             group_widths = [normal_edge_widths[idx] for idx, u, v, k in edge_group]

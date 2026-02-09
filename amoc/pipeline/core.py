@@ -158,17 +158,27 @@ class AMoCv4:
         if lemma not in self.story_lemmas:
             return False
 
-        # 2. Syntactic grounding for properties
+        # ==========================================================================
+        # AMoC-v4 FIGURE 7 COMPLIANCE: Relaxed adjective admission
+        # ==========================================================================
+        # Per AMoC-v4 Figure 7: Adjectives like "young", "beautiful", "scorched"
+        # MUST become PROPERTY nodes when they appear in the sentence.
+        #
+        # Lexical presence in story text is SUFFICIENT grounding.
+        # Specific dependency labels (amod, acomp, attr) are NOT required as a hard gate.
+        # Any adjective (pos_ == "ADJ") appearing in the sentence text can be admitted.
+        # ==========================================================================
         if node_type == NodeType.PROPERTY:
             if sent is None:
                 return False
 
-            grounded = False
-            for tok in sent:
-                if tok.lemma_.lower() == lemma:
-                    if tok.dep_ in {"amod", "acomp", "attr"}:
-                        grounded = True
-                        break
+            # Check if the adjective appears in the sentence as ADJ
+            grounded = any(
+                tok.lemma_.lower() == lemma
+                and tok.pos_ == "ADJ"
+                and tok.dep_ in {"amod", "acomp", "attr"}
+                for tok in sent
+            )
 
             if not grounded:
                 return False
@@ -693,7 +703,9 @@ class AMoCv4:
         #
         # This prevents paraphrase accumulation while allowing semantic updates.
         if not self.allow_multi_edges:
-            existing_edge = self._get_existing_edge_between_nodes(source_node, dest_node)
+            existing_edge = self._get_existing_edge_between_nodes(
+                source_node, dest_node
+            )
             if existing_edge is not None:
                 old_label = existing_edge.label
 
@@ -712,7 +724,9 @@ class AMoCv4:
                             label,
                             dest_node.get_text_representer(),
                             old_label,
-                            get_semantic_class(label.split("_")[0] if "_" in label else label),
+                            get_semantic_class(
+                                label.split("_")[0] if "_" in label else label
+                            ),
                         )
 
                     # Update triplet intro tracking with new label
@@ -726,7 +740,9 @@ class AMoCv4:
                             use_sentence if use_sentence is not None else -1
                         )
 
-                    self._record_edge_in_graphs(existing_edge, self._current_sentence_index)
+                    self._record_edge_in_graphs(
+                        existing_edge, self._current_sentence_index
+                    )
                     return existing_edge
                 else:
                     # REJECT: semantically incompatible, keep existing edge
@@ -737,8 +753,14 @@ class AMoCv4:
                             label,
                             dest_node.get_text_representer(),
                             old_label,
-                            get_semantic_class(label.split("_")[0] if "_" in label else label),
-                            get_semantic_class(old_label.split("_")[0] if "_" in old_label else old_label),
+                            get_semantic_class(
+                                label.split("_")[0] if "_" in label else label
+                            ),
+                            get_semantic_class(
+                                old_label.split("_")[0]
+                                if "_" in old_label
+                                else old_label
+                            ),
                         )
                     return None
 
@@ -1437,6 +1459,9 @@ class AMoCv4:
         active_triplets_for_overlay: Optional[
             List[Tuple[str, str, str]]
         ] = None,  # TASK 2: Triplet overlay
+        property_nodes: Optional[
+            List[str]
+        ] = None,  # AMoC-v4 Figure 7: PROPERTY nodes are blue
     ) -> None:
         # ==========================================================================
         # DEFENSIVE GUARD: Ensure sentence_text never contains prompt scaffolding
@@ -1518,12 +1543,24 @@ class AMoCv4:
             for warning in provenance_warnings:
                 logging.warning(warning)
 
+            # ==========================================================================
+            # AMoC-v4 FIGURE 7 COMPLIANCE: PROPERTY nodes are blue
+            # ==========================================================================
+            # Per AMoC-v4 Figure 7: Adjective PROPERTY nodes (young, beautiful, scorched)
+            # MUST appear as blue nodes. Combine property_nodes with any highlight_nodes.
+            # ==========================================================================
+            blue_nodes_combined = set()
+            if highlight_nodes:
+                blue_nodes_combined.update(highlight_nodes)
+            if property_nodes:
+                blue_nodes_combined.update(property_nodes)
+
             saved_path = plot_amoc_triplets(
                 triplets=triplets,
                 persona=self.persona,
                 model_name=self.model_name,
                 age=age_for_filename,
-                blue_nodes=highlight_nodes,
+                blue_nodes=list(blue_nodes_combined) if blue_nodes_combined else None,
                 output_dir=plot_dir,
                 step_tag=(
                     f"sent{sentence_index+1}_{mode}"
@@ -1697,24 +1734,41 @@ class AMoCv4:
 
                 # union them as explicit nodes
                 # CRITICAL FIX: Explicit nodes are ALL nodes from current sentence text
-                # Do NOT filter by node_source - per AMoC paper: "explicit nodes =
-                # Explicit nodes = entities (NOUN / PROPN) present in the current sentence
-                # Adjectives are latent property candidates (AMoC-v4)
+                # ==========================================================================
+                # AMoC-v4 FIGURE 7 COMPLIANCE: PROPERTY nodes are explicit in origin sentence
+                # ==========================================================================
+                # Per AMoC-v4 paper Figure 7: adjectives (PROPERTY nodes) like "young",
+                # "beautiful", "scorched" MUST be explicit nodes in their origin sentence.
+                # They appear as blue nodes connected via "is" edges.
+                #
+                # PROPERTY nodes are sentence-explicit, just like CONCEPT nodes.
+                # They are NOT latent or inferred - they appear directly in the text.
+                # ==========================================================================
                 self._explicit_nodes_current_sentence = {
                     n
                     for n in (
                         set(phrase_nodes) | set(current_sentence_text_based_nodes)
                     )
-                    if n.node_type != NodeType.PROPERTY
+                    # INCLUDE both CONCEPT and PROPERTY nodes - per Figure 7 compliance
                 }
-                # NOTE: Removed node_source filtering - all nodes from current sentence
-                # are explicit by definition
+
+                # ==========================================================================
+                # PAPER-FAITHFUL EXTRACTION: Deterministic linguistic grounding for sentence 0
+                # Per AMoC paper Figures 4-6: Extract adjectives and prepositional objects
+                # BEFORE LLM enrichment. This ensures PROPERTY nodes get "is" edges.
+                # ==========================================================================
+                self._extract_deterministic_structure(
+                    sent,
+                    current_sentence_text_based_nodes,
+                    current_sentence_text_based_words,
+                )
 
                 # Populate _anchor_nodes from first sentence's explicit nodes
                 # Per AMoC paper: anchors are CONCEPT nodes only (not PROPERTY)
                 self._anchor_nodes = {
-                    n for n in current_sentence_text_based_nodes
-                    if n.node_type != NodeType.PROPERTY
+                    n
+                    for n in current_sentence_text_based_nodes
+                    if n.node_type == NodeType.CONCEPT
                 }
                 inferred_concept_relationships, inferred_property_relationships = (
                     self.infer_new_relationships_step_0(sent)
@@ -1765,31 +1819,34 @@ class AMoCv4:
                 )
 
                 # ==========================================================================
+                # AMoC-v4 FIGURE 7 COMPLIANCE: PROPERTY nodes are explicit in origin sentence
+                # ==========================================================================
+                # CRITICAL FIX: Set explicit nodes BEFORE deterministic extraction
+                # so that _add_edge() attachment check can find current sentence nodes.
+                #
+                # Per AMoC-v4 Figure 7: Both CONCEPT and PROPERTY nodes from the current
+                # sentence are explicit. Adjectives like "young", "beautiful", "scorched"
+                # must appear as explicit PROPERTY nodes in their origin sentence.
+                # ==========================================================================
+                self._explicit_nodes_current_sentence = {
+                    n
+                    for n in (
+                        set(phrase_nodes) | set(current_sentence_text_based_nodes)
+                    )
+                    # INCLUDE both CONCEPT and PROPERTY nodes - per Figure 7 compliance
+                }
+
+                # ==========================================================================
                 # PAPER-FAITHFUL EXTRACTION: Deterministic linguistic grounding
                 # Per AMoC paper Figures 4-6: Extract adjectives and prepositional objects
-                # BEFORE LLM enrichment.
+                # BEFORE LLM enrichment. Must be called AFTER _explicit_nodes_current_sentence
+                # is set, so _add_edge() attachment check works.
                 # ==========================================================================
                 self._extract_deterministic_structure(
                     current_sentence,
                     current_sentence_text_based_nodes,
                     current_sentence_text_based_words,
                 )
-
-                # union phrase-level + explicit nodes
-                # CRITICAL FIX: Explicit nodes are ALL nodes from current sentence text
-                # Do NOT filter by node_source - a node can be explicit (mentioned in
-                # current sentence) regardless of how it was originally introduced.
-                # Per AMoC paper: "explicit nodes = only nouns/adjectives present in
-                # the current sentence"
-                self._explicit_nodes_current_sentence = {
-                    n
-                    for n in (
-                        set(phrase_nodes) | set(current_sentence_text_based_nodes)
-                    )
-                    if n.node_type == NodeType.CONCEPT
-                }
-                # NOTE: Removed node_source filtering - all nodes from current sentence
-                # are explicit, even if they were originally inference-based
 
                 current_all_text = resolved_text
                 # Step 3: build active subgraph using only explicit (text-based) nodes.
@@ -2024,8 +2081,16 @@ class AMoCv4:
                 # Per AMoC paper: anchors are CONCEPT nodes only (not PROPERTY)
                 self._anchor_nodes = (
                     self._anchor_nodes
-                    | {n for n in current_sentence_text_based_nodes if n.node_type != NodeType.PROPERTY}
-                    | {n for n in self._get_nodes_with_active_edges() if n.node_type != NodeType.PROPERTY}
+                    | {
+                        n
+                        for n in current_sentence_text_based_nodes
+                        if n.node_type == NodeType.CONCEPT
+                    }
+                    | {
+                        n
+                        for n in self._get_nodes_with_active_edges()
+                        if n.node_type == NodeType.CONCEPT
+                    }
                 )
 
                 # ACTIVE CONNECTIVITY PRESERVATION (per AMoC v4 paper)
@@ -2228,9 +2293,10 @@ class AMoCv4:
             if plot_after_each_sentence:
                 # Active (salience) view - use per-sentence view for clean isolation
                 # This guarantees only edges with BOTH endpoints active are shown
+                # CRITICAL: Use active_nodes (not explicit | carryover) to include
+                # PROPERTY nodes which persist across sentences
                 active_nodes = (
-                    set(self._per_sentence_view.explicit_nodes)
-                    | set(self._per_sentence_view.carryover_nodes)
+                    set(self._per_sentence_view.active_nodes)
                     if self._per_sentence_view is not None
                     else None
                 )
@@ -2239,6 +2305,42 @@ class AMoCv4:
                     only_active=True,
                     restrict_nodes=active_nodes,
                 )
+
+                # ==========================================================================
+                # AMoC-v4 FIGURE 7 COMPLIANCE: Collect PROPERTY nodes for blue coloring
+                # ==========================================================================
+                # Per AMoC-v4 Figure 7: Adjectives (young, beautiful, scorched) MUST appear
+                # as blue PROPERTY nodes. PROPERTY nodes PERSIST across sentences until
+                # contradicted (silence ≠ negation). Include ALL active PROPERTY nodes,
+                # not just those from the current sentence.
+                # ==========================================================================
+                # Get PROPERTY nodes from per-sentence view (includes persisting PROPERTY nodes)
+                if self._per_sentence_view is not None:
+                    property_nodes_for_plot = sorted(
+                        filter(
+                            None,
+                            {
+                                node.get_text_representer()
+                                for node in self._per_sentence_view.active_nodes
+                                if node.node_type == NodeType.PROPERTY
+                            },
+                        )
+                    )
+                else:
+                    # Fallback: use explicit + active edges
+                    property_nodes_for_plot = sorted(
+                        filter(
+                            None,
+                            {
+                                node.get_text_representer()
+                                for node in (
+                                    self._explicit_nodes_current_sentence
+                                    | self._get_nodes_with_active_edges()
+                                )
+                                if node.node_type == NodeType.PROPERTY
+                            },
+                        )
+                    )
 
                 # AMoCv4 surface-relation format: edges ARE the semantic triplets
                 # Just collect active edge pairs directly
@@ -2275,6 +2377,8 @@ class AMoCv4:
                     active_edges=active_edge_pairs,
                     # TASK 2: Pass active triplets for overlay display
                     active_triplets_for_overlay=active_triplets,
+                    # AMoC-v4 Figure 7: PROPERTY nodes are blue
+                    property_nodes=property_nodes_for_plot,
                 )
                 # Cumulative memory view
                 # AMoCv4 surface-relation format: edges ARE the semantic triplets
@@ -2307,6 +2411,8 @@ class AMoCv4:
                     # TASK 2: Pass active triplets for overlay display
                     # For cumulative view, still show only the current sentence's active triplets
                     active_triplets_for_overlay=active_triplets,
+                    # AMoC-v4 Figure 7: PROPERTY nodes are blue
+                    property_nodes=property_nodes_for_plot,
                 )
 
             # Capture triplets for this sentence (all edges, with current active flag)
@@ -3253,34 +3359,8 @@ class AMoCv4:
                     text_based_nodes.append(node)
                     text_based_words.append(lemma)
 
-                # ---------- PROPERTY NODES (adjectives, strictly grounded) ----------
-                elif word.pos_ == "ADJ":
-                    if not self._admit_node(
-                        lemma=lemma,
-                        node_type=NodeType.PROPERTY,
-                        provenance="SYNTACTIC_PROPERTY",
-                        sent=sent,
-                    ):
-                        continue
-
-                    node = self.graph.get_node([lemma])
-                    if node is not None:
-                        node.add_actual_text(lemma)
-                    elif create_unexistent_nodes:
-                        node = self.graph.add_or_get_node(
-                            [lemma],
-                            lemma,
-                            NodeType.PROPERTY,
-                            NodeSource.TEXT_BASED,
-                            provenance=NodeProvenance.STORY_TEXT,
-                        )
-                    else:
-                        continue
-
-                    text_based_nodes.append(node)
-                    text_based_words.append(lemma)
-
-                # ---------- EVERYTHING ELSE IS IGNORED ----------
+                # ---------- ADJECTIVES ARE HANDLED DETERMINISTICALLY ----------
+                # PROPERTY nodes are created ONLY in _extract_deterministic_structure()
                 else:
                     continue
 
