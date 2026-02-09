@@ -251,49 +251,23 @@ class PerSentenceGraphBuilder:
         This constructs the final view with all invariants enforced:
         - Only active nodes (explicit + carry-over) are included
         - Only edges with BOTH endpoints active are included
-        - PROPERTY edges persist across sentences (per AMoC-v4 Figure 7)
+        - Property edges only included in their origin sentence (per AMoC paper)
         - PROPERTY nodes only included if they have an active property edge
         - The result is guaranteed connected (or empty)
         """
         self._sentence_index = sentence_index
 
-        # ==========================================================================
-        # AMoC-v4 FIGURE 7 COMPLIANCE: PROPERTY edges PERSIST across sentences
-        # ==========================================================================
-        # PROPERTY edges represent world-state facts (e.g., knight --is--> young).
-        # They remain active until explicitly contradicted. Silence ≠ negation.
-        #
-        # CRITICAL FIX: CONCEPTs with active PROPERTY edges must be treated as
-        # active seeds, even if not explicit or carry-over in the current sentence.
-        # This ensures PROPERTY nodes persist when their edges persist.
-        # ==========================================================================
-
-        # First, collect base CONCEPT nodes (explicit + carry-over)
+        # CRITICAL (Paper-Aligned):
+        # PROPERTY nodes are NOT included in active_nodes via carry-over.
+        # They are only included if they have an active property edge in this sentence.
+        # First, collect CONCEPT nodes (explicit + carry-over)
         concept_nodes = {
             n for n in (self._explicit_nodes | self._carryover_nodes)
             if n.node_type != NodeType.PROPERTY
         }
 
-        # ==========================================================================
-        # PROPERTY EDGE PERSISTENCE FIX: Identify CONCEPTs with active PROPERTY edges
-        # These CONCEPTs must be included even if not explicit/carry-over
-        # ==========================================================================
-        concepts_with_active_property_edges: Set["Node"] = set()
-        for edge in self.cumulative_graph.edges:
-            if not edge.active:
-                continue
-            if edge.is_property_edge():
-                if edge.violates_property_sentence_constraint(sentence_index):
-                    continue
-                # This PROPERTY edge is active - include its CONCEPT endpoint
-                src_is_property = edge.source_node.node_type == NodeType.PROPERTY
-                concept_end = edge.dest_node if src_is_property else edge.source_node
-                concepts_with_active_property_edges.add(concept_end)
-
-        # Expand concept_nodes to include CONCEPTs with active PROPERTY edges
-        concept_nodes = concept_nodes | concepts_with_active_property_edges
-
         # Filter edges: only those where BOTH endpoints are active
+        # CRITICAL: Also enforce property edge sentence constraints
         active_edges: Set["Edge"] = set()
         property_nodes_with_active_edges: Set["Node"] = set()
 
@@ -301,8 +275,8 @@ class PerSentenceGraphBuilder:
             if not edge.active:
                 continue
 
-            # PROPERTY edges persist across sentences (per AMoC-v4 Figure 7)
-            # They are NOT restricted to origin sentence - silence ≠ negation
+            # Property edges must only be active in their origin sentence
+            # Per AMoC paper: properties attach via "is" edges in their sentence only
             if edge.is_property_edge():
                 if edge.violates_property_sentence_constraint(sentence_index):
                     continue

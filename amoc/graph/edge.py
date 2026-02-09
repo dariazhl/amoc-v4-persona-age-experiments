@@ -111,14 +111,7 @@ class Edge:
         - Decrement visibility_score by 1
         - When visibility_score reaches 0, edge becomes INACTIVE (not deleted)
         - Edge persists in memory and can be reactivated later
-
-        EXCEPTION: PROPERTY edges (adjective attributes) are NEVER decayed.
-        Per AMoC-v4 Figure 7: properties are world-state facts that persist
-        until explicitly contradicted. Silence ≠ negation.
         """
-        # PROPERTY edges persist indefinitely - no visibility decay
-        if self.is_property_edge():
-            return
         self.visibility_score -= 1
         if self.visibility_score <= 0:
             self.active = False  # Hidden from active graph, NOT deleted
@@ -128,18 +121,7 @@ class Edge:
         Reset edge state at the start of a new sentence.
         Per AMoC v4 paper: all edges become inactive at sentence start,
         then selectively activated through assertion or reactivation.
-
-        EXCEPTION: PROPERTY edges (adjective attributes) persist across sentences.
-        Per AMoC-v4 Figure 7: properties are world-state facts that remain active
-        until explicitly contradicted. Silence ≠ negation.
         """
-        # PROPERTY edges persist - they stay active across sentences
-        if self.is_property_edge():
-            # Reset per-sentence flags but keep active
-            self.asserted_this_sentence = False
-            self.reactivated_this_sentence = False
-            self.activation_role = "persistent"  # Persisting from previous sentence
-            return
         self.active = False
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = False
@@ -202,10 +184,7 @@ class Edge:
             self.activation_score = self.DEFAULT_ACTIVATION_SCORE
 
     def decay_activation(self) -> None:
-        # Connectors and PROPERTY edges don't decay
         if self.activation_role == "connector":
-            return
-        if self.is_property_edge():
             return
         if not self.active:
             self.activation_score -= 1
@@ -213,10 +192,6 @@ class Edge:
     def is_connector(self) -> bool:
         """Check if this edge is serving as a connector (for connectivity only)."""
         return self.activation_role == "connector"
-
-    def is_persistent(self) -> bool:
-        """Check if this edge is persisting from a previous sentence (PROPERTY edges)."""
-        return self.activation_role == "persistent"
 
     def mark_as_forced_connection(self) -> None:
         """
@@ -361,8 +336,6 @@ class Edge:
                 status = "reactivated"
             elif self.activation_role == "connector":
                 status = "connector"
-            elif self.activation_role == "persistent":
-                status = "persistent"  # PROPERTY edge persisting across sentences
             else:
                 status = "active"
         else:
@@ -374,24 +347,15 @@ class Edge:
 
     def violates_property_sentence_constraint(self, current_sentence: int) -> bool:
         """
-        ==========================================================================
-        AMoC-v4 FIGURE 7 COMPLIANCE: PROPERTY edges PERSIST across sentences
-        ==========================================================================
-        Per AMoC-v4 paper: Adjectives are world-state properties, not ephemeral
-        descriptors. A PROPERTY edge (e.g., knight --is--> young) remains active
-        as long as it still holds. Properties are NOT sentence-scoped.
+        Check if this PROPERTY edge violates the sentence constraint.
 
-        A PROPERTY edge is deactivated ONLY if:
-        1. An explicit contradiction appears (e.g., knight --is--> old)
-        2. The entity ceases to exist
+        Per AMoC-v4 paper: PROPERTY edges are active only in their origin sentence
+        unless explicitly reasserted. They decay normally like other edges.
 
-        Silence ≠ negation. Not mentioning "young" in later sentences does NOT
-        mean the knight is no longer young.
-
-        Returns False always - sentence-based deactivation is not applicable
-        to PROPERTY edges. Contradiction-based deactivation is handled separately.
-        ==========================================================================
+        Returns True if this is a PROPERTY edge outside its origin sentence.
         """
-        # PROPERTY edges are NEVER deactivated based on sentence progression
-        # They persist until explicitly contradicted
-        return False
+        if not self.is_property_edge():
+            return False
+        if self.origin_sentence is None:
+            return False
+        return current_sentence != self.origin_sentence

@@ -1001,11 +1001,25 @@ class AMoCv4:
 
         This function delegates to set_nodes_score_based_on_distance_from_active_nodes
         which computes shortest-path distance. Nodes with score > max_distance are inactive.
+
+        CRITICAL FIX: Expand seed set to include nodes connected by edges asserted
+        THIS sentence. This ensures adjective PROPERTY nodes are marked active when
+        introduced (per AMoC-v4 Figure 7).
         """
-        # CRITICAL: Per paper, this is a hard reset to ONLY explicit nodes
+        # Start with explicit nodes from sentence text
+        seed_nodes = set(explicit_nodes)
+
+        # Expand to include nodes connected by edges asserted THIS sentence
+        # This ensures PROPERTY nodes (e.g., "young") are active when their
+        # "is" edge is asserted in the current sentence
+        for edge in self.graph.edges:
+            if edge.asserted_this_sentence:
+                seed_nodes.add(edge.source_node)
+                seed_nodes.add(edge.dest_node)
+
         # The BFS function will compute distances from these seed nodes
         # Nodes unreachable or beyond max_distance get score=100 (inactive)
-        self.graph.set_nodes_score_based_on_distance_from_active_nodes(explicit_nodes)
+        self.graph.set_nodes_score_based_on_distance_from_active_nodes(list(seed_nodes))
 
     def _get_nodes_with_active_edges(self) -> set[Node]:
         active_nodes: set[Node] = set()
@@ -2293,10 +2307,9 @@ class AMoCv4:
             if plot_after_each_sentence:
                 # Active (salience) view - use per-sentence view for clean isolation
                 # This guarantees only edges with BOTH endpoints active are shown
-                # CRITICAL: Use active_nodes (not explicit | carryover) to include
-                # PROPERTY nodes which persist across sentences
                 active_nodes = (
-                    set(self._per_sentence_view.active_nodes)
+                    set(self._per_sentence_view.explicit_nodes)
+                    | set(self._per_sentence_view.carryover_nodes)
                     if self._per_sentence_view is not None
                     else None
                 )
@@ -2310,37 +2323,19 @@ class AMoCv4:
                 # AMoC-v4 FIGURE 7 COMPLIANCE: Collect PROPERTY nodes for blue coloring
                 # ==========================================================================
                 # Per AMoC-v4 Figure 7: Adjectives (young, beautiful, scorched) MUST appear
-                # as blue PROPERTY nodes. PROPERTY nodes PERSIST across sentences until
-                # contradicted (silence ≠ negation). Include ALL active PROPERTY nodes,
-                # not just those from the current sentence.
+                # as blue PROPERTY nodes in their origin sentence. Extract PROPERTY node
+                # texts from _explicit_nodes_current_sentence to pass as blue_nodes.
                 # ==========================================================================
-                # Get PROPERTY nodes from per-sentence view (includes persisting PROPERTY nodes)
-                if self._per_sentence_view is not None:
-                    property_nodes_for_plot = sorted(
-                        filter(
-                            None,
-                            {
-                                node.get_text_representer()
-                                for node in self._per_sentence_view.active_nodes
-                                if node.node_type == NodeType.PROPERTY
-                            },
-                        )
+                property_nodes_for_plot = sorted(
+                    filter(
+                        None,
+                        {
+                            node.get_text_representer()
+                            for node in self._explicit_nodes_current_sentence
+                            if node.node_type == NodeType.PROPERTY
+                        },
                     )
-                else:
-                    # Fallback: use explicit + active edges
-                    property_nodes_for_plot = sorted(
-                        filter(
-                            None,
-                            {
-                                node.get_text_representer()
-                                for node in (
-                                    self._explicit_nodes_current_sentence
-                                    | self._get_nodes_with_active_edges()
-                                )
-                                if node.node_type == NodeType.PROPERTY
-                            },
-                        )
-                    )
+                )
 
                 # AMoCv4 surface-relation format: edges ARE the semantic triplets
                 # Just collect active edge pairs directly
@@ -3359,9 +3354,35 @@ class AMoCv4:
                     text_based_nodes.append(node)
                     text_based_words.append(lemma)
 
-                # ---------- ADJECTIVES ARE HANDLED DETERMINISTICALLY ----------
-                # PROPERTY nodes are created ONLY in _extract_deterministic_structure()
-                else:
-                    continue
+                # ---------- ADJECTIVE NODES (per AMoC-v4 Figure 7) ----------
+                # Per AMoC-v4: adjectives are explicit nodes in their origin sentence.
+                # They are treated as CONCEPT nodes (not PROPERTY) and are active
+                # only in the sentence they appear, becoming inactive in later sentences
+                # unless reasserted.
+                elif word.pos_ == "ADJ":
+                    if not self._admit_node(
+                        lemma=lemma,
+                        node_type=NodeType.CONCEPT,
+                        provenance="STORY_TEXT",
+                        sent=sent,
+                    ):
+                        continue
+
+                    node = self.graph.get_node([lemma])
+                    if node is not None:
+                        node.add_actual_text(lemma)
+                    elif create_unexistent_nodes:
+                        node = self.graph.add_or_get_node(
+                            [lemma],
+                            lemma,
+                            NodeType.CONCEPT,
+                            NodeSource.TEXT_BASED,
+                            provenance=NodeProvenance.STORY_TEXT,
+                        )
+                    else:
+                        continue
+
+                    text_based_nodes.append(node)
+                    text_based_words.append(lemma)
 
         return text_based_nodes, text_based_words
