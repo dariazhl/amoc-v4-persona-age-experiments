@@ -17,6 +17,8 @@ set -euo pipefail
 # =========================
 PROJECT_ROOT="/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments"
 CHUNKS_DIR="${PROJECT_ROOT}/personas_dfs/personas_refined_age/chunks"
+# Optional story file (may be empty)
+STORY_FILE="${1:-}"
 
 # =========================
 # vLLM / CUDA SAFETY
@@ -49,6 +51,12 @@ echo "SLURM ARRAY TASK ID: ${SLURM_ARRAY_TASK_ID}"
 echo "Processing chunk file: ${INPUT_FILE}"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 
+if [[ -n "${STORY_FILE}" ]]; then
+    echo "Using story file: ${STORY_FILE}"
+else
+    echo "No story file provided"
+fi
+
 # =========================
 # Run AMoC
 # =========================
@@ -60,4 +68,5 @@ bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
     --output-dir "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output/extracted_triplets/small_example_output_llama" \
     --file "${INPUT_FILE}" \
     --strict-reactivate-function \
-    --strict-attachament-constraint
+    --strict-attachament-constraint \
+    --story-text "${STORY_FILE}"

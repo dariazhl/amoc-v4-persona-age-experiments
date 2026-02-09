@@ -14,6 +14,8 @@ set -euo pipefail
 
 PROJECT_ROOT="/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments"
 CHUNKS_DIR="${PROJECT_ROOT}/personas_dfs/personas_refined_age/chunks"
+# Optional story file (may be empty)
+STORY_FILE="${1:-}"
 
 # list of chunk files
 CHUNK_FILES=($(ls ${CHUNKS_DIR}/*.csv | sort))
@@ -30,6 +32,12 @@ echo "Running Qwen 30B for a small example"
 echo "SLURM ARRAY TASK ID: ${SLURM_ARRAY_TASK_ID}"
 echo "Processing chunk file: ${INPUT_FILE}"
 
+if [[ -n "${STORY_FILE}" ]]; then
+    echo "Using story file: ${STORY_FILE}"
+else
+    echo "No story file provided"
+fi
+
 bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
     --models "Qwen/Qwen3-30B-A3B-Instruct-2507" \
     --tp 2 \
@@ -38,4 +46,5 @@ bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
     --output-dir "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output/extracted_triplets/small_example_output" \
     --file "${INPUT_FILE}" \
     --strict-reactivate-function \
-    --strict-attachament-constraint 
+    --strict-attachament-constraint \
+    --story-text "${STORY_FILE}"
