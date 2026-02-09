@@ -208,28 +208,6 @@ class AMoCv4:
         *,
         allow_bootstrap: bool = False,
     ) -> bool:
-        """
-        Validate that a candidate node lemma has valid story provenance.
-
-        ==========================================================================
-        STRICT PROVENANCE VALIDATION (AMoC v4 Paper-Aligned)
-        ==========================================================================
-        Per AMoC v4 paper Figures 2–6:
-        - A node may ONLY be created if its lemma appears in story text
-        - Persona-only concepts must NEVER become graph nodes
-        - LLM-inferred nodes must be validated against story tokens
-        - NO permissive fallbacks - rejection is the default
-
-        Args:
-            lemma: The candidate lemma to validate
-            current_sentence_text: Optional current sentence text for additional validation
-            allow_bootstrap: If True, allow node admission even if not in story tokens,
-                             ONLY when node will be immediately connected by an edge.
-                             This enables LLM-inferred semantic relations (e.g., knight→forest).
-
-        Returns:
-            True if the lemma has valid story provenance, False otherwise
-        """
         lemma_lower = lemma.lower()
 
         # HARD GATE 1: Reject persona-only lemmas (never bypassed)
@@ -265,6 +243,21 @@ class AMoCv4:
                     f"PROVENANCE GATE: Graph grounding for '{lemma_lower}' (exists in graph)"
                 )
             return True
+
+        candidate_class = get_semantic_class(lemma_lower)
+        if candidate_class is not None:
+            for node in self.graph.get_active_nodes(
+                self.max_distance_from_active_nodes,
+                only_text_based=False,
+            ):
+                node_class = get_semantic_class(node.get_text_representer())
+                if node_class == candidate_class:
+                    if self.debug:
+                        logging.debug(
+                            f"PROVENANCE GATE: Semantic-class grounding "
+                            f"'{lemma_lower}' via class '{candidate_class}'"
+                        )
+                    return True
 
         # BOOTSTRAP PATH: Allow inferred nodes that will be connected by an edge
         # This enables semantic relations from LLM extraction (e.g., "knight" → "danger")
@@ -789,7 +782,7 @@ class AMoCv4:
                             source_node,
                             dest_node,
                             label,
-                            visibility_score=edge_forget,  # NORMAL visibility
+                            edge_visibility=edge_forget,  # NORMAL visibility
                             created_at_sentence=use_sentence,
                         )
 
@@ -1857,9 +1850,9 @@ class AMoCv4:
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
                 )
-                self.graph.set_nodes_score_based_on_distance_from_active_nodes(
-                    current_sentence_text_based_nodes
-                )
+                # self.graph.set_nodes_score_based_on_distance_from_active_nodes(
+                #     current_sentence_text_based_nodes
+                # )
             else:
                 added_edges = []
                 current_sentence = sent
@@ -2119,9 +2112,9 @@ class AMoCv4:
                     )
                     added_edges.extend(targeted_edges)
 
-                self.graph.set_nodes_score_based_on_distance_from_active_nodes(
-                    text_based_activated_nodes
-                )
+                # self.graph.set_nodes_score_based_on_distance_from_active_nodes(
+                #     text_based_activated_nodes
+                # )
 
                 # ACTIVATION LOGIC: Reactivate memory edges within MAX_DISTANCE of explicit nodes
                 # Property/attribute edges only reactivate in their origin sentence
@@ -2205,9 +2198,9 @@ class AMoCv4:
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
                 )
-                self.graph.set_nodes_score_based_on_distance_from_active_nodes(
-                    current_sentence_text_based_nodes
-                )
+                # self.graph.set_nodes_score_based_on_distance_from_active_nodes(
+                #     current_sentence_text_based_nodes
+                # )
 
             if self.debug:
                 logging.info(
@@ -2222,6 +2215,7 @@ class AMoCv4:
                 for n in (set(self.graph.nodes) - nodes_before_sentence)
                 if n.node_source == NodeSource.INFERENCE_BASED
             }
+            self._explicit_nodes_current_sentence |= newly_inferred_nodes
 
             # BUILD PER-SENTENCE VIEW (only when strict mode is enabled)
             # When enabled, enforces:
@@ -2249,7 +2243,7 @@ class AMoCv4:
             # Refresh active projection for this step
             self._record_sentence_activation(
                 sentence_id=sentence_id,
-                explicit_nodes=current_sentence_text_based_nodes,
+                explicit_nodes=list(self._explicit_nodes_current_sentence),
                 newly_inferred_nodes=newly_inferred_nodes,
             )
 
@@ -2750,10 +2744,8 @@ class AMoCv4:
             for i in selected:
                 edge = edges[i - 1]
                 edge.visibility_score = self.edge_visibility
-                # Use proper state management - mark as reactivated
-                # PROPERTY edges should NOT be reactivated per paper rules
                 if not edge.is_property_edge():
-                    edge.mark_as_reactivated(reset_score=True)
+                    continue
                 self._record_edge_in_graphs(edge, self._current_sentence_index)
 
         # Preserve connectivity in the active projection.
