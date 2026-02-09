@@ -1,5 +1,5 @@
 from amoc.graph.node import Node
-from amoc.graph.node import NodeType, NodeSource, NodeProvenance
+from amoc.graph.node import NodeType, NodeSource, NodeProvenance, NodeRole
 from amoc.graph.edge import Edge
 from collections import deque
 from typing import List, Set, Dict, Optional, Tuple, Callable
@@ -23,6 +23,7 @@ class Graph:
         admit_kwargs: dict | None = None,
         origin_sentence: Optional[int] = None,
         provenance: Optional[NodeProvenance] = None,
+        node_role: Optional[NodeRole] = None,
     ):
         """
         Add a new node or get existing node with matching lemmas.
@@ -30,6 +31,10 @@ class Graph:
         PROVENANCE TRACKING (Paper-Aligned):
         - origin_sentence: The sentence index where this node was created
         - provenance: How this node was derived (STORY_TEXT or INFERRED_FROM_STORY)
+
+        NODE ROLE:
+        - node_role: Semantic role (ACTOR, OBJECT, PROPERTY, SETTING)
+        - SETTING nodes are locations/environments from prepositional phrases
 
         CRITICAL: Nodes must only come from story text, never from persona.
         Persona influences salience/weights only, never graph content.
@@ -56,10 +61,14 @@ class Graph:
                 0,
                 origin_sentence=origin_sentence,
                 provenance=provenance or NodeProvenance.STORY_TEXT,
+                node_role=node_role,
             )
             self.nodes.add(node)
         else:
             node.add_actual_text(actual_text_l)
+            # Update role if node exists but had no role and we're providing one
+            if node.node_role is None and node_role is not None:
+                node.node_role = node_role
         return node
 
     def get_node(self, lemmas: List[str]) -> Optional[Node]:
@@ -217,10 +226,12 @@ class Graph:
         # BFS to find candidate edges within distance
         # CRITICAL (Paper-Aligned): Only CONCEPT nodes participate in BFS
         # PROPERTY nodes have no independent activation and don't propagate
+        # SETTING nodes (locations/environments) are low-priority context nodes
+        # that should NOT trigger reactivation of other edges
         concept_seeds = {
             n
             for n in (explicit_nodes | set(self.get_active_nodes(max_distance)))
-            if n.node_type != NodeType.PROPERTY
+            if n.node_type != NodeType.PROPERTY and not n.is_setting()
         }
 
         if not concept_seeds:
@@ -259,11 +270,13 @@ class Graph:
                 candidate_edges.append((dist, edge))
 
                 # Continue BFS to neighbors (for finding more candidates)
-                # CRITICAL: Skip PROPERTY nodes in traversal
+                # CRITICAL: Skip PROPERTY and SETTING nodes in traversal
+                # PROPERTY nodes have no independent activation
+                # SETTING nodes are low-priority context that don't propagate activation
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
-                if neighbor.node_type == NodeType.PROPERTY:
+                if neighbor.node_type == NodeType.PROPERTY or neighbor.is_setting():
                     continue
                 if neighbor not in reachable_nodes:
                     reachable_nodes[neighbor] = dist + 1

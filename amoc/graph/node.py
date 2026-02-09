@@ -15,6 +15,27 @@ class NodeType(Enum):
     # Verbs are represented as direct labeled edges, not intermediate nodes.
 
 
+class NodeRole(Enum):
+    """
+    Lightweight semantic role for nodes (per AMoC v4 paper alignment).
+
+    This is NOT a new ontology - just a classification hint for:
+    - ACTOR: persons, agents (subjects of actions)
+    - OBJECT: things (direct objects of actions)
+    - PROPERTY: adjectives (attributes)
+    - SETTING: locations, environments (prepositional objects like "forest", "castle")
+
+    SETTING nodes:
+    - Are nouns introduced via prepositional phrases
+    - Have NO agency and do NOT affect inference or lifecycle
+    - Exist only to preserve scene context
+    """
+    ACTOR = 1      # Persons, agents (typically nsubj)
+    OBJECT = 2     # Things (typically dobj)
+    PROPERTY = 3   # Adjectives (attributes)
+    SETTING = 4    # Locations, environments (typically pobj)
+
+
 class NodeSource(Enum):
     TEXT_BASED = 1
     INFERENCE_BASED = 2
@@ -42,6 +63,7 @@ class Node:
         score: int,
         origin_sentence: Optional[int] = None,
         provenance: Optional[NodeProvenance] = None,
+        node_role: Optional[NodeRole] = None,
     ) -> None:
         self.lemmas: List[str] = [lemma.lower() for lemma in lemmas]
         actual_text_l = (actual_text or "").lower()
@@ -56,6 +78,10 @@ class Node:
         # provenance: How this node was derived (STORY_TEXT or INFERRED_FROM_STORY)
         self.origin_sentence: Optional[int] = origin_sentence
         self.provenance: NodeProvenance = provenance or NodeProvenance.STORY_TEXT
+
+        # NODE ROLE: Lightweight semantic role (ACTOR, OBJECT, PROPERTY, SETTING)
+        # SETTING nodes exist for scene context only - they don't affect lifecycle logic
+        self.node_role: Optional[NodeRole] = node_role
 
         # CRITICAL ASSERTION: Nodes must never come from persona
         # Persona influences salience/weights only, never content
@@ -73,6 +99,17 @@ class Node:
             self.actual_texts[actual_text_l] += 1
         else:
             self.actual_texts[actual_text_l] = 1
+
+    def is_setting(self) -> bool:
+        """
+        Check if this node is a SETTING (location/environment).
+
+        SETTING nodes exist for scene context only and should NOT:
+        - Participate in lifecycle/deactivation logic
+        - Become hubs or central nodes
+        - Trigger inferred edges by themselves
+        """
+        return self.node_role == NodeRole.SETTING
 
     def get_text_representer(self) -> str:
         """

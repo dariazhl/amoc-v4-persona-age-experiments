@@ -7,7 +7,7 @@ from spacy.tokens import Span, Token
 import networkx as nx
 
 from amoc.graph import Graph, Node, Edge, NodeType, NodeSource
-from amoc.graph.node import NodeProvenance
+from amoc.graph.node import NodeProvenance, NodeRole
 from amoc.graph.per_sentence_graph import (
     PerSentenceGraph,
     PerSentenceGraphBuilder,
@@ -1830,10 +1830,11 @@ class AMoCv4:
 
                 # Populate _anchor_nodes from first sentence's explicit nodes
                 # Per AMoC paper: anchors are CONCEPT nodes only (not PROPERTY)
+                # SETTING nodes (locations/environments) should NOT become anchors
                 self._anchor_nodes = {
                     n
                     for n in current_sentence_text_based_nodes
-                    if n.node_type == NodeType.CONCEPT
+                    if n.node_type == NodeType.CONCEPT and not n.is_setting()
                 }
                 inferred_concept_relationships, inferred_property_relationships = (
                     self.infer_new_relationships_step_0(sent)
@@ -2140,17 +2141,18 @@ class AMoCv4:
                 # Update anchor nodes to include current explicit nodes and
                 # nodes with active edges to maintain connectivity across sentences
                 # Per AMoC paper: anchors are CONCEPT nodes only (not PROPERTY)
+                # SETTING nodes (locations/environments) should NOT become anchors
                 self._anchor_nodes = (
                     self._anchor_nodes
                     | {
                         n
                         for n in current_sentence_text_based_nodes
-                        if n.node_type == NodeType.CONCEPT
+                        if n.node_type == NodeType.CONCEPT and not n.is_setting()
                     }
                     | {
                         n
                         for n in self._get_nodes_with_active_edges()
-                        if n.node_type == NodeType.CONCEPT
+                        if n.node_type == NodeType.CONCEPT and not n.is_setting()
                     }
                 )
 
@@ -2892,12 +2894,14 @@ class AMoCv4:
                 )
                 continue
 
+            # Prepositional objects are SETTING nodes (locations/environments)
             obj_node = self.graph.add_or_get_node(
                 [obj_lemma],
                 obj_lemma,
                 NodeType.CONCEPT,
                 NodeSource.TEXT_BASED,
                 provenance=NodeProvenance.STORY_TEXT,
+                node_role=NodeRole.SETTING,
             )
 
             # Track that this is a text-based node from current sentence
@@ -3414,9 +3418,30 @@ class AMoCv4:
                     ):
                         continue
 
+                    # ==========================================================================
+                    # NODE ROLE DETECTION (per AMoC v4 paper alignment)
+                    # Detect semantic role based on syntactic dependency:
+                    # - SETTING: nouns in prepositional phrases (pobj, obl) - locations/environments
+                    # - ACTOR: subjects of actions (nsubj, nsubjpass)
+                    # - OBJECT: direct objects and other nouns (dobj, attr, etc.)
+                    # ==========================================================================
+                    node_role = None
+                    if word.dep_ in {"pobj", "obl"}:
+                        # Prepositional objects are typically locations/settings
+                        node_role = NodeRole.SETTING
+                    elif word.dep_ in {"nsubj", "nsubjpass"}:
+                        # Subjects are typically actors/agents
+                        node_role = NodeRole.ACTOR
+                    else:
+                        # Default to OBJECT for other noun dependencies
+                        node_role = NodeRole.OBJECT
+
                     node = self.graph.get_node([lemma])
                     if node is not None:
                         node.add_actual_text(lemma)
+                        # Update role if not already set
+                        if node.node_role is None:
+                            node.node_role = node_role
                     elif create_unexistent_nodes:
                         node = self.graph.add_or_get_node(
                             [lemma],
@@ -3424,6 +3449,7 @@ class AMoCv4:
                             NodeType.CONCEPT,
                             NodeSource.TEXT_BASED,
                             provenance=NodeProvenance.STORY_TEXT,
+                            node_role=node_role,
                         )
                     else:
                         continue
@@ -3455,6 +3481,7 @@ class AMoCv4:
                             NodeType.PROPERTY,
                             NodeSource.TEXT_BASED,
                             provenance=NodeProvenance.STORY_TEXT,
+                            node_role=NodeRole.PROPERTY,
                         )
                     else:
                         continue
