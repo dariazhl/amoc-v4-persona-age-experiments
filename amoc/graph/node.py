@@ -11,8 +11,9 @@ from typing import List, Dict
 class NodeType(Enum):
     CONCEPT = 1
     PROPERTY = 2
-    # NOTE: RELATION type removed for AMoCv4 surface-relation format compliance.
-    # Verbs are represented as direct labeled edges, not intermediate nodes.
+    EVENT = 3  # EVENT/PROCESS mediation nodes (Recommendation 2)
+    # NOTE: EVENT nodes are created for relations with event_level in {EVENT, PROCESS}
+    # They mediate between actor and object: actor --participates_in--> event --affects--> object
 
 
 class NodeRole(Enum):

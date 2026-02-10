@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from amoc.graph.graph import Graph
 
 from amoc.graph.node import NodeType
+from amoc.graph.edge import RelationClass
 
 
 @dataclass

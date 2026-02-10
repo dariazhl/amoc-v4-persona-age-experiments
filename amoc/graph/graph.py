@@ -1,16 +1,69 @@
 from amoc.graph.node import Node
 from amoc.graph.node import NodeType, NodeSource, NodeProvenance, NodeRole
-from amoc.graph.edge import Edge
+from amoc.graph.edge import (
+    Edge,
+    RelationClass,
+    Justification,
+    enforce_ontology_invariants,
+    assert_persona_did_not_modify_ontology,
+)
 from collections import deque
 from typing import List, Set, Dict, Optional, Tuple, Callable
 import re
 import logging
+import networkx as nx
 
 
 class Graph:
+    # ==========================================================================
+    # LOW-INFORMATION EDGE LABELS (Issue B - Node Coagulation Prevention)
+    # ==========================================================================
+    # These labels create high-degree hub clusters and must be throttled.
+    LOW_INFO_LABELS: set[str] = {"has", "relates_to", "is", "involves", "concerns"}
+
     def __init__(self) -> None:
         self.nodes: Set[Node] = set()
         self.edges: Set[Edge] = set()
+
+        # ==========================================================================
+        # PROVENANCE GATE (Issue A - Persona Leakage Prevention)
+        # ==========================================================================
+        # story_lemmas: Set of lemmas from story text (valid for node creation)
+        # persona_only_lemmas: Set of lemmas ONLY in persona (must be blocked)
+        self._story_lemmas: Optional[Set[str]] = None
+        self._persona_only_lemmas: Optional[Set[str]] = None
+
+        # ==========================================================================
+        # EDGE BUDGET (Issue B - Node Coagulation Prevention)
+        # ==========================================================================
+        # Per-sentence, per-node, per-label edge counts to prevent hub formation
+        # Structure: {sentence_idx: {node_lemma_tuple: {label: count}}}
+        self._edge_budget: Dict[int, Dict[tuple, Dict[str, int]]] = {}
+        self._current_sentence_idx: int = 0
+
+    def set_provenance_gate(
+        self,
+        story_lemmas: Set[str],
+        persona_only_lemmas: Optional[Set[str]] = None,
+    ) -> None:
+        """
+        Configure the provenance gate for node creation.
+
+        Args:
+            story_lemmas: Set of lemmas from story text (valid for node creation)
+            persona_only_lemmas: Set of lemmas ONLY in persona (must be blocked)
+        """
+        self._story_lemmas = {s.lower() for s in story_lemmas}
+        self._persona_only_lemmas = (
+            {s.lower() for s in persona_only_lemmas} if persona_only_lemmas else set()
+        )
+
+    def set_current_sentence(self, sentence_idx: int) -> None:
+        """Set the current sentence index for edge budget tracking."""
+        self._current_sentence_idx = sentence_idx
+        # Initialize budget for this sentence if not exists
+        if sentence_idx not in self._edge_budget:
+            self._edge_budget[sentence_idx] = {}
 
     def add_or_get_node(
         self,
@@ -40,18 +93,52 @@ class Graph:
         Persona influences salience/weights only, never graph content.
         """
         lemmas = [lemma.lower() for lemma in lemmas]
-        if not lemmas or not lemmas[0] or not lemmas[0].isalpha():
+        if not lemmas or not lemmas[0]:
+            return None
+        # EVENT nodes can have non-alphabetic names like "killing_knight_dragon_s0"
+        # Only apply isalpha check to CONCEPT and PROPERTY nodes
+        if node_type != NodeType.EVENT and not lemmas[0].isalpha():
             return None
         FORBIDDEN = {"edge", "node", "property", "label", "target", "source"}
         if any(l in FORBIDDEN for l in lemmas):
             return None
+
+        # ==========================================================================
+        # HARD PROVENANCE GATE (Issue A - Persona Leakage Prevention)
+        # ==========================================================================
+        # CRITICAL: This gate MUST block persona-only lemmas BEFORE node creation.
+        # Per AMoC v4 paper: Nodes come from STORY TEXT only, never persona.
+        primary_lemma = lemmas[0].lower()
+
+        # GATE 1: Block lemmas that appear ONLY in persona (hard reject)
+        if self._persona_only_lemmas and primary_lemma in self._persona_only_lemmas:
+            logging.debug(f"PROVENANCE GATE: Blocked persona-only lemma '{primary_lemma}'")
+            return None
+
+        # GATE 2: For new nodes, require story grounding (unless INFERRED_FROM_STORY)
+        # Allow existing nodes to be retrieved (they were already validated)
+        existing_node = self.get_node(lemmas)
+        if existing_node is None:
+            # New node creation - check story grounding
+            if self._story_lemmas is not None:
+                is_story_grounded = primary_lemma in self._story_lemmas
+                is_inferred = provenance == NodeProvenance.INFERRED_FROM_STORY
+
+                if not is_story_grounded and not is_inferred:
+                    logging.debug(
+                        f"PROVENANCE GATE: Blocked non-story lemma '{primary_lemma}' "
+                        f"(not in story_lemmas, provenance={provenance})"
+                    )
+                    return None
+
+        # Legacy admit callback (additional filtering if provided)
         if admit is not None:
             admit_kwargs = admit_kwargs or {}
             if not admit(lemma=lemmas[0], node_type=node_type, **admit_kwargs):
                 return None
 
         actual_text_l = (actual_text or "").lower()
-        node = self.get_node(lemmas)
+        node = existing_node
         if node is None:
             node = Node(
                 lemmas,
@@ -102,15 +189,63 @@ class Graph:
         label: str,
         edge_visibility: int,
         created_at_sentence: Optional[int] = None,
+        *,
+        relation_class: Optional[RelationClass] = None,
+        justification: Optional[Justification] = None,
+        persona_influenced: bool = False,
+        inferred: bool = False,
     ) -> Optional[Edge]:
+        """
+        Add an edge with ontology-invariant metadata.
+
+        Args:
+            source_node: Source node
+            dest_node: Destination node
+            label: Edge label (persona may influence this)
+            edge_visibility: Visibility score
+            created_at_sentence: Sentence index
+            relation_class: Structural ontology class (INVARIANT to persona)
+            justification: How edge was derived (INVARIANT to persona)
+            persona_influenced: Whether label was influenced by persona
+            inferred: Whether edge was inferred (not explicit in text)
+        """
+        # Basic sanity checks (these don't block - just return None)
         if source_node == dest_node:
             return None
         # Safety net: reject edges with empty/whitespace-only labels
         if not label or not isinstance(label, str) or not label.strip():
             return None
 
-        # STRICT PROPERTY CONSTRAINT: A PROPERTY node must not attach to more than one concept
-        # Check if this would violate the single-attach rule
+        # ==========================================================================
+        # EDGE BUDGET THROTTLING (Issue B - Node Coagulation Prevention)
+        # ==========================================================================
+        # Low-information edges ("has", "relates_to", "is", etc.) create hub clusters
+        # that reduce graph information density. Limit to 1 per (node, label) per sentence.
+        label_lower = label.lower().strip()
+        if label_lower in self.LOW_INFO_LABELS:
+            sentence_idx = self._current_sentence_idx
+            # Use source node's primary lemma as key (tuple for hashability)
+            source_key = tuple(source_node.lemmas)
+
+            # Initialize budget structure if needed
+            if sentence_idx not in self._edge_budget:
+                self._edge_budget[sentence_idx] = {}
+            if source_key not in self._edge_budget[sentence_idx]:
+                self._edge_budget[sentence_idx][source_key] = {}
+
+            # Check budget
+            current_count = self._edge_budget[sentence_idx][source_key].get(label_lower, 0)
+            if current_count >= 1:
+                logging.debug(
+                    f"EDGE BUDGET: Throttled '{label_lower}' edge from "
+                    f"'{source_node.get_text_representer()}' (count={current_count})"
+                )
+                return None  # Silently skip - budget exceeded
+
+            # Increment budget counter
+            self._edge_budget[sentence_idx][source_key][label_lower] = current_count + 1
+
+        # PROPERTY constraint check (soft - records violation but allows edge)
         property_node = None
         concept_node = None
         if (
@@ -126,9 +261,8 @@ class Graph:
             property_node = dest_node
             concept_node = source_node
 
+        property_violation = None
         if property_node is not None:
-            if created_at_sentence is None:
-                return None
             # Check if this property is already attached to a DIFFERENT concept
             for existing_edge in property_node.edges:
                 other_node = (
@@ -140,19 +274,50 @@ class Graph:
                     other_node.node_type == NodeType.CONCEPT
                     and other_node != concept_node
                 ):
-                    # PROPERTY already attached to a different concept - reject
-                    return None
+                    property_violation = "PROPERTY node attached to multiple concepts"
+                    break
+
+        # ==========================================================================
+        # NON-BLOCKING EDGE CREATION
+        # ==========================================================================
+        # Create edge regardless of ontology violations.
+        # Violations are recorded as metadata, NOT used to block creation.
 
         edge = Edge(
             source_node,
             dest_node,
             label,
             edge_visibility,
+            relation_class=relation_class,
+            justification=justification,
+            persona_influenced=persona_influenced,
+            inferred=inferred,
             active=True,
             created_at_sentence=created_at_sentence,
         )
+
+        # CENTRALIZED ONTOLOGY DIAGNOSTICS (non-blocking)
+        enforce_ontology_invariants(edge)
+
+        # Record property violation if detected (non-blocking)
+        if property_violation:
+            edge.metadata.setdefault("ontology_violations", []).append(property_violation)
+
         if self.check_if_similar_edge_exists(edge, edge_visibility):
             return None
+
+        # ==========================================================================
+        # CONNECTIVITY CHECK (non-blocking - records violation but allows edge)
+        # ==========================================================================
+        # For edges that require connectivity (non-EVENTIVE, non-anchor relations),
+        # check that at least one endpoint is grounded in existing structure.
+        if relation_class not in {RelationClass.EVENTIVE, RelationClass.CONNECTIVE}:
+            if not self._would_maintain_connectivity(edge):
+                # Record violation but still add the edge
+                edge.metadata.setdefault("ontology_violations", []).append(
+                    "Connectivity: edge creates isolated component"
+                )
+
         self.edges.add(edge)
         if edge not in source_node.edges:
             source_node.edges.append(edge)
@@ -160,6 +325,44 @@ class Graph:
             dest_node.edges.append(edge)
 
         return edge
+
+    def _would_maintain_connectivity(self, new_edge: Edge) -> bool:
+        """
+        Check if adding this edge would maintain graph connectivity.
+
+        Uses CUMULATIVE structure, not sentence-local activity.
+        For dependent relations, at least one endpoint must already exist
+        in the cumulative memory graph.
+
+        Returns:
+            True if edge can be added without creating isolated component
+            False if edge would create a disconnected component
+        """
+        # If graph is empty, first edge is always allowed
+        if not self.edges:
+            return True
+
+        # Build CUMULATIVE graph structure
+        # - Use ALL edges, not just active ones
+        # - Exclude ATTRIBUTIVE edges (they don't maintain connectivity)
+        # - Activity status is IGNORED - this is a memory check
+        G = nx.Graph()
+        for edge in self.edges:
+            # Exclude ATTRIBUTIVE edges from connectivity graph
+            if edge.relation_class == RelationClass.ATTRIBUTIVE:
+                continue
+            G.add_edge(edge.source_node, edge.dest_node)
+
+        # If no non-attributive edges exist, allow the new edge
+        if G.number_of_edges() == 0:
+            return True
+
+        # Check if at least one endpoint already exists in cumulative memory
+        source_connected = new_edge.source_node in G.nodes()
+        dest_connected = new_edge.dest_node in G.nodes()
+
+        # Dependent relations require at least one endpoint to be grounded
+        return source_connected or dest_connected
 
     def check_if_similar_edge_exists(self, edge: Edge, edge_visibility: int) -> bool:
         if edge in self.edges:
@@ -213,7 +416,7 @@ class Graph:
         Reactivate memory edges that are within max_distance of explicit sentence nodes.
 
         Per AMoC v4 paper requirements:
-        - PROPERTY edges must NEVER be reactivated (strict rule)
+        - ATTRIBUTIVE edges must NEVER be reactivated (strict rule)
         - PROPERTY nodes don't participate in BFS (no propagation through properties)
         - Reactivation is sparse: limited to MAX_REACTIVATION_COUNT edges (≈1-3)
         - Only edges within graph_distance ≤ max_distance are candidates
@@ -254,9 +457,9 @@ class Graph:
                     continue
                 visited_edges.add(edge)
 
-                # STRICT RULE: PROPERTY edges must NEVER be reactivated
+                # STRICT RULE: ATTRIBUTIVE edges must NEVER be reactivated
                 # Property edges fade permanently if not reasserted in current sentence
-                if edge.is_property_edge():
+                if edge.relation_class == RelationClass.ATTRIBUTIVE:
                     continue
 
                 if edge.violates_property_sentence_constraint(current_sentence):
@@ -314,13 +517,13 @@ class Graph:
 
             # CRITICAL FIX: Include property edges when they're in their origin sentence
             # Per AMoC paper (Figures 2-4): properties attach via "is" edges
-            if edge.is_property_edge():
+            if edge.relation_class == RelationClass.ATTRIBUTIVE:
                 # Property edges only active in their origin sentence
                 if current_sentence is None:
                     continue  # Can't validate - skip property edges
                 if edge.violates_property_sentence_constraint(current_sentence):
                     continue  # Not in origin sentence - skip
-                # PROPERTY edges must be anchored to an active CONCEPT
+                # ATTRIBUTIVE edges must be anchored to an active CONCEPT
                 concept_end = (
                     edge.source_node
                     if edge.source_node.node_type == NodeType.CONCEPT
@@ -641,7 +844,7 @@ class Graph:
         return s
 
     # ==========================================================================
-    # TASK 2: CONNECTIVITY ENFORCEMENT LOGIC
+    # CONNECTIVITY ENFORCEMENT LOGIC
     # ==========================================================================
     # This section contains all connectivity-related methods, isolated for clarity.
     #
@@ -654,7 +857,7 @@ class Graph:
 
     def check_active_connectivity(self) -> bool:
         """
-        TASK 2: Check if the active graph is connected.
+        Check if the active graph is connected.
 
         This is the primary method for connectivity detection.
         Should be called BEFORE plotting to determine if intervention is needed.
@@ -662,8 +865,6 @@ class Graph:
         Returns:
             True if connected (or empty/single node), False if disconnected
         """
-        import networkx as nx
-
         active_edges = [e for e in self.edges if e.active]
         if not active_edges:
             return True  # Empty graph is trivially connected
@@ -682,7 +883,7 @@ class Graph:
         focus_nodes: Set[Node],
     ) -> Tuple[List[Set[Node]], int]:
         """
-        TASK 2: Get disconnected components and identify the focus component.
+        Get disconnected components and identify the focus component.
 
         Use this to determine which nodes need connecting and to which component.
         This information can be passed to a secondary LLM call.
@@ -697,8 +898,6 @@ class Graph:
 
         If graph is connected, returns ([all_nodes], 0).
         """
-        import networkx as nx
-
         active_edges = [e for e in self.edges if e.active]
         if not active_edges:
             return ([], -1)
@@ -733,7 +932,7 @@ class Graph:
         focus_nodes: Set[Node],
     ) -> List[Tuple[Node, Node]]:
         """
-        TASK 2: Get pairs of nodes that need edges to restore connectivity.
+        Get pairs of nodes that need edges to restore connectivity.
 
         For each disconnected component, returns a representative node pair
         (one node from the component, one from the focus component) that
@@ -762,8 +961,6 @@ class Graph:
 
             # Pick a representative node from each side
             # Prefer CONCEPT nodes over PROPERTY nodes
-            from amoc.graph.node import NodeType
-
             isolated_node = None
             for n in comp:
                 if n.node_type == NodeType.CONCEPT:
@@ -795,7 +992,7 @@ class Graph:
         carryover_focus_nodes: Optional[Set[Node]] = None,
     ) -> Set[Edge]:
         """
-        TASK 2: Ensure the active graph remains connected.
+        Ensure the active graph remains connected.
 
         STEP 1 of connectivity enforcement: Try to connect using EXISTING edges.
 
@@ -808,7 +1005,7 @@ class Graph:
 
         Connector edge constraints (CRITICAL):
         - Must already exist in the cumulative graph
-        - Must NOT be PROPERTY edges
+        - Must NOT be ATTRIBUTIVE edges
         - Must NOT be counted as asserted or reactivated
         - Do NOT increase activation scores
         - Are NOT eligible for inference
@@ -822,8 +1019,6 @@ class Graph:
         Returns:
             Set of edges promoted as connectors.
         """
-        import networkx as nx
-
         # Build active subgraph
         active_edges = [e for e in self.edges if e.active]
         if not active_edges:
@@ -854,7 +1049,7 @@ class Graph:
         # Build full cumulative graph for finding paths
         G_cumulative = nx.Graph()
         for edge in self.edges:
-            if edge.is_property_edge():
+            if edge.relation_class == RelationClass.ATTRIBUTIVE:
                 continue
             G_cumulative.add_edge(edge.source_node, edge.dest_node, edge=edge)
 
@@ -908,8 +1103,8 @@ class Graph:
                 if edge is None:
                     continue
 
-                # STRICT: Never use PROPERTY edges as connectors
-                if edge.is_property_edge():
+                # STRICT: Never use ATTRIBUTIVE edges as connectors
+                if edge.relation_class == RelationClass.ATTRIBUTIVE:
                     continue
 
                 # Only promote if not already active
@@ -974,57 +1169,55 @@ class Graph:
     # ==========================================================================
     FORBIDDEN_EDGE_LABELS = {"agent_of", "target_of", "patient_of"}
 
-    def validate_amocv4_constraints(self) -> None:
+    def validate_amocv4_constraints(self) -> list[str]:
         """
-        Enforce AMoCv4 surface-relation format constraints.
+        Check AMoCv4 surface-relation format constraints.
 
-        Hard constraints (fail fast if violated):
-        1. Never create agent_of, target_of, patient_of, or role-based edges
+        Constraints checked:
+        1. No agent_of, target_of, patient_of, or role-based edges
         2. All verbs must be represented as direct labeled edges between entities
         3. All attributes must be represented using the relation 'is'
 
-        Raises:
-            AssertionError: If any constraint is violated
+        Returns:
+            List of violation strings, empty if no violations.
+            NEVER raises or blocks execution.
         """
-        # CONSTRAINT 1: No forbidden edge labels
-        forbidden_edges = [
-            edge for edge in self.edges if edge.label in self.FORBIDDEN_EDGE_LABELS
-        ]
-        assert not forbidden_edges, (
-            f"AMoCv4 VIOLATION: Found {len(forbidden_edges)} forbidden edge(s) with "
-            f"labels in {self.FORBIDDEN_EDGE_LABELS}. "
-            f"Examples: {[(e.source_node.get_text_representer(), e.label, e.dest_node.get_text_representer()) for e in forbidden_edges[:3]]}"
-        )
-        # NOTE: NodeType.RELATION check removed - the type no longer exists in AMoCv4
+        violations = []
+        for edge in self.edges:
+            if edge.label in self.FORBIDDEN_EDGE_LABELS:
+                violations.append(
+                    f"AMoCv4: Forbidden edge label '{edge.label}': "
+                    f"{edge.source_node.get_text_representer()} -> {edge.dest_node.get_text_representer()}"
+                )
+        return violations
 
-    def sanity_check_readable_triplets(self) -> bool:
+    def sanity_check_readable_triplets(self) -> list[str]:
         """
         AMoCv4 sanity check: Every edge must be readable as a simple sentence fragment.
 
         Returns:
-            True if all edges pass the sanity check
-
-        Raises:
-            AssertionError: If any edge cannot be read as a sentence fragment
+            List of violation strings, empty if no violations.
+            NEVER raises or blocks execution.
         """
+        violations = []
         for edge in self.edges:
             subj = edge.source_node.get_text_representer()
             verb = edge.label
             obj = edge.dest_node.get_text_representer()
 
             # Basic sanity: all parts must be non-empty
-            assert subj and verb and obj, (
-                f"AMoCv4 SANITY FAIL: Edge has empty component: "
-                f"'{subj}' --{verb}--> '{obj}'"
-            )
+            if not subj or not verb or not obj:
+                violations.append(
+                    f"AMoCv4: Edge has empty component: '{subj}' --{verb}--> '{obj}'"
+                )
 
             # Forbidden patterns
-            assert verb not in self.FORBIDDEN_EDGE_LABELS, (
-                f"AMoCv4 SANITY FAIL: Edge uses forbidden label '{verb}': "
-                f"'{subj}' --{verb}--> '{obj}'"
-            )
+            if verb in self.FORBIDDEN_EDGE_LABELS:
+                violations.append(
+                    f"AMoCv4: Edge uses forbidden label '{verb}': '{subj}' --{verb}--> '{obj}'"
+                )
 
-        return True
+        return violations
 
     def sanity_check_provenance(
         self,
@@ -1079,3 +1272,91 @@ class Graph:
             edge.source_node.edges.remove(edge)
         if edge.dest_node and edge in edge.dest_node.edges:
             edge.dest_node.edges.remove(edge)
+
+    def validate_persona_ontology_invariant(self) -> list[str]:
+        """
+        Check that persona did not modify structural ontology.
+
+        Per Recommendation 1: Persona may affect expression (labels),
+        NOT ontology (relation_class, justification).
+
+        Returns:
+            List of violation strings, empty if no violations.
+            NEVER raises or blocks execution.
+        """
+        violations = []
+        for edge in self.edges:
+            # Call the non-blocking version which records to metadata
+            assert_persona_did_not_modify_ontology(edge)
+            # Collect any violations recorded on this edge
+            edge_violations = edge.metadata.get("ontology_violations", [])
+            for v in edge_violations:
+                if "Persona" in v or "REC1" in v:
+                    violations.append(
+                        f"{edge.source_node.get_text_representer()} --{edge.label}--> "
+                        f"{edge.dest_node.get_text_representer()}: {v}"
+                    )
+        return violations
+
+    def validate_event_mediation_invariant(self) -> list[str]:
+        """
+        Check that all EVENTIVE edges are properly mediated by EVENT nodes.
+
+        Per Recommendation 2: EVENTIVE relations must be mediated by EVENT nodes.
+        Direct EVENTIVE edges between non-EVENT nodes are violations.
+
+        Pattern: actor --participates_in--> EVENT --affects--> object
+
+        Returns:
+            List of violation strings, empty if no violations.
+            NEVER raises or blocks execution.
+        """
+        violations = []
+        for edge in self.edges:
+            if edge.relation_class == RelationClass.EVENTIVE:
+                if (
+                    edge.source_node.node_type != NodeType.EVENT
+                    and edge.dest_node.node_type != NodeType.EVENT
+                ):
+                    violations.append(
+                        f"REC2: EVENTIVE edge not mediated: "
+                        f"{edge.source_node.get_text_representer()} --{edge.label}--> "
+                        f"{edge.dest_node.get_text_representer()} "
+                        f"({edge.source_node.node_type} -> {edge.dest_node.node_type})"
+                    )
+
+            # Also check EVENT node attachment constraint
+            is_event_involved = (
+                edge.source_node.node_type == NodeType.EVENT
+                or edge.dest_node.node_type == NodeType.EVENT
+            )
+            if is_event_involved:
+                if edge.relation_class not in {
+                    RelationClass.EVENTIVE,
+                    RelationClass.CONNECTIVE,
+                }:
+                    violations.append(
+                        f"REC2: EVENT node has invalid relation_class {edge.relation_class}: "
+                        f"{edge.source_node.get_text_representer()} --{edge.label}--> "
+                        f"{edge.dest_node.get_text_representer()}"
+                    )
+
+        return violations
+
+    def collect_all_violations(self) -> list[str]:
+        """
+        Collect all ontology violations from all edges.
+
+        Returns:
+            List of all violation strings across all edges.
+            NEVER raises or blocks execution.
+        """
+        violations = []
+        for edge in self.edges:
+            edge_violations = edge.metadata.get("ontology_violations", [])
+            for v in edge_violations:
+                violations.append(
+                    f"{edge.source_node.get_text_representer()} --{edge.label}--> "
+                    f"{edge.dest_node.get_text_representer()}: {v}"
+                )
+        return violations

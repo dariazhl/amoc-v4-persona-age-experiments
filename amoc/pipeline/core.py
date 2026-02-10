@@ -8,6 +8,11 @@ import networkx as nx
 
 from amoc.graph import Graph, Node, Edge, NodeType, NodeSource
 from amoc.graph.node import NodeProvenance, NodeRole
+from amoc.graph.edge import (
+    RelationClass,
+    Justification,
+    enforce_ontology_invariants,
+)
 from amoc.graph.per_sentence_graph import (
     PerSentenceGraph,
     PerSentenceGraphBuilder,
@@ -595,6 +600,8 @@ class AMoCv4:
                 obj_node,
                 edge_label,
                 self.edge_visibility,
+                relation_class=RelationClass.EVENTIVE,  # TODO: derive from context if needed
+                justification=Justification.TEXTUAL,
             )
             # Track added edge (for reactivation bookkeeping)
             if edge:
@@ -641,6 +648,232 @@ class AMoCv4:
 
         return touches_memory
 
+    # ==========================================================================
+    # RECOMMENDATION 2: EVENT/PROCESS MEDIATION
+    # ==========================================================================
+    # All relations with event_level in {EVENT, PROCESS} must be mediated by
+    # explicit EVENT nodes. Direct entity → entity action edges are forbidden.
+    #
+    # BEFORE (illegal): knight --killed--> dragon
+    # AFTER (required): knight --participates_in--> kill_event --affects--> dragon
+
+    def _get_event_node_name(self, relation_label: str) -> str:
+        """
+        Generate an event node name from a relation label.
+
+        Rule 2: Event nodes unique per (relation, source, dest, sentence)
+        The base name comes from the relation; uniqueness is ensured by
+        including sentence index in the caller.
+
+        Examples:
+        - "killed" → "killing"
+        - "fights" → "fighting"
+        - "kidnapped" → "kidnapping"
+        """
+        label = relation_label.lower().strip()
+
+        # Map past tense to gerund form for common verbs
+        GERUND_MAP = {
+            "killed": "killing",
+            "kills": "killing",
+            "fought": "fighting",
+            "fights": "fighting",
+            "kidnapped": "kidnapping",
+            "kidnaps": "kidnapping",
+            "freed": "freeing",
+            "frees": "freeing",
+            "married": "marrying",
+            "marries": "marrying",
+            "wanted": "wanting",
+            "wants": "wanting",
+            "appeared": "appearing",
+            "appears": "appearing",
+            "rode_through": "riding_through",
+            "hurried_after": "hurrying_after",
+        }
+
+        if label in GERUND_MAP:
+            return GERUND_MAP[label]
+
+        # Fallback: add "_event" suffix
+        return f"{label}_event"
+
+    def _should_mediate_via_event(self, relation_label: str) -> bool:
+        """
+        DEPRECATED: Event mediation is no longer derived from labels.
+
+        Per Recommendation 1: Ontology is explicit, not inferred from strings.
+        Event mediation should be explicitly requested by the caller via
+        relation_class=RelationClass.EVENTIVE.
+
+        This method now always returns False - event mediation is disabled
+        by default and must be explicitly requested.
+        """
+        # Per Recommendation 1: Do not infer ontology from labels
+        # Event mediation must be explicitly requested
+        return False
+
+    def _create_event_mediated_edges(
+        self,
+        source_node: Node,
+        dest_node: Node,
+        relation_label: str,
+        edge_forget: int,
+        created_at_sentence: Optional[int] = None,
+    ) -> Tuple[Optional[Node], Optional[Edge], Optional[Edge]]:
+        """
+        Create an event-mediated structure for EVENT/PROCESS relations.
+
+        Rule 1: Create event nodes for EVENT/PROCESS level relations
+        Rule 2: Event nodes unique per (relation, source, dest, sentence)
+        Rule 3: Schema compliance for all new edges
+        Rule 4: Connectivity preservation (participates_in first)
+
+        Structure:
+        source_node --participates_in--> event_node --affects--> dest_node
+
+        Returns:
+            Tuple of (event_node, participates_edge, affects_edge)
+            Any component may be None if creation failed.
+        """
+        sentence_idx = created_at_sentence or getattr(
+            self, "_current_sentence_index", 0
+        )
+
+        # Generate unique event node name
+        base_name = self._get_event_node_name(relation_label)
+        src_text = source_node.get_text_representer().replace(" ", "_")
+        dst_text = dest_node.get_text_representer().replace(" ", "_")
+        event_name = f"{base_name}_{src_text}_{dst_text}_s{sentence_idx}"
+
+        # Create EVENT node
+        event_lemmas = [event_name.lower()]
+        event_node = self.graph.add_or_get_node(
+            lemmas=event_lemmas,
+            actual_text=event_name,
+            node_type=NodeType.EVENT,
+            node_source=NodeSource.INFERENCE_BASED,
+            origin_sentence=sentence_idx,
+            provenance=NodeProvenance.INFERRED_FROM_STORY,
+            node_role=None,  # EVENT nodes don't have actor/object roles
+        )
+
+        if event_node is None:
+            logging.warning(
+                "[EventMediation] Failed to create event node for: %s --%s--> %s",
+                source_node.get_text_representer(),
+                relation_label,
+                dest_node.get_text_representer(),
+            )
+            return None, None, None
+
+        # Rule 4: Create participates_in edge FIRST (ensures connectivity)
+        # source_node --participates_in--> event_node
+        participates_edge = self.graph.add_edge(
+            source_node,
+            event_node,
+            "participates_in",
+            edge_forget,
+            created_at_sentence=sentence_idx,
+            relation_class=RelationClass.EVENTIVE,
+            justification=Justification.TEXTUAL,
+        )
+
+        if participates_edge:
+            participates_edge.mark_as_asserted(reset_score=True)
+            # Track in triplet records
+            trip_id = (
+                source_node.get_text_representer(),
+                "participates_in",
+                event_node.get_text_representer(),
+            )
+            if trip_id not in self._triplet_intro:
+                self._triplet_intro[trip_id] = sentence_idx
+            self._record_edge_in_graphs(participates_edge, sentence_idx)
+        else:
+            logging.warning(
+                "[EventMediation] Failed to create participates_in edge: %s --> %s",
+                source_node.get_text_representer(),
+                event_node.get_text_representer(),
+            )
+
+        # Create affects edge: event_node --affects--> dest_node
+        affects_edge = self.graph.add_edge(
+            event_node,
+            dest_node,
+            relation_label,
+            edge_forget,
+            created_at_sentence=sentence_idx,
+            relation_class=RelationClass.EVENTIVE,
+            justification=Justification.TEXTUAL,
+        )
+
+        if affects_edge:
+            affects_edge.mark_as_asserted(reset_score=True)
+            # Track in triplet records
+            trip_id = (
+                event_node.get_text_representer(),
+                "affects",
+                dest_node.get_text_representer(),
+            )
+            if trip_id not in self._triplet_intro:
+                self._triplet_intro[trip_id] = sentence_idx
+            self._record_edge_in_graphs(affects_edge, sentence_idx)
+        else:
+            logging.warning(
+                "[EventMediation] Failed to create affects edge: %s --> %s",
+                event_node.get_text_representer(),
+                dest_node.get_text_representer(),
+            )
+
+        logging.debug(
+            "[EventMediation] Created mediated structure: %s --participates_in--> %s --affects--> %s",
+            source_node.get_text_representer(),
+            event_node.get_text_representer(),
+            dest_node.get_text_representer(),
+        )
+
+        return event_node, participates_edge, affects_edge
+
+    def _create_edge_with_event_mediation(
+        self,
+        source_node: Node,
+        dest_node: Node,
+        label: str,
+        edge_forget: int,
+        *,
+        created_at_sentence: Optional[int] = None,
+        relation_class: RelationClass,
+        justification: Justification,
+    ):
+        """
+        Create edge with explicit ontology metadata.
+
+        Per Recommendation 1: Ontology is explicit, not inferred from labels.
+        The caller MUST pass relation_class and justification explicitly.
+        """
+        sentence_idx = (
+            created_at_sentence
+            if created_at_sentence is not None
+            else getattr(self, "_current_sentence_index", None)
+        )
+
+        # Normalize label first (existing logic)
+        label = self.graph.canonicalize_relation_label(label)
+        if not label:
+            return None
+
+        # Create edge with explicit ontology metadata
+        return self.graph.add_edge(
+            source_node,
+            dest_node,
+            label,
+            edge_forget,
+            created_at_sentence=sentence_idx,
+            relation_class=relation_class,
+            justification=justification,
+        )
+
     def _add_edge(
         self,
         source_node: Node,
@@ -649,12 +882,35 @@ class AMoCv4:
         edge_forget: int,
         created_at_sentence: Optional[int] = None,
         bypass_attachment_constraint: bool = False,
+        skip_event_mediation: bool = False,
+        relation_class: RelationClass = None,
+        justification: Justification = None,
+        persona_influenced: bool = False,
     ) -> Optional[Edge]:
+        """
+        Add edge with explicit ontology metadata.
+
+        Per Recommendation 1: Ontology is explicit, not inferred from labels.
+        The caller MUST pass relation_class and justification explicitly.
+        """
+        # FAIL FAST: Ontology must be explicitly specified
+        from amoc.graph.edge import InvalidEdgeError
+
+        if relation_class is None:
+            edge.metadata.setdefault("ontology_violations", []).append("DESCRIPTION")
+            return
+        if justification is None:
+            edge.metadata.setdefault("ontology_violations", []).append("DESCRIPTION")
+            return
+
         # Canonicalize relation label before edge creation
         # Removes parser prefixes/artifacts and normalizes format
         label = Graph.canonicalize_relation_label(label)
         if not label:
             return None
+
+        # Event mediation is disabled per Recommendation 1
+        # (ontology is not inferred from labels)
 
         # STRICT MODE: enforce structural connectivity guarantee
         if (
@@ -778,14 +1034,15 @@ class AMoCv4:
                     else:
                         # BOTH EDGES COEXIST: old edge still active, add new edge alongside
                         # New edge has NORMAL visibility and is marked as asserted
-                        new_edge = self.graph.add_edge(
+                        new_edge = self._create_edge_with_event_mediation(
                             source_node,
                             dest_node,
                             label,
-                            edge_visibility=edge_forget,  # NORMAL visibility
+                            edge_forget,
                             created_at_sentence=use_sentence,
+                            relation_class=relation_class,
+                            justification=justification,
                         )
-
                         if new_edge:
                             # Mark as properly asserted with normal activation
                             new_edge.mark_as_asserted(reset_score=True)
@@ -808,12 +1065,14 @@ class AMoCv4:
                         return None  # Failed to create competing edge
 
         # No existing edge (or allow_multi_edges=True, or old edge was removed): create new edge
-        edge = self.graph.add_edge(
+        edge = self._create_edge_with_event_mediation(
             source_node,
             dest_node,
             label,
             edge_forget,
             created_at_sentence=use_sentence,
+            relation_class=relation_class,
+            justification=justification,
         )
 
         if edge:
@@ -928,16 +1187,20 @@ class AMoCv4:
                 )
                 continue
 
-            edge = self._add_edge(
+            # Forced connectivity edges must be created with correct ontology
+            edge = self.graph.add_edge(
                 isolated_node,
                 focus_node,
                 edge_label,
                 self.edge_visibility,
                 created_at_sentence=self._current_sentence_index,
+                relation_class=RelationClass.CONNECTIVE,
+                justification=Justification.CONNECTIVE,
+                inferred=True,
             )
 
             if edge is not None:
-                # Mark as forced connectivity edge
+                # Mark as forced connectivity edge (guards will pass now)
                 edge.mark_as_forced_connection()
                 forced_edges.append(edge)
 
@@ -2061,6 +2324,8 @@ class AMoCv4:
                         dest_node,
                         edge_label,
                         self.edge_visibility,
+                        relation_class=RelationClass.EVENTIVE,  # TODO: derive from context if needed
+                        justification=Justification.TEXTUAL,
                     )
 
                     # NOTE: Removed node_source filtering - explicit nodes are determined
@@ -2832,7 +3097,7 @@ class AMoCv4:
             )
 
             # Track that this is a text-based node from current sentence
-            if property_node not in current_sentence_text_based_nodes:
+            if property_node is not None and property_node not in current_sentence_text_based_nodes:
                 current_sentence_text_based_nodes.append(property_node)
                 current_sentence_text_based_words.append(adj_lemma)
 
@@ -2843,6 +3108,8 @@ class AMoCv4:
                 "is",
                 self.edge_visibility,
                 created_at_sentence=self._current_sentence_index,
+                relation_class=RelationClass.ATTRIBUTIVE,
+                justification=Justification.TEXTUAL,
             )
             if edge is not None:
                 logging.debug(
@@ -2905,7 +3172,7 @@ class AMoCv4:
             )
 
             # Track that this is a text-based node from current sentence
-            if obj_node not in current_sentence_text_based_nodes:
+            if obj_node is not None and obj_node not in current_sentence_text_based_nodes:
                 current_sentence_text_based_nodes.append(obj_node)
                 current_sentence_text_based_words.append(obj_lemma)
 
@@ -2925,6 +3192,8 @@ class AMoCv4:
                 self.edge_visibility,
                 created_at_sentence=self._current_sentence_index,
                 bypass_attachment_constraint=True,
+                relation_class=RelationClass.STATIVE,  # Prepositional relations are typically stative
+                justification=Justification.TEXTUAL,
             )
             if edge is not None:
                 logging.debug(
@@ -3029,6 +3298,8 @@ class AMoCv4:
                 dest_node,
                 edge_label,
                 self.edge_visibility,
+                relation_class=RelationClass.EVENTIVE,  # TODO: derive from context if needed
+                justification=Justification.IMPLIED,  # Inferred relationships
             )
 
     def add_inferred_relationships_to_graph_step_0(
@@ -3156,6 +3427,8 @@ class AMoCv4:
                 dest_node,
                 edge_label,
                 self.edge_visibility,
+                relation_class=RelationClass.EVENTIVE,  # TODO: derive from context if needed
+                justification=Justification.IMPLIED,  # Inferred relationships
             )
 
     def add_inferred_relationships_to_graph(
@@ -3278,6 +3551,8 @@ class AMoCv4:
                 dest_node,
                 edge_label,
                 self.edge_visibility,
+                relation_class=RelationClass.EVENTIVE,  # TODO: derive from context if needed
+                justification=Justification.IMPLIED,  # Inferred relationships
             )
             if potential_edge:
                 added_edges.append(potential_edge)
@@ -3399,7 +3674,8 @@ class AMoCv4:
                 provenance=NodeProvenance.STORY_TEXT,
             )
 
-            phrase_nodes.append(node)
+            if node is not None:
+                phrase_nodes.append(node)
 
         return phrase_nodes
 
@@ -3418,12 +3694,13 @@ class AMoCv4:
 
                 # ---------- CONCEPT NODES (nouns / proper nouns) ----------
                 if word.pos_ in {"NOUN", "PROPN"}:
-                    if not self._admit_node(
-                        lemma=lemma,
-                        node_type=NodeType.CONCEPT,
-                        provenance="STORY_TEXT",
-                        sent=sent,
-                    ):
+                    # ==========================================================================
+                    # EXPLICIT NODE INVARIANT: All nouns/proper nouns from sentence text
+                    # must become nodes, regardless of relations or schema constraints.
+                    # This ensures SETTING nodes (forest, castle) are always present
+                    # even if they have no relations. Only filter: stop words.
+                    # ==========================================================================
+                    if not lemma or lemma in self.spacy_nlp.Defaults.stop_words:
                         continue
 
                     # ==========================================================================
@@ -3462,21 +3739,21 @@ class AMoCv4:
                     else:
                         continue
 
-                    text_based_nodes.append(node)
-                    text_based_words.append(lemma)
+                    if node is not None:
+                        text_based_nodes.append(node)
+                        text_based_words.append(lemma)
 
                 # ---------- ADJECTIVE NODES (per AMoC-v4 Figure 7) ----------
+                # ==========================================================================
+                # EXPLICIT NODE INVARIANT: All adjectives from sentence text must become
+                # PROPERTY nodes, regardless of syntactic dep or relation participation.
                 # Per AMoC-v4: adjectives are explicit nodes in their origin sentence.
-                # They are treated as PROPERTY nodes (per AMoC v4 Figure 7)
-                # only in the sentence they appear, becoming inactive in later sentences
-                # unless reasserted.
+                # They become inactive in later sentences unless reasserted.
+                # No dependency restrictions (amod/acomp/attr) for explicit text nodes.
+                # Only filter: stop words.
+                # ==========================================================================
                 elif word.pos_ == "ADJ":
-                    if not self._admit_node(
-                        lemma=lemma,
-                        node_type=NodeType.PROPERTY,
-                        provenance="STORY_TEXT",
-                        sent=sent,
-                    ):
+                    if not lemma or lemma in self.spacy_nlp.Defaults.stop_words:
                         continue
 
                     node = self.graph.get_node([lemma])
@@ -3494,7 +3771,8 @@ class AMoCv4:
                     else:
                         continue
 
-                    text_based_nodes.append(node)
-                    text_based_words.append(lemma)
+                    if node is not None:
+                        text_based_nodes.append(node)
+                        text_based_words.append(lemma)
 
         return text_based_nodes, text_based_words

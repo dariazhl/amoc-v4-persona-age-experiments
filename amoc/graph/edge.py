@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 from difflib import SequenceMatcher
+from enum import Enum, auto
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -14,6 +15,41 @@ except Exception:  # pragma: no cover - optional dependency
 
 if TYPE_CHECKING:
     from amoc.graph.node import Node
+
+
+# =============================================================================
+# ONTOLOGY-INVARIANT ENUMS (RECOMMENDATION 1)
+# =============================================================================
+# These enums define structural ontology that is INVARIANT to persona.
+# Persona may affect labels (expression), NOT these ontology classes.
+
+
+class RelationClass(Enum):
+    """Structural classification of relations - invariant to persona."""
+
+    EVENTIVE = auto()  # actions, events
+    STATIVE = auto()  # states, properties
+    ATTRIBUTIVE = auto()  # has / is / describes
+    CONNECTIVE = auto()  # relates to / involves / concerns
+
+
+class Justification(Enum):
+    """How the edge was derived - invariant to persona."""
+
+    TEXTUAL = auto()  # explicit in text
+    IMPLIED = auto()  # strongly implied
+    CONNECTIVE = auto()  # added for connectivity
+
+
+class InvalidEdgeError(Exception):
+    """DEPRECATED: Invariants no longer raise. Kept for backwards compatibility."""
+
+    pass
+
+
+class EventiveRole(Enum):
+    PARTICIPATION = auto()  # concept → event
+    EFFECT = auto()  # event → concept
 
 
 def _maybe_embed(text: str) -> Optional["np.ndarray"]:
@@ -34,24 +70,52 @@ def _maybe_embed(text: str) -> Optional["np.ndarray"]:
 
 
 class Edge:
+    """
+    Edge with ontology-invariant metadata (Recommendation 1).
+
+    CRITICAL RULE:
+    - relation_class is structural ontology - invariant to persona
+    - justification is derivation source - invariant to persona
+    - persona_influenced only affects the label (expression)
+    - Persona must NEVER change relation_class, justification, or inferred
+    """
+
     # Default activation score for new edges
     DEFAULT_ACTIVATION_SCORE: int = 2
 
     def __init__(
         self,
-        source_node: Node,
-        dest_node: Node,
+        source_node: "Node",
+        dest_node: "Node",
         label: str,
         visibility_score: int,
+        *,
+        relation_class: Optional[RelationClass] = None,
+        justification: Optional[Justification] = None,
+        persona_influenced: bool = False,
+        inferred: bool = False,
         active: bool = True,
         created_at_sentence: Optional[int] = None,
         activation_score: Optional[int] = None,
+        eventive_role: Optional[EventiveRole] = None,
     ) -> None:
-        self.source_node: Node = source_node
-        self.dest_node: Node = dest_node
+        self.source_node: "Node" = source_node
+        self.dest_node: "Node" = dest_node
         self.active: bool = active
         self.label: str = label
         self.visibility_score: int = visibility_score
+
+        # ==========================================================================
+        # ONTOLOGY-INVARIANT METADATA (Recommendation 1)
+        # ==========================================================================
+        # These are structural properties that persona CANNOT modify.
+        # relation_class determines structural behavior, NOT the label.
+        self.relation_class: Optional[RelationClass] = relation_class
+        self.justification: Optional[Justification] = justification
+        self.persona_influenced: bool = persona_influenced
+        self.inferred: bool = inferred
+        self.eventive_role: Optional[EventiveRole] = eventive_role
+
         # activation_score: sentence-local activation counter (distinct from visibility_score)
         # Edges are activated when asserted/inferred; decays when inactive
         self.activation_score: int = (
@@ -84,28 +148,36 @@ class Edge:
         self.activation_role: Optional[str] = None
 
         # ==========================================================================
-        # TASK 2: FORCED CONNECTIVITY EDGES
+        # FORCED CONNECTIVITY EDGES
         # ==========================================================================
         # forced_connection: True if this edge was created by secondary LLM call
         # specifically to restore graph connectivity when no existing edges could
         # connect disconnected components.
-        #
-        # KEY DISTINCTION:
-        # - connector edges: EXISTING edges promoted to active for connectivity
-        # - forced_connection edges: NEW edges created by LLM to fix disconnection
-        #
-        # These edges are marked so they can be:
-        # 1. Distinguished in debugging/analysis
-        # 2. Styled differently in plots if needed
-        # 3. Excluded from certain semantic analyses
         self.forced_connection: bool = False
+
+    def set_relation_class(self, new_class: RelationClass) -> None:
+        """
+        DISCOURAGED: relation_class should be immutable after edge creation.
+
+        Per Recommendation 1: Ontology mutation after creation is discouraged.
+        Records violation in metadata instead of raising.
+        """
+        self.metadata.setdefault("ontology_violations", []).append(
+            "REC1: relation_class mutated after creation"
+        )
+        self.relation_class = new_class
+
+    def is_property_edge(self) -> bool:
+        """
+        Check if this edge connects a concept to a property (attribute edge).
+
+        Ontology-invariant: determined by relation_class, not by label.
+        """
+        return self.relation_class == RelationClass.ATTRIBUTIVE
 
     def reduce_visibility(self) -> None:
         """
         AMoC v4 STEP 7: Visibility gating mechanism.
-
-        This mechanism operationalizes the paper's implicit distinction
-        between active and inactive memory; no decay function is claimed.
 
         Behavior:
         - Decrement visibility_score by 1
@@ -148,8 +220,8 @@ class Edge:
             self.activation_score = self.DEFAULT_ACTIVATION_SCORE
 
     def mark_as_reactivated(self, reset_score: bool = True) -> None:
-        # HARD GUARD: PROPERTY edges can NEVER be reactivated
-        if self.is_property_edge():
+        # HARD GUARD: ATTRIBUTIVE edges can NEVER be reactivated
+        if self.relation_class == RelationClass.ATTRIBUTIVE:
             return
         if self.activation_role == "connector":
             return
@@ -161,9 +233,9 @@ class Edge:
             self.activation_score = self.DEFAULT_ACTIVATION_SCORE
 
     def mark_as_connector(self) -> None:
-        # HARD GUARD: PROPERTY edges can NEVER be connectors
-        if self.is_property_edge():
-            return  # Silently refuse - PROPERTY edges don't maintain connectivity
+        # HARD GUARD: ATTRIBUTIVE edges can NEVER be connectors
+        if self.relation_class == RelationClass.ATTRIBUTIVE:
+            return  # Silently refuse - ATTRIBUTIVE edges don't maintain connectivity
         self.active = True
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = False
@@ -188,36 +260,38 @@ class Edge:
 
     def mark_as_forced_connection(self) -> None:
         """
-        TASK 2: Mark edge as a forced connectivity edge.
+        Mark edge as a forced connectivity edge.
 
-        Forced connection edges are NEW edges created by a secondary LLM call
-        specifically to restore graph connectivity when:
-        1. The graph becomes disconnected
-        2. No existing edges in the cumulative graph can connect components
+        Forced connection edges should be CREATED with correct ontology.
+        This method only marks activation state, NOT ontology.
 
-        Unlike connector edges (which promote existing edges), forced connection
-        edges are semantically new and created with minimal semantic commitment.
-
-        Properties:
-        - Created by secondary LLM call for connectivity only
-        - Marked for traceability and debugging
-        - Can be styled differently in visualizations
-        - Should be excluded from certain semantic analyses
+        Records violations in metadata instead of raising/asserting.
         """
+        # Record violations as metadata instead of asserting
+        violations = []
+        if self.relation_class != RelationClass.CONNECTIVE:
+            violations.append(
+                f"Forced connection edge should have relation_class=CONNECTIVE, got {self.relation_class}"
+            )
+        if self.justification != Justification.CONNECTIVE:
+            violations.append(
+                f"Forced connection edge should have justification=CONNECTIVE, got {self.justification}"
+            )
+        if not self.inferred:
+            violations.append("Forced connection edge should be inferred=True at creation")
+
+        if violations:
+            self.metadata.setdefault("ontology_violations", []).extend(violations)
+
         self.forced_connection = True
         self.active = True
-        self.asserted_this_sentence = True  # It IS newly asserted
+        self.asserted_this_sentence = True
         self.reactivated_this_sentence = False
-        self.activation_role = "asserted"  # Semantically it's a new edge
+        self.activation_role = "asserted"
         self.activation_score = self.DEFAULT_ACTIVATION_SCORE
 
     def is_forced_connection(self) -> bool:
-        """
-        TASK 2: Check if this edge was created by secondary LLM call for connectivity.
-
-        Returns True if this edge was force-created to connect disconnected
-        components, rather than being inferred from semantic content.
-        """
+        """Check if this edge was created by secondary LLM call for connectivity."""
         return self.forced_connection
 
     def is_asserted(self) -> bool:
@@ -227,23 +301,6 @@ class Edge:
     def is_reactivated(self) -> bool:
         """Check if this edge was reactivated this sentence."""
         return self.reactivated_this_sentence
-
-    def is_property_edge(self) -> bool:
-        """
-        Check if this edge connects a concept to a property (attribute edge).
-        Attribute edges should only attach in their origin sentence.
-        """
-        from amoc.graph.node import NodeType
-
-        src_type = self.source_node.node_type
-        dst_type = self.dest_node.node_type
-
-        if self.label != "is":
-            return False
-
-        return (src_type == NodeType.CONCEPT and dst_type == NodeType.PROPERTY) or (
-            src_type == NodeType.PROPERTY and dst_type == NodeType.CONCEPT
-        )
 
     def is_similar(self, other_edge: "Edge") -> bool:
         """
@@ -337,10 +394,121 @@ class Edge:
                 status = "active"
         else:
             status = "inactive"
-        return f"{self.source_node.get_text_representer()} --{self.label} ({status}, act={self.activation_score})--> {self.dest_node.get_text_representer()} (vis={self.visibility_score})"
+        rel_class = self.relation_class.name if self.relation_class else "NONE"
+        return f"{self.source_node.get_text_representer()} --{self.label} ({status}, {rel_class}, act={self.activation_score})--> {self.dest_node.get_text_representer()} (vis={self.visibility_score})"
 
     def __repr__(self) -> str:
         return self.__str__()
 
     def violates_property_sentence_constraint(self, current_sentence: int) -> bool:
         return False
+
+
+# =============================================================================
+# CENTRALIZED ONTOLOGY DIAGNOSTICS (Recommendation 1 + 2)
+# =============================================================================
+# This is the ONLY place where ontology rules are checked.
+# This function is persona-blind and must NOT inspect the relation label.
+# CRITICAL: This function NEVER raises or blocks - it only records violations.
+
+
+def enforce_ontology_invariants(edge: Edge) -> None:
+    """
+    Check ontology invariants on an edge and record violations as metadata.
+
+    This function:
+    - Is persona-blind
+    - Must be called immediately after every edge creation
+    - Is the ONLY place where ontology rules are checked
+    - Must NOT inspect the relation label
+    - Must NOT mutate ontology fields - only validate and record
+    - NEVER raises exceptions or blocks execution
+
+    Violations are recorded in edge.metadata["ontology_violations"].
+    """
+    from amoc.graph.node import NodeType
+
+    violations = []
+
+    # INVARIANT 1: relation_class must be explicitly set (no implicit derivation)
+    if edge.relation_class is None:
+        violations.append("REC1: missing relation_class")
+
+    # INVARIANT 2: justification must be explicitly set
+    if edge.justification is None:
+        violations.append("REC1: missing justification")
+
+    # INVARIANT 3: ATTRIBUTIVE relations target PROPERTY nodes only
+    if edge.relation_class == RelationClass.ATTRIBUTIVE:
+        if edge.dest_node.node_type != NodeType.PROPERTY:
+            violations.append(
+                f"REC1: ATTRIBUTIVE relation must target PROPERTY node, got {edge.dest_node.node_type}"
+            )
+
+    # INVARIANT 4: CONNECTIVE edges must be inferred at creation time
+    if edge.relation_class == RelationClass.CONNECTIVE and not edge.inferred:
+        violations.append("REC1: CONNECTIVE edges must be inferred at creation time")
+
+    # ==========================================================================
+    # RECOMMENDATION 2: EVENT MEDIATION INVARIANTS
+    # ==========================================================================
+
+    # INVARIANT 5: EVENTIVE relations must be mediated by an EVENT node
+    if edge.relation_class == RelationClass.EVENTIVE:
+        if (
+            edge.source_node.node_type != NodeType.EVENT
+            and edge.dest_node.node_type != NodeType.EVENT
+        ):
+            violations.append(
+                f"REC2: EVENTIVE edge not mediated by EVENT node "
+                f"({edge.source_node.node_type} -> {edge.dest_node.node_type})"
+            )
+
+    # INVARIANT 5b: EVENTIVE relations should declare their eventive role
+    if edge.relation_class == RelationClass.EVENTIVE:
+        if getattr(edge, "eventive_role", None) is None:
+            violations.append("REC2: EVENTIVE edge missing eventive_role")
+
+    # INVARIANT 6: EVENT nodes may only connect via EVENTIVE or CONNECTIVE relations
+    is_event_involved = (
+        edge.source_node.node_type == NodeType.EVENT
+        or edge.dest_node.node_type == NodeType.EVENT
+    )
+    if is_event_involved:
+        if edge.relation_class not in {
+            RelationClass.EVENTIVE,
+            RelationClass.CONNECTIVE,
+        }:
+            violations.append(
+                f"REC2: EVENT node has invalid relation_class {edge.relation_class}"
+            )
+
+    # Record violations as metadata (NEVER raise)
+    if violations:
+        edge.metadata.setdefault("ontology_violations", []).extend(violations)
+
+
+def assert_persona_did_not_modify_ontology(edge: Edge) -> None:
+    """
+    Check that persona did not modify structural ontology.
+
+    Per Recommendation 1: Persona may affect expression (labels),
+    NOT ontology (relation_class, justification).
+
+    Records violations in metadata instead of asserting.
+    NEVER raises or blocks execution.
+    """
+    if edge.persona_influenced and getattr(edge, "_relation_class_changed", False):
+        edge.metadata.setdefault("ontology_violations", []).append(
+            "REC1: Persona modified ontology (relation_class changed)"
+        )
+
+
+def collect_edge_violations(edge: Edge) -> list[str]:
+    """
+    Collect all ontology violations recorded on an edge.
+
+    Returns:
+        List of violation strings, empty if no violations.
+    """
+    return edge.metadata.get("ontology_violations", [])
