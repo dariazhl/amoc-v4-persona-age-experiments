@@ -21,6 +21,32 @@ class Graph:
     # These labels create high-degree hub clusters and must be throttled.
     LOW_INFO_LABELS: set[str] = {"has", "relates_to", "is", "involves", "concerns"}
 
+    # ==========================================================================
+    # FORBIDDEN NODE LEMMAS (Phase 1 - Hard Block Persona & Meta Nodes)
+    # ==========================================================================
+    # Meta-ontological nouns and persona-derived terms that must NEVER become nodes.
+    # These are silently rejected at node admission time.
+    FORBIDDEN_NODE_LEMMAS: set[str] = {
+        # Persona-derived terms
+        "student",
+        "persona",
+        # Meta-ontological nouns (from LLM explanations/summaries)
+        "relation",
+        "context",
+        "object",
+        "place",
+        "story",
+        "narrative",
+        "sentence",
+        # Technical graph terms (legacy, kept for compatibility)
+        "edge",
+        "node",
+        "property",
+        "label",
+        "target",
+        "source",
+    }
+
     def __init__(self) -> None:
         self.nodes: Set[Node] = set()
         self.edges: Set[Edge] = set()
@@ -77,6 +103,7 @@ class Graph:
         origin_sentence: Optional[int] = None,
         provenance: Optional[NodeProvenance] = None,
         node_role: Optional[NodeRole] = None,
+        mark_explicit: bool = True,
     ):
         """
         Add a new node or get existing node with matching lemmas.
@@ -89,6 +116,11 @@ class Graph:
         - node_role: Semantic role (ACTOR, OBJECT, PROPERTY, SETTING)
         - SETTING nodes are locations/environments from prepositional phrases
 
+        PHASE 2 - SENTENCE-SCOPED NODE PROVENANCE:
+        - mark_explicit: If True, marks the node as explicit in origin_sentence
+        - Only set mark_explicit=True if the node appears in the sentence's dependency parse
+        - Carry-over nodes should use mark_explicit=False
+
         CRITICAL: Nodes must only come from story text, never from persona.
         Persona influences salience/weights only, never graph content.
         """
@@ -99,8 +131,14 @@ class Graph:
         # Only apply isalpha check to CONCEPT and PROPERTY nodes
         if node_type != NodeType.EVENT and not lemmas[0].isalpha():
             return None
-        FORBIDDEN = {"edge", "node", "property", "label", "target", "source"}
-        if any(l in FORBIDDEN for l in lemmas):
+
+        # ==========================================================================
+        # PHASE 1: FORBIDDEN LEMMA BLOCKLIST (Hard Block Persona & Meta Nodes)
+        # ==========================================================================
+        # Silently reject meta-ontological nouns and persona-derived terms.
+        # This check MUST occur before any node is added to the graph.
+        if any(lemma in self.FORBIDDEN_NODE_LEMMAS for lemma in lemmas):
+            logging.debug(f"FORBIDDEN LEMMA: Blocked meta/persona node '{lemmas[0]}'")
             return None
 
         # ==========================================================================
@@ -112,7 +150,9 @@ class Graph:
 
         # GATE 1: Block lemmas that appear ONLY in persona (hard reject)
         if self._persona_only_lemmas and primary_lemma in self._persona_only_lemmas:
-            logging.debug(f"PROVENANCE GATE: Blocked persona-only lemma '{primary_lemma}'")
+            logging.debug(
+                f"PROVENANCE GATE: Blocked persona-only lemma '{primary_lemma}'"
+            )
             return None
 
         # GATE 2: For new nodes, require story grounding (unless INFERRED_FROM_STORY)
@@ -156,6 +196,18 @@ class Graph:
             # Update role if node exists but had no role and we're providing one
             if node.node_role is None and node_role is not None:
                 node.node_role = node_role
+
+            # ==========================================================================
+            # PHASE 2: Mark existing node as explicit in current sentence
+            # ==========================================================================
+            # Only mark as explicit if:
+            # 1. mark_explicit is True (node appears in sentence's dependency parse)
+            # 2. origin_sentence is provided (we know which sentence we're in)
+            #
+            # INVARIANT: Carry-over nodes remain carry-over unless re-mentioned.
+            if mark_explicit and origin_sentence is not None:
+                node.mark_explicit_in_sentence(origin_sentence)
+
         return node
 
     def get_node(self, lemmas: List[str]) -> Optional[Node]:
@@ -234,7 +286,9 @@ class Graph:
                 self._edge_budget[sentence_idx][source_key] = {}
 
             # Check budget
-            current_count = self._edge_budget[sentence_idx][source_key].get(label_lower, 0)
+            current_count = self._edge_budget[sentence_idx][source_key].get(
+                label_lower, 0
+            )
             if current_count >= 1:
                 logging.debug(
                     f"EDGE BUDGET: Throttled '{label_lower}' edge from "
@@ -301,7 +355,9 @@ class Graph:
 
         # Record property violation if detected (non-blocking)
         if property_violation:
-            edge.metadata.setdefault("ontology_violations", []).append(property_violation)
+            edge.metadata.setdefault("ontology_violations", []).append(
+                property_violation
+            )
 
         if self.check_if_similar_edge_exists(edge, edge_visibility):
             return None
@@ -1360,3 +1416,168 @@ class Graph:
                     f"{edge.dest_node.get_text_representer()}: {v}"
                 )
         return violations
+
+    # ==========================================================================
+    # PHASE 3: STRUCTURAL DE-COAGULATION (Edge Filtering for Plotting)
+    # ==========================================================================
+    # Not all edges deserve to be plotted. Filter out:
+    # - CONNECTIVE edges (structural, not semantic)
+    # - INFERRED edges (not explicit in text)
+    # - PERSONA_INFLUENCED edges (persona-driven, not story-core)
+    MAX_EDGES_PER_NODE: int = 3  # Soft cap on edges per node for visualization
+
+    def get_edges_for_plotting(
+        self,
+        *,
+        exclude_connective: bool = True,
+        exclude_inferred: bool = True,
+        exclude_persona_influenced: bool = True,
+        active_only: bool = True,
+    ) -> List[Edge]:
+        """
+        Get edges filtered for plotting (Phase 3 - De-Coagulation).
+
+        This method filters edges to prevent visual clutter. It does NOT
+        modify the graph structure - only returns a filtered view.
+
+        Args:
+            exclude_connective: Exclude CONNECTIVE relation_class edges
+            exclude_inferred: Exclude inferred edges (edge.inferred=True)
+            exclude_persona_influenced: Exclude persona-influenced edges
+            active_only: Only include active edges
+
+        Returns:
+            List of edges suitable for plotting.
+            Graph structure is UNCHANGED.
+        """
+        plot_edges = []
+        for edge in self.edges:
+            # Filter by active status
+            if active_only and not edge.active:
+                continue
+
+            # PHASE 3: Exclude CONNECTIVE edges (structural, not semantic)
+            if exclude_connective and edge.relation_class == RelationClass.CONNECTIVE:
+                continue
+
+            # PHASE 3: Exclude INFERRED edges (not explicit in text)
+            if exclude_inferred and edge.inferred:
+                continue
+
+            # PHASE 3: Exclude PERSONA_INFLUENCED edges (persona-driven)
+            if exclude_persona_influenced and edge.persona_influenced:
+                continue
+
+            plot_edges.append(edge)
+
+        return plot_edges
+
+    def get_edges_with_degree_cap(
+        self,
+        edges: List[Edge],
+        max_edges_per_node: Optional[int] = None,
+    ) -> List[Edge]:
+        """
+        Apply degree cap per node for visualization (Phase 3 - De-Coagulation).
+
+        When a node has too many edges, keep only the most important ones:
+        1. Prefer EVENTIVE over ATTRIBUTIVE
+        2. Prefer TEXTUAL justification over IMPLIED
+
+        This is a VISUALIZATION filter only - graph structure is UNCHANGED.
+
+        Args:
+            edges: List of edges to filter
+            max_edges_per_node: Maximum edges per node (default: MAX_EDGES_PER_NODE)
+
+        Returns:
+            Filtered list of edges respecting degree cap.
+        """
+        if max_edges_per_node is None:
+            max_edges_per_node = self.MAX_EDGES_PER_NODE
+
+        # Count edges per node
+        node_edge_count: Dict[Node, List[Edge]] = {}
+        for edge in edges:
+            if edge.source_node not in node_edge_count:
+                node_edge_count[edge.source_node] = []
+            if edge.dest_node not in node_edge_count:
+                node_edge_count[edge.dest_node] = []
+            node_edge_count[edge.source_node].append(edge)
+            node_edge_count[edge.dest_node].append(edge)
+
+        # Sort edges by priority for each node
+        def edge_priority(edge: Edge) -> Tuple[int, int]:
+            """Higher priority = lower number (sorted first)."""
+            # Priority 1: EVENTIVE > STATIVE > ATTRIBUTIVE
+            relation_priority = {
+                RelationClass.EVENTIVE: 0,
+                RelationClass.STATIVE: 1,
+                RelationClass.ATTRIBUTIVE: 2,
+                RelationClass.CONNECTIVE: 3,
+            }
+            rel_score = relation_priority.get(edge.relation_class, 2)
+
+            # Priority 2: TEXTUAL > IMPLIED > CONNECTIVE
+            justification_priority = {
+                Justification.TEXTUAL: 0,
+                Justification.IMPLIED: 1,
+                Justification.CONNECTIVE: 2,
+            }
+            just_score = justification_priority.get(edge.justification, 1)
+
+            return (rel_score, just_score)
+
+        # Keep track of which edges to include
+        edges_to_keep: Set[Edge] = set()
+
+        for node, node_edges in node_edge_count.items():
+            if len(node_edges) <= max_edges_per_node:
+                # Under cap - keep all
+                edges_to_keep.update(node_edges)
+            else:
+                # Over cap - keep best ones
+                sorted_edges = sorted(node_edges, key=edge_priority)
+                edges_to_keep.update(sorted_edges[:max_edges_per_node])
+
+        return [e for e in edges if e in edges_to_keep]
+
+    def get_plot_ready_edges(
+        self,
+        *,
+        active_only: bool = True,
+        apply_degree_cap: bool = True,
+        max_edges_per_node: Optional[int] = None,
+    ) -> List[Edge]:
+        """
+        Get edges ready for plotting with all Phase 3 filters applied.
+
+        Convenience method combining:
+        1. get_edges_for_plotting() - excludes CONNECTIVE, INFERRED, PERSONA_INFLUENCED
+        2. get_edges_with_degree_cap() - applies soft degree cap
+
+        Args:
+            active_only: Only include active edges
+            apply_degree_cap: Whether to apply degree cap
+            max_edges_per_node: Maximum edges per node
+
+        Returns:
+            List of edges ready for plotting.
+            Graph structure is UNCHANGED.
+        """
+        # Step 1: Filter out non-semantic edges
+        filtered = self.get_edges_for_plotting(
+            exclude_connective=True,
+            exclude_inferred=True,
+            exclude_persona_influenced=True,
+            active_only=active_only,
+        )
+
+        # Step 2: Apply degree cap if requested
+        if apply_degree_cap:
+            filtered = self.get_edges_with_degree_cap(
+                filtered,
+                max_edges_per_node=max_edges_per_node,
+            )
+
+        return filtered

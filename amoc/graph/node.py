@@ -5,7 +5,7 @@ if TYPE_CHECKING:
     from amoc.graph.node import Node
 
 from enum import Enum
-from typing import List, Dict
+from typing import List, Dict, Set
 
 
 class NodeType(Enum):
@@ -80,6 +80,20 @@ class Node:
         self.origin_sentence: Optional[int] = origin_sentence
         self.provenance: NodeProvenance = provenance or NodeProvenance.STORY_TEXT
 
+        # ==========================================================================
+        # PHASE 2: SENTENCE-SCOPED NODE PROVENANCE
+        # ==========================================================================
+        # first_seen_sentence: Same as origin_sentence (kept for compatibility)
+        # explicit_sentences: Set of sentences where this node appears in dependency parse
+        #
+        # INVARIANT: A node is explicit in sentence S ONLY if it appears in S's parse.
+        # Carry-over nodes remain carry-over unless explicitly re-mentioned.
+        # Visualization color is driven ONLY by explicit_sentences.
+        self.first_seen_sentence: Optional[int] = origin_sentence
+        self.explicit_sentences: Set[int] = (
+            {origin_sentence} if origin_sentence is not None else set()
+        )
+
         # NODE ROLE: Lightweight semantic role (ACTOR, OBJECT, PROPERTY, SETTING)
         # SETTING nodes exist for scene context only - they don't affect lifecycle logic
         self.node_role: Optional[NodeRole] = node_role
@@ -111,6 +125,32 @@ class Node:
         - Trigger inferred edges by themselves
         """
         return self.node_role == NodeRole.SETTING
+
+    def mark_explicit_in_sentence(self, sentence_id: int) -> None:
+        """
+        Mark this node as explicit in the given sentence.
+
+        PHASE 2: Only call this if the node appears in the sentence's dependency parse.
+        Do NOT infer explicitness from memory, edges, or prior sentences.
+        """
+        self.explicit_sentences.add(sentence_id)
+
+    def is_explicit_in_sentence(self, sentence_id: int) -> bool:
+        """
+        Check if this node is explicit (not carry-over) in the given sentence.
+
+        PHASE 2: Color assignment must use ONLY this method.
+        Degree, recency, connectivity, persona must NOT affect this.
+        """
+        return sentence_id in self.explicit_sentences
+
+    def is_carryover_in_sentence(self, sentence_id: int) -> bool:
+        """
+        Check if this node is carry-over (not explicit) in the given sentence.
+
+        A node is carry-over if it exists but was not mentioned in this sentence's parse.
+        """
+        return sentence_id not in self.explicit_sentences
 
     def get_text_representer(self) -> str:
         """

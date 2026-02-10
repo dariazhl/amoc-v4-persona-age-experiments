@@ -906,10 +906,16 @@ def plot_amoc_triplets(
     explicit_node_set = set(explicit_nodes) if explicit_nodes else set()
     salient_node_set = set(salient_nodes) if salient_nodes else set()
 
-    # Node colors: prioritize explicit/salient > inactive > default
-    # Explicit/Salient (blue_nodes): bright blue #a0cbe2
-    # Active (not in blue_nodes): bright yellow #ffe8a0
-    # Inactive: faded gray #d0d0d0
+    # ==========================================================================
+    # PHASE 2: COLOR ASSIGNMENT DRIVEN BY EXPLICIT_SENTENCES
+    # ==========================================================================
+    # Node colors are driven ONLY by explicit_nodes (sentence-scoped provenance):
+    # - EXPLICIT this sentence (in explicit_node_set): bright blue #a0cbe2
+    # - CARRY-OVER (active but not explicit): bright yellow #ffe8a0
+    # - INACTIVE: faded gray #d0d0d0
+    #
+    # INVARIANT: Degree, recency, connectivity, persona must NOT affect color.
+    # Only explicit_sentences drives the explicit/carry-over distinction.
     node_colors = []
     node_alphas = []
     for node in G.nodes():
@@ -917,12 +923,14 @@ def plot_amoc_triplets(
             # Inactive nodes: gray and faded
             node_colors.append("#d0d0d0")
             node_alphas.append(0.5)
-        elif node in blue_nodes:
-            # Explicit/salient nodes: bright blue
+        elif node in explicit_node_set:
+            # PHASE 2: Explicit this sentence → bright blue
+            # This node appears in the current sentence's dependency parse
             node_colors.append("#a0cbe2")
             node_alphas.append(1.0)
         else:
-            # Other active nodes: bright yellow
+            # PHASE 2: Carry-over from previous sentences → bright yellow
+            # This node is active but NOT in explicit_node_set
             node_colors.append("#ffe8a0")
             node_alphas.append(1.0)
 
@@ -1318,9 +1326,10 @@ def plot_amoc_triplets(
         )
 
     # Draw active nodes on top with full opacity
+    # PHASE 2: Use explicit_node_set for color (not blue_nodes)
     if active_in_graph:
         active_colors = [
-            "#a0cbe2" if node in blue_nodes else "#ffe8a0" for node in active_in_graph
+            "#a0cbe2" if node in explicit_node_set else "#ffe8a0" for node in active_in_graph
         ]
         nx.draw_networkx_nodes(
             G,
