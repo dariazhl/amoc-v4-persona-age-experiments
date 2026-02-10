@@ -3132,6 +3132,10 @@ class AMoCv4:
                     provenance=NodeProvenance.INFERRED_FROM_STORY,
                 )
 
+            # Guard: add_or_get_node can return None if node is rejected
+            if source_node is None or dest_node is None:
+                continue
+
             # DIRECTION CANONICALIZATION: Normalize passive voice to active
             canon_label, canon_src, canon_dst, was_swapped = (
                 self._canonicalize_edge_direction(
@@ -3249,6 +3253,10 @@ class AMoCv4:
                     NodeSource.INFERENCE_BASED,
                     provenance=NodeProvenance.INFERRED_FROM_STORY,
                 )
+
+            # Guard: add_or_get_node can return None if node is rejected
+            if source_node is None or dest_node is None:
+                continue
 
             # DIRECTION CANONICALIZATION: Normalize passive voice to active
             canon_label, canon_src, canon_dst, was_swapped = (
