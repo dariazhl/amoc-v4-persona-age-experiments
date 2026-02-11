@@ -845,6 +845,16 @@ class AMoCv4:
 
         if edge:
             enforce_ontology_invariants(edge)
+
+            # Slightly boost inferred edges to match paper persistence
+            if justification == Justification.IMPLIED:
+                edge.visibility_score = max(
+                    edge.visibility_score, self.edge_visibility + 1
+                )
+
+            if use_sentence == self._current_sentence_index:
+                edge.mark_as_asserted(reset_score=True)
+
             # Mark edge as ASSERTED this sentence (per AMoC v4 paper semantics)
             # Only assert if edge is created in current sentence (prevents old edges from reactivating)
             if use_sentence == self._current_sentence_index:
@@ -1046,9 +1056,16 @@ class AMoCv4:
 
     # STEP 5 from paper - HARD RESET: Only explicit nodes from current sentence are active
     def _restrict_active_to_current_explicit(self, explicit_nodes: List[Node]) -> None:
-        # Start with explicit nodes from sentence text
+        """
+        Paper-aligned restriction:
+        - Explicit nodes are distance 0
+        - Nodes within activation radius get distance scores
+        - Nodes outside radius remain in memory but are NOT force-deactivated
+        """
+
         seed_nodes = set(explicit_nodes)
 
+        # Include property nodes attached to explicit nodes
         for edge in self.graph.edges:
             if (
                 edge.is_property_edge()
@@ -1057,9 +1074,19 @@ class AMoCv4:
             ):
                 seed_nodes.add(edge.dest_node)
 
-        # The BFS function will compute distances from these seed nodes
-        # Nodes unreachable or beyond max_distance get score=100 (inactive)
-        self.graph.set_nodes_score_based_on_distance_from_active_nodes(list(seed_nodes))
+        # Compute distances WITHOUT destroying memory
+        distances = self._distances_from_sources_active_edges(
+            seed_nodes,
+            self.max_distance_from_active_nodes,
+        )
+
+        for node in self.graph.nodes:
+            if node in distances:
+                node.score = distances[node]
+            else:
+                # Instead of killing it (score=100),
+                # keep previous score so memory fades naturally
+                node.score = min(node.score + 1, 100)
 
     def _get_nodes_with_active_edges(self) -> set[Node]:
         active_nodes: set[Node] = set()
@@ -1669,7 +1696,8 @@ class AMoCv4:
                 )
             else:
                 logging.info(
-                    "[Plot] Sentence %d graph skipped (no active edges)", sentence_index
+                    "[Plot] Sentence %d graph skipped (no active edges)",
+                    sentence_index + 1,
                 )
         except Exception:
             logging.error("Failed to plot graph snapshot", exc_info=True)
@@ -1790,10 +1818,6 @@ class AMoCv4:
             self.active_graph = nx.MultiDiGraph()
             self._current_sentence_index = i + 1
             self.graph.set_current_sentence(self._current_sentence_index)
-            # STRICT RESET: All edges inactive at sentence start (paper-aligned)
-            # DO NOT reset visibility, remove edges, or reset activation score
-            for edge in self.graph.edges:
-                edge.reset_for_sentence_start()
             self._current_sentence_text = original_text
             self._anchor_drop_log: list[tuple[int, str, str, str, str]] = (
                 []
@@ -1814,11 +1838,6 @@ class AMoCv4:
                     current_sentence_text_based_words,
                 ) = self.get_senteces_text_based_nodes(
                     [sent], create_unexistent_nodes=True
-                )
-
-                # Explicit nodes = current sentence only (nouns + adjectives)
-                self._explicit_nodes_current_sentence = set(
-                    current_sentence_text_based_nodes
                 )
 
                 # ==========================================================================
@@ -1880,27 +1899,6 @@ class AMoCv4:
                     )
                 )
 
-                # ==========================================================================
-                # AMoC-v4 FIGURE 7 COMPLIANCE: PROPERTY nodes are explicit in origin sentence
-                # ==========================================================================
-                # CRITICAL FIX: Set explicit nodes BEFORE deterministic extraction
-                # so that _add_edge() attachment check can find current sentence nodes.
-                #
-                # Per AMoC-v4 Figure 7: Both CONCEPT and PROPERTY nodes from the current
-                # sentence are explicit. Adjectives like "young", "beautiful", "scorched"
-                # must appear as explicit PROPERTY nodes in their origin sentence.
-                # ==========================================================================
-                # Explicit nodes = current sentence only (nouns + adjectives)
-                self._explicit_nodes_current_sentence = set(
-                    current_sentence_text_based_nodes
-                )
-
-                # ==========================================================================
-                # PAPER-FAITHFUL EXTRACTION: Deterministic linguistic grounding
-                # Per AMoC paper Figures 4-6: Extract adjectives and prepositional objects
-                # BEFORE LLM enrichment. Must be called AFTER _explicit_nodes_current_sentence
-                # is set, so _add_edge() attachment check works.
-                # ==========================================================================
                 self._extract_deterministic_structure(
                     current_sentence,
                     current_sentence_text_based_nodes,
@@ -2190,16 +2188,13 @@ class AMoCv4:
                         )
                         added_edges.extend(forced_edges)
 
-                # VISIBILITY DECAY: reduce visibility for inactive edges
-                self.graph.decay_inactive_edges()
-                logging.debug("[Activation] Decayed visibility for inactive edges")
                 # Restrict active nodes only if there is at least one active edge
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
                 )
-                # self.graph.set_nodes_score_based_on_distance_from_active_nodes(
-                #     current_sentence_text_based_nodes
-                # )
+                # VISIBILITY DECAY: reduce visibility for inactive edges
+                self.graph.decay_inactive_edges()
+                logging.debug("[Activation] Decayed visibility for inactive edges")
 
             if self.debug:
                 logging.info(
@@ -2208,12 +2203,6 @@ class AMoCv4:
                     self.graph.get_active_graph_repr(),
                 )
 
-            if self._explicit_nodes_current_sentence:
-                self._explicit_nodes_current_sentence = {
-                    n
-                    for n in self._explicit_nodes_current_sentence
-                    if n in self.graph.nodes
-                }
             if self._anchor_nodes:
                 self._anchor_nodes = {
                     n for n in self._anchor_nodes if n in self.graph.nodes
@@ -2232,8 +2221,13 @@ class AMoCv4:
             # - Inactive nodes are completely excluded
             # - Only edges where BOTH endpoints are active are included
             # - The graph is guaranteed connected (or empty)
+            # Recompute explicit nodes strictly from node.explicit_sentences
+            explicit_nodes_strict = [
+                n for n in self.graph.nodes if n.is_explicit_in_sentence(sentence_id)
+            ]
+
             per_sentence_view = self._build_per_sentence_view(
-                explicit_nodes=list(self._explicit_nodes_current_sentence),
+                explicit_nodes=explicit_nodes_strict,
                 sentence_index=sentence_id,
             )
 
@@ -2702,7 +2696,7 @@ class AMoCv4:
                 # PROPERTY edges should NOT be reactivated per paper rules
                 if edge.is_property_edge():
                     continue
-                edge.mark_as_reactivated(reset_score=True)
+                edge.mark_as_reactivated(reset_score=False)
                 edge.visibility_score = self.edge_visibility
                 if edge.is_asserted() or edge.is_reactivated() or edge.is_connector():
                     self._record_edge_in_graphs(edge, self._current_sentence_index)
@@ -2778,7 +2772,7 @@ class AMoCv4:
             if idx in selected or edge in newly_added_edges:
                 if edge.is_property_edge():
                     continue  # PROPERTY edges never reactivate
-                edge.mark_as_reactivated(reset_score=True)
+                edge.mark_as_reactivated(reset_score=False)
                 edge.visibility_score = self.edge_visibility
                 self._record_edge_in_graphs(edge, self._current_sentence_index)
 
@@ -3016,6 +3010,39 @@ class AMoCv4:
                     f"{subj_lemma} --{edge_label}--> {obj_lemma}"
                 )
 
+        sentence_edges = [
+            edge
+            for edge in self.graph.edges
+            if edge.created_at_sentence == self._current_sentence_index
+        ]
+
+        if not any(edge.active for edge in sentence_edges):
+            for tok in sent:
+                if tok.pos_ == "VERB":
+                    subj = next(
+                        (c for c in tok.children if c.dep_ in {"nsubj", "nsubjpass"}),
+                        None,
+                    )
+                    obj = next(
+                        (c for c in tok.children if c.dep_ in {"dobj", "attr", "oprd"}),
+                        None,
+                    )
+
+                    if subj and obj:
+                        subj_node = self.graph.get_node([subj.lemma_.lower()])
+                        obj_node = self.graph.get_node([obj.lemma_.lower()])
+
+                        if subj_node and obj_node:
+                            self._add_edge(
+                                subj_node,
+                                obj_node,
+                                tok.lemma_.lower(),
+                                self.edge_visibility,
+                                relation_class=RelationClass.EVENTIVE,
+                                justification=Justification.TEXTUAL,
+                            )
+                            break
+
     def init_graph(self, sent: Span) -> None:
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
             self.get_senteces_text_based_nodes([sent], create_unexistent_nodes=True)
@@ -3137,12 +3164,17 @@ class AMoCv4:
             norm_obj = self._normalize_endpoint_text(relationship[2], is_subject=False)
             if norm_subj is None or norm_obj is None:
                 continue
-            # RELAXED: Allow semantic inferences where at least one endpoint is grounded
-            # (literally in story text OR exists in graph from prior inference)
-            # This enables abstract concepts like "danger", "threat", "goal" per paper Figures 2-4
+            # RELAXED grounding: allow abstract inference if at least
+            # one endpoint appears in story OR is already in graph
             if not (
                 self._appears_in_story(relationship[0], check_graph=True)
                 or self._appears_in_story(relationship[2], check_graph=True)
+                or self.graph.get_node(
+                    get_concept_lemmas(self.spacy_nlp, relationship[0])
+                )
+                or self.graph.get_node(
+                    get_concept_lemmas(self.spacy_nlp, relationship[2])
+                )
             ):
                 continue
             if not self._passes_attachment_constraint(
@@ -3266,12 +3298,17 @@ class AMoCv4:
             norm_obj = self._normalize_endpoint_text(relationship[2], is_subject=False)
             if norm_subj is None or norm_obj is None:
                 continue
-            # RELAXED: Allow semantic inferences where at least one endpoint is grounded
-            # (literally in story text OR exists in graph from prior inference)
-            # This enables abstract concepts like "danger", "threat", "goal" per paper Figures 2-4
+            # RELAXED grounding: allow abstract inference if at least
+            # one endpoint appears in story OR is already in graph
             if not (
                 self._appears_in_story(relationship[0], check_graph=True)
                 or self._appears_in_story(relationship[2], check_graph=True)
+                or self.graph.get_node(
+                    get_concept_lemmas(self.spacy_nlp, relationship[0])
+                )
+                or self.graph.get_node(
+                    get_concept_lemmas(self.spacy_nlp, relationship[2])
+                )
             ):
                 continue
             if not self._passes_attachment_constraint(

@@ -523,7 +523,7 @@ class Graph:
             edge.reset_for_sentence_start()
 
     # Maximum number of edges to reactivate per sentence (sparse reactivation)
-    MAX_REACTIVATION_COUNT: int = 3
+    MAX_REACTIVATION_COUNT: int = 6
 
     def reactivate_memory_edges_within_distance(
         self,
@@ -540,9 +540,19 @@ class Graph:
         # PROPERTY nodes have no independent activation and don't propagate
         # SETTING nodes (locations/environments) are low-priority context nodes
         # that should NOT trigger reactivation of other edges
+        # Use nodes connected by visible edges, not active edges
+        memory_nodes = {e.source_node for e in self.edges} | {
+            e.dest_node for e in self.edges
+        }
+
+        # NEW: allow inferred nodes to propagate activation
+        inferred_nodes = {
+            n for n in self.nodes if n.node_source == NodeSource.INFERENCE_BASED
+        }
+
         concept_seeds = {
             n
-            for n in (explicit_nodes | set(self.get_active_nodes(max_distance)))
+            for n in (explicit_nodes | memory_nodes | inferred_nodes)
             if n.node_type != NodeType.PROPERTY and not n.is_setting()
         }
 
@@ -599,9 +609,22 @@ class Graph:
         candidate_edges.sort(key=lambda x: x[0])
         reactivated: Set[Edge] = set()
 
-        for dist, edge in candidate_edges[: self.MAX_REACTIVATION_COUNT]:
-            edge.mark_as_reactivated(reset_score=True)
-            reactivated.add(edge)
+        if not candidate_edges:
+            # fallback: reactivate most recently created edge in memory
+            memory_edges = sorted(
+                self.edges,
+                key=lambda e: e.created_at_sentence or 0,
+                reverse=True,
+            )
+            for edge in memory_edges:
+                if edge.relation_class != RelationClass.ATTRIBUTIVE:
+                    edge.mark_as_reactivated(reset_score=True)
+                    reactivated.add(edge)
+                    break
+        else:
+            for dist, edge in candidate_edges[: self.MAX_REACTIVATION_COUNT]:
+                edge.mark_as_reactivated(reset_score=True)
+                reactivated.add(edge)
 
         return reactivated
 
@@ -609,10 +632,6 @@ class Graph:
         for edge in list(self.edges):
             if not edge.active:
                 edge.reduce_visibility()
-
-        edges_to_remove = {e for e in self.edges if e.visibility_score <= 0}
-        for edge in edges_to_remove:
-            self.remove_edge(edge)
 
     def get_active_subgraph(
         self,
@@ -838,24 +857,19 @@ class Graph:
     def set_nodes_score_based_on_distance_from_active_nodes(
         self, activated_nodes: List[Node]
     ) -> None:
-        """
-        Update node scores based on BFS distance from activated nodes.
-
-        CRITICAL (Paper-Aligned):
-        PROPERTY nodes are excluded from distance-based scoring.
-        Per paper: PROPERTY nodes have no independent activation and
-        their "closeness" to active CONCEPT nodes does NOT make them active.
-        PROPERTY nodes keep a high score (100) to prevent them from being
-        selected as carry-over nodes based on score alone.
-        """
         distances_to_activated_nodes = self.bfs_from_activated_nodes(activated_nodes)
+
         for node in self.nodes:
-            # PROPERTY nodes always get high score (inactive by distance)
-            # Per paper: they only become visible via active property edges
+            # PROPERTY nodes are distance-agnostic (paper behavior)
             if node.node_type == NodeType.PROPERTY:
-                node.score = 100  # Never selected by distance-based logic
+                continue  # do NOT overwrite score
+
+            if node in distances_to_activated_nodes:
+                node.score = distances_to_activated_nodes[node]
             else:
-                node.score = distances_to_activated_nodes.get(node, 100)
+                # Instead of killing it (score=100),
+                # gradually increase distance score
+                node.score = min(node.score + 1, 100)
 
     def get_word_lemma_score(self, word_lemmas: List[str]) -> Optional[float]:
         for node in self.nodes:
