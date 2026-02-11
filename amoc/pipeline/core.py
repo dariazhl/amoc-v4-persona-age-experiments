@@ -83,9 +83,6 @@ class AMoCv4:
         matrix_dir_base: Optional[str] = None,
         allow_multi_edges: bool = False,
     ) -> None:
-        # REPLICATION_MODE: Disable all LLM inference for deterministic behavior
-        self.REPLICATION_MODE = True
-
         self.persona = persona_description
         self.story_text = story_text
         self.matrix_dir_base = matrix_dir_base or OUTPUT_ANALYSIS_DIR
@@ -551,8 +548,6 @@ class AMoCv4:
         current_sentence_words: List[str],
         current_text: str,
     ) -> List[Edge]:
-        if self.REPLICATION_MODE:
-            return []
         if not self.ENFORCE_ATTACHMENT_CONSTRAINT:
             return []
         recent = [
@@ -703,182 +698,6 @@ class AMoCv4:
 
         return touches_memory
 
-    # ==========================================================================
-    # RECOMMENDATION 2: EVENT/PROCESS MEDIATION
-    # ==========================================================================
-    # All relations with event_level in {EVENT, PROCESS} must be mediated by
-    # explicit EVENT nodes. Direct entity → entity action edges are forbidden.
-    #
-    # BEFORE (illegal): knight --killed--> dragon
-    # AFTER (required): knight --participates_in--> kill_event --affects--> dragon
-
-    def _get_event_node_name(self, relation_label: str) -> str:
-        """
-        Generate an event node name from a relation label.
-
-        Rule 2: Event nodes unique per (relation, source, dest, sentence)
-        The base name comes from the relation; uniqueness is ensured by
-        including sentence index in the caller.
-
-        Examples:
-        - "killed" → "killing"
-        - "fights" → "fighting"
-        - "kidnapped" → "kidnapping"
-        """
-        label = relation_label.lower().strip()
-
-        # Map past tense to gerund form for common verbs
-        GERUND_MAP = {
-            "killed": "killing",
-            "kills": "killing",
-            "fought": "fighting",
-            "fights": "fighting",
-            "kidnapped": "kidnapping",
-            "kidnaps": "kidnapping",
-            "freed": "freeing",
-            "frees": "freeing",
-            "married": "marrying",
-            "marries": "marrying",
-            "wanted": "wanting",
-            "wants": "wanting",
-            "appeared": "appearing",
-            "appears": "appearing",
-            "rode_through": "riding_through",
-            "hurried_after": "hurrying_after",
-        }
-
-        if label in GERUND_MAP:
-            return GERUND_MAP[label]
-
-        # Fallback: add "_event" suffix
-        return f"{label}_event"
-
-    def _create_event_mediated_edges(
-        self,
-        source_node: Node,
-        dest_node: Node,
-        relation_label: str,
-        edge_forget: int,
-        created_at_sentence: Optional[int] = None,
-    ) -> Tuple[Optional[Node], Optional[Edge], Optional[Edge]]:
-        """
-        Create an event-mediated structure for EVENT/PROCESS relations.
-
-        Rule 1: Create event nodes for EVENT/PROCESS level relations
-        Rule 2: Event nodes unique per (relation, source, dest, sentence)
-        Rule 3: Schema compliance for all new edges
-        Rule 4: Connectivity preservation (participates_in first)
-
-        Structure:
-        source_node --participates_in--> event_node --affects--> dest_node
-
-        Returns:
-            Tuple of (event_node, participates_edge, affects_edge)
-            Any component may be None if creation failed.
-        """
-        sentence_idx = created_at_sentence or getattr(
-            self, "_current_sentence_index", 0
-        )
-
-        # Generate unique event node name
-        base_name = self._get_event_node_name(relation_label)
-        src_text = source_node.get_text_representer().replace(" ", "_")
-        dst_text = dest_node.get_text_representer().replace(" ", "_")
-        event_name = f"{base_name}_{src_text}_{dst_text}_s{sentence_idx}"
-
-        # Create EVENT node
-        event_lemmas = [event_name.lower()]
-        existing = self.graph.get_node([event_name.lower()])
-        if existing is not None:
-            return existing, None, None
-        event_node = self.graph.add_or_get_node(
-            lemmas=event_lemmas,
-            actual_text=event_name,
-            node_type=NodeType.EVENT,
-            node_source=NodeSource.INFERENCE_BASED,
-            origin_sentence=sentence_idx,
-            provenance=NodeProvenance.INFERRED_FROM_STORY,
-            node_role=None,  # EVENT nodes don't have actor/object roles
-        )
-
-        if event_node is None:
-            logging.warning(
-                "[EventMediation] Failed to create event node for: %s --%s--> %s",
-                source_node.get_text_representer(),
-                relation_label,
-                dest_node.get_text_representer(),
-            )
-            return None, None, None
-
-        # Rule 4: Create participates_in edge FIRST (ensures connectivity)
-        # source_node --participates_in--> event_node
-        participates_edge = self.graph.add_edge(
-            source_node,
-            event_node,
-            "participates_in",
-            edge_forget,
-            created_at_sentence=sentence_idx,
-            relation_class=RelationClass.EVENTIVE,
-            eventive_role=EventiveRole.PARTICIPATION,
-            justification=Justification.TEXTUAL,
-        )
-
-        if participates_edge:
-            participates_edge.mark_as_asserted(reset_score=True)
-            # Track in triplet records
-            trip_id = (
-                source_node.get_text_representer(),
-                "participates_in",
-                event_node.get_text_representer(),
-            )
-            if trip_id not in self._triplet_intro:
-                self._triplet_intro[trip_id] = sentence_idx
-            self._record_edge_in_graphs(participates_edge, sentence_idx)
-        else:
-            logging.warning(
-                "[EventMediation] Failed to create participates_in edge: %s --> %s",
-                source_node.get_text_representer(),
-                event_node.get_text_representer(),
-            )
-
-        # Create affects edge: event_node --affects--> dest_node
-        affects_edge = self.graph.add_edge(
-            event_node,
-            dest_node,
-            relation_label,
-            edge_forget,
-            created_at_sentence=sentence_idx,
-            relation_class=RelationClass.EVENTIVE,
-            eventive_role=EventiveRole.EFFECT,
-            justification=Justification.TEXTUAL,
-        )
-        if affects_edge:
-            affects_edge.mark_as_asserted(reset_score=True)
-            # Track in triplet records
-            trip_id = (
-                event_node.get_text_representer(),
-                relation_label,
-                dest_node.get_text_representer(),
-            )
-            if trip_id not in self._triplet_intro:
-                self._triplet_intro[trip_id] = sentence_idx
-            self._record_edge_in_graphs(affects_edge, sentence_idx)
-        else:
-            logging.warning(
-                "[EventMediation] Failed to create affects edge: %s --> %s",
-                event_node.get_text_representer(),
-                dest_node.get_text_representer(),
-            )
-
-        logging.debug(
-            "[EventMediation] Created mediated structure: %s --participates_in--> %s --affects--> %s",
-            source_node.get_text_representer(),
-            event_node.get_text_representer(),
-            dest_node.get_text_representer(),
-        )
-
-        return event_node, participates_edge, affects_edge
-
     def _create_edge_with_event_mediation(
         self,
         source_node: Node,
@@ -933,12 +752,16 @@ class AMoCv4:
     ) -> Optional[Edge]:
         attachable = self._get_attachable_nodes_for_sentence()
 
-        if (
-            not bypass_attachment_constraint
-            and source_node not in attachable
-            and dest_node not in attachable
-        ):
-            return None
+        if not bypass_attachment_constraint:
+            if source_node not in attachable and dest_node not in attachable:
+                # Allow inference expansion if at least one endpoint
+                # is within activation distance of explicit nodes
+                distances = self._distances_from_sources_active_edges(
+                    self._explicit_nodes_current_sentence,
+                    self.max_distance_from_active_nodes,
+                )
+                if source_node not in distances and dest_node not in distances:
+                    return None
 
         # FAIL FAST: Ontology must be explicitly specified
         if relation_class is None or justification is None:
@@ -1009,22 +832,6 @@ class AMoCv4:
                 else:
                     self.graph.remove_edge(existing_edge)
 
-        if relation_class == RelationClass.EVENTIVE and not self.REPLICATION_MODE:
-            event_node, participates_edge, affects_edge = (
-                self._create_event_mediated_edges(
-                    source_node,
-                    dest_node,
-                    label,
-                    edge_forget,
-                    created_at_sentence=use_sentence,
-                )
-            )
-            if participates_edge:
-                enforce_ontology_invariants(participates_edge)
-            if affects_edge:
-                enforce_ontology_invariants(affects_edge)
-            return affects_edge
-
         # No existing edge (or allow_multi_edges=True, or old edge was removed): create new edge
         edge = self._create_edge_with_event_mediation(
             source_node,
@@ -1073,8 +880,6 @@ class AMoCv4:
         story_context: str,
         current_sentence: str,
     ) -> List[Edge]:
-        if self.REPLICATION_MODE:
-            return []
         # Step 1: Check if graph is still disconnected
         if self.graph.check_active_connectivity():
             return []  # Already connected, no forced edges needed
@@ -1262,14 +1067,13 @@ class AMoCv4:
             if edge.active:
                 active_nodes.add(edge.source_node)
                 active_nodes.add(edge.dest_node)
-        # Ensure explicit nodes are always considered attachable.
-        return active_nodes | getattr(self, "_explicit_nodes_current_sentence", set())
+        return active_nodes
 
     def _can_attach(self, node: Node) -> bool:
         attachable = (
             self._get_nodes_with_active_edges()
             | self._anchor_nodes
-            | getattr(self, "_explicit_nodes_current_sentence", set())
+            | self._explicit_nodes_current_sentence
         )
         return node in attachable
 
@@ -1611,6 +1415,8 @@ class AMoCv4:
             if not is_subject and pos not in allowed_object:
                 continue
             lemma = (getattr(tok, "lemma_", "") or "").strip().lower()
+            if lemma in {"object", "subject", "entity", "concept", "property"}:
+                return None
             if not lemma or lemma in self.spacy_nlp.Defaults.stop_words:
                 continue
             return lemma
@@ -2047,10 +1853,9 @@ class AMoCv4:
                 # Enforce connectivity for first sentence - remove any disconnected edges
                 self._enforce_graph_connectivity()
                 # Restrict active nodes only if there is at least one active edge
-                if any(edge.active for edge in self.graph.edges):
-                    self._restrict_active_to_current_explicit(
-                        list(self._explicit_nodes_current_sentence)
-                    )
+                self._restrict_active_to_current_explicit(
+                    list(self._explicit_nodes_current_sentence)
+                )
                 # self.graph.set_nodes_score_based_on_distance_from_active_nodes(
                 #     current_sentence_text_based_nodes
                 # )
@@ -2120,16 +1925,13 @@ class AMoCv4:
 
                 nodes_from_text = self._append_adjectival_hints(nodes_from_text, sent)
 
-                if self.REPLICATION_MODE:
-                    new_relationships = []
-                else:
-                    new_relationships = self.client.get_new_relationships(
-                        nodes_from_text,  # 1. Nodes from Text
-                        active_nodes_text,  # 2. Nodes from Graph (explicit only)
-                        active_nodes_edges_text,  # 3. Edges from Graph (explicit only)
-                        current_all_text,  # 4. Text
-                        self.persona,  # 5. Persona
-                    )
+                new_relationships = self.client.get_new_relationships(
+                    nodes_from_text,  # 1. Nodes from Text
+                    active_nodes_text,  # 2. Nodes from Graph (explicit only)
+                    active_nodes_edges_text,  # 3. Edges from Graph (explicit only)
+                    current_all_text,  # 4. Text
+                    self.persona,  # 5. Persona
+                )
 
                 text_based_activated_nodes = current_sentence_text_based_nodes
                 sentence_lemma_keys = {
@@ -2367,20 +2169,34 @@ class AMoCv4:
                         len(connector_edges),
                     )
 
+                # TASK 2: SECONDARY LLM CALL FOR FORCED CONNECTIVITY
                 # ==========================================================================
-                # REPLICATION_MODE: DO NOT auto-connect disconnected components
-                # ==========================================================================
-                # Connectivity must come only from extracted relations
-                pass
+                # If ensure_active_connectivity() couldn't fully connect the graph
+                # (no existing edges could bridge components), trigger secondary LLM call
+                # to create minimal forced connectivity edges.
+                if not self.graph.check_active_connectivity():
+                    forced_edges = self._create_forced_connectivity_edges(
+                        story_context=(
+                            " ".join(prev_sentences[:-1])
+                            if len(prev_sentences) > 1
+                            else ""
+                        ),
+                        current_sentence=resolved_text,
+                    )
+                    if forced_edges:
+                        logging.info(
+                            "[Connectivity] Created %d forced connectivity edges via secondary LLM call",
+                            len(forced_edges),
+                        )
+                        added_edges.extend(forced_edges)
 
                 # VISIBILITY DECAY: reduce visibility for inactive edges
                 self.graph.decay_inactive_edges()
                 logging.debug("[Activation] Decayed visibility for inactive edges")
                 # Restrict active nodes only if there is at least one active edge
-                if any(edge.active for edge in self.graph.edges):
-                    self._restrict_active_to_current_explicit(
-                        list(self._explicit_nodes_current_sentence)
-                    )
+                self._restrict_active_to_current_explicit(
+                    list(self._explicit_nodes_current_sentence)
+                )
                 # self.graph.set_nodes_score_based_on_distance_from_active_nodes(
                 #     current_sentence_text_based_nodes
                 # )
@@ -2392,8 +2208,6 @@ class AMoCv4:
                     self.graph.get_active_graph_repr(),
                 )
 
-            # Enforce invariant: no dangling nodes after sentence processing
-            self.graph.prune_dangling_nodes()
             if self._explicit_nodes_current_sentence:
                 self._explicit_nodes_current_sentence = {
                     n
@@ -2406,13 +2220,11 @@ class AMoCv4:
                 }
 
             sentence_id = i + 1
-            newly_inferred_nodes = set()
-            if not self.REPLICATION_MODE:
-                newly_inferred_nodes = {
-                    n
-                    for n in (set(self.graph.nodes) - nodes_before_sentence)
-                    if n.node_source == NodeSource.INFERENCE_BASED
-                }
+            newly_inferred_nodes = {
+                n
+                for n in (set(self.graph.nodes) - nodes_before_sentence)
+                if n.node_source == NodeSource.INFERENCE_BASED
+            }
 
             # BUILD PER-SENTENCE VIEW (only when strict mode is enabled)
             # When enabled, enforces:
@@ -2780,8 +2592,6 @@ class AMoCv4:
     def infer_new_relationships_step_0(
         self, sent: Span
     ) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
-        if self.REPLICATION_MODE:
-            return [], []
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
             self.get_senteces_text_based_nodes([sent], create_unexistent_nodes=False)
         )
@@ -2834,8 +2644,6 @@ class AMoCv4:
         graph_nodes_representation: str,
         graph_edges_representation: str,
     ) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
-        if self.REPLICATION_MODE:
-            return [], []
         nodes_from_text = ""
         for i, node in enumerate(current_sentence_text_based_nodes):
             nodes_from_text += (
@@ -2903,12 +2711,9 @@ class AMoCv4:
             self._enforce_graph_connectivity()
             return
 
-        if self.REPLICATION_MODE:
-            raw_indices = []
-        else:
-            raw_indices = self.client.get_relevant_edges(
-                edges_text, prev_sentences_text, self.persona
-            )
+        raw_indices = self.client.get_relevant_edges(
+            edges_text, prev_sentences_text, self.persona
+        )
 
         valid_indices: List[int] = []
         for idx in raw_indices:
@@ -2976,8 +2781,6 @@ class AMoCv4:
                 edge.mark_as_reactivated(reset_score=True)
                 edge.visibility_score = self.edge_visibility
                 self._record_edge_in_graphs(edge, self._current_sentence_index)
-            else:
-                edge.reduce_visibility()
 
         # Final connectivity sweep - ensure the entire graph remains connected
         self._enforce_graph_connectivity()
@@ -3235,12 +3038,9 @@ class AMoCv4:
                 f" - ({current_sentence_text_based_words[i]}, {node.node_type})\n"
             )
 
-        if self.REPLICATION_MODE:
-            relationships = []
-        else:
-            relationships = self.client.get_new_relationships_first_sentence(
-                nodes_from_text, sent.text, self.persona
-            )
+        relationships = self.client.get_new_relationships_first_sentence(
+            nodes_from_text, sent.text, self.persona
+        )
         # print(f"First sentence edges:\n{relationships}")
 
         for relationship in relationships:
