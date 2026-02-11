@@ -83,6 +83,9 @@ class AMoCv4:
         matrix_dir_base: Optional[str] = None,
         allow_multi_edges: bool = False,
     ) -> None:
+        # REPLICATION_MODE: Disable all LLM inference for deterministic behavior
+        self.REPLICATION_MODE = True
+
         self.persona = persona_description
         self.story_text = story_text
         self.matrix_dir_base = matrix_dir_base or OUTPUT_ANALYSIS_DIR
@@ -368,12 +371,26 @@ class AMoCv4:
                 | set(self._per_sentence_view.carryover_nodes)
                 | set(self._per_sentence_view.anchor_nodes)
             )
-        # Fallback when no per-sentence view exists yet
-        return (
+        attachable = (
             self._explicit_nodes_current_sentence
             | self._anchor_nodes
             | self._get_nodes_with_active_edges()
         )
+
+        # Include EVENT nodes connected to explicit nodes
+        for edge in self.graph.edges:
+            if (
+                edge.source_node in attachable
+                and edge.dest_node.node_type == NodeType.EVENT
+            ):
+                attachable.add(edge.dest_node)
+            if (
+                edge.dest_node in attachable
+                and edge.source_node.node_type == NodeType.EVENT
+            ):
+                attachable.add(edge.source_node)
+
+        return attachable
 
     def _extract_adjectival_modifiers(self, sent: Span) -> dict[str, list[str]]:
         if not isinstance(sent, Span):
@@ -534,6 +551,8 @@ class AMoCv4:
         current_sentence_words: List[str],
         current_text: str,
     ) -> List[Edge]:
+        if self.REPLICATION_MODE:
+            return []
         if not self.ENFORCE_ATTACHMENT_CONSTRAINT:
             return []
         recent = [
@@ -650,7 +669,17 @@ class AMoCv4:
         # 2. If strict mode is ON:
         #    do NOT reject here — let _add_edge enforce connectivity
         if self.strict_attachament_constraint:
-            return True
+            # At least one endpoint must already be attachable
+            attachable = self._get_attachable_nodes_for_sentence()
+
+            subj_key = tuple(get_concept_lemmas(self.spacy_nlp, subject))
+            obj_key = tuple(get_concept_lemmas(self.spacy_nlp, obj))
+
+            for node in attachable:
+                if tuple(node.lemmas) in {subj_key, obj_key}:
+                    return True
+
+            return False
 
         # 3. Permissive mode (legacy behavior):
         #    require that at least one endpoint touches memory
@@ -759,6 +788,9 @@ class AMoCv4:
 
         # Create EVENT node
         event_lemmas = [event_name.lower()]
+        existing = self.graph.get_node([event_name.lower()])
+        if existing is not None:
+            return existing, None, None
         event_node = self.graph.add_or_get_node(
             lemmas=event_lemmas,
             actual_text=event_name,
@@ -817,16 +849,15 @@ class AMoCv4:
             edge_forget,
             created_at_sentence=sentence_idx,
             relation_class=RelationClass.EVENTIVE,
-            eventive_role=EventiveRole.PARTICIPATION,
+            eventive_role=EventiveRole.EFFECT,
             justification=Justification.TEXTUAL,
         )
-
         if affects_edge:
             affects_edge.mark_as_asserted(reset_score=True)
             # Track in triplet records
             trip_id = (
                 event_node.get_text_representer(),
-                "affects",
+                relation_label,
                 dest_node.get_text_representer(),
             )
             if trip_id not in self._triplet_intro:
@@ -926,13 +957,6 @@ class AMoCv4:
         if not label:
             return None
 
-        if relation_class == RelationClass.EVENTIVE:
-            if (
-                source_node.node_type != NodeType.EVENT
-                and dest_node.node_type != NodeType.EVENT
-            ):
-                relation_class = RelationClass.STATIVE
-
         use_sentence = (
             created_at_sentence
             if created_at_sentence is not None
@@ -985,16 +1009,22 @@ class AMoCv4:
                 else:
                     self.graph.remove_edge(existing_edge)
 
-        if relation_class == RelationClass.EVENTIVE:
-            return self._create_event_mediated_edges(
-                source_node,
-                dest_node,
-                label,
-                edge_forget,
-                created_at_sentence=use_sentence,
-            )[
-                1
-            ]  # or return appropriate edge
+        if relation_class == RelationClass.EVENTIVE and not self.REPLICATION_MODE:
+            event_node, participates_edge, affects_edge = (
+                self._create_event_mediated_edges(
+                    source_node,
+                    dest_node,
+                    label,
+                    edge_forget,
+                    created_at_sentence=use_sentence,
+                )
+            )
+            if participates_edge:
+                enforce_ontology_invariants(participates_edge)
+            if affects_edge:
+                enforce_ontology_invariants(affects_edge)
+            return affects_edge
+
         # No existing edge (or allow_multi_edges=True, or old edge was removed): create new edge
         edge = self._create_edge_with_event_mediation(
             source_node,
@@ -1007,9 +1037,11 @@ class AMoCv4:
         )
 
         if edge:
+            enforce_ontology_invariants(edge)
             # Mark edge as ASSERTED this sentence (per AMoC v4 paper semantics)
-            # New edges are explicitly asserted, not reactivated or connectors
-            edge.mark_as_asserted(reset_score=True)
+            # Only assert if edge is created in current sentence (prevents old edges from reactivating)
+            if use_sentence == self._current_sentence_index:
+                edge.mark_as_asserted(reset_score=True)
 
             trip_id = (
                 edge.source_node.get_text_representer(),
@@ -1041,6 +1073,8 @@ class AMoCv4:
         story_context: str,
         current_sentence: str,
     ) -> List[Edge]:
+        if self.REPLICATION_MODE:
+            return []
         # Step 1: Check if graph is still disconnected
         if self.graph.check_active_connectivity():
             return []  # Already connected, no forced edges needed
@@ -1754,15 +1788,20 @@ class AMoCv4:
                     if n in self._viz_positions
                 }
 
-                new_pos = nx.spring_layout(
-                    G_tmp,
-                    pos=fixed if fixed else None,
-                    fixed=fixed.keys() if fixed else None,
-                    seed=42,
-                )
-
-                # Merge back into persistent positions
-                self._viz_positions.update(new_pos)
+                for node_text in nodes_to_plot:
+                    if node_text not in self._viz_positions:
+                        # Assign deterministic radial position
+                        idx = len(self._viz_positions)
+                        angle = 2 * 3.1415926535 * idx / max(1, len(nodes_to_plot))
+                        radius = 1 + 0.5 * idx
+                        self._viz_positions[node_text] = (
+                            radius * float(__import__("math").cos(angle)),
+                            radius * float(__import__("math").sin(angle)),
+                        )
+                # Ensure positions never shrink: keep historical nodes
+                for node_text in list(self._viz_positions.keys()):
+                    if node_text not in nodes_to_plot:
+                        nodes_to_plot.add(node_text)
             # ------------------------------------------------------------------------
 
             # PROVENANCE SANITY CHECK: Detect persona leakage before plotting
@@ -1946,7 +1985,9 @@ class AMoCv4:
             self._current_sentence_index = i + 1
             self.graph.set_current_sentence(self._current_sentence_index)
             # STRICT RESET: All edges inactive at sentence start (paper-aligned)
-            self.graph.deactivate_all_edges()
+            # DO NOT reset visibility, remove edges, or reset activation score
+            for edge in self.graph.edges:
+                edge.reset_for_sentence_start()
             self._current_sentence_text = original_text
             self._anchor_drop_log: list[tuple[int, str, str, str, str]] = (
                 []
@@ -1969,13 +2010,10 @@ class AMoCv4:
                     [sent], create_unexistent_nodes=True
                 )
 
-                self._explicit_nodes_current_sentence = {
-                    n
-                    for n in (
-                        set(phrase_nodes) | set(current_sentence_text_based_nodes)
-                    )
-                    # INCLUDE both CONCEPT and PROPERTY nodes - per Figure 7 compliance
-                }
+                # Explicit nodes = current sentence only (nouns + adjectives)
+                self._explicit_nodes_current_sentence = set(
+                    current_sentence_text_based_nodes
+                )
 
                 # ==========================================================================
                 # PAPER-FAITHFUL EXTRACTION: Deterministic linguistic grounding for sentence 0
@@ -2008,9 +2046,11 @@ class AMoCv4:
                 )
                 # Enforce connectivity for first sentence - remove any disconnected edges
                 self._enforce_graph_connectivity()
-                self._restrict_active_to_current_explicit(
-                    list(self._explicit_nodes_current_sentence)
-                )
+                # Restrict active nodes only if there is at least one active edge
+                if any(edge.active for edge in self.graph.edges):
+                    self._restrict_active_to_current_explicit(
+                        list(self._explicit_nodes_current_sentence)
+                    )
                 # self.graph.set_nodes_score_based_on_distance_from_active_nodes(
                 #     current_sentence_text_based_nodes
                 # )
@@ -2045,13 +2085,10 @@ class AMoCv4:
                 # sentence are explicit. Adjectives like "young", "beautiful", "scorched"
                 # must appear as explicit PROPERTY nodes in their origin sentence.
                 # ==========================================================================
-                self._explicit_nodes_current_sentence = {
-                    n
-                    for n in (
-                        set(phrase_nodes) | set(current_sentence_text_based_nodes)
-                    )
-                    # INCLUDE both CONCEPT and PROPERTY nodes - per Figure 7 compliance
-                }
+                # Explicit nodes = current sentence only (nouns + adjectives)
+                self._explicit_nodes_current_sentence = set(
+                    current_sentence_text_based_nodes
+                )
 
                 # ==========================================================================
                 # PAPER-FAITHFUL EXTRACTION: Deterministic linguistic grounding
@@ -2083,13 +2120,16 @@ class AMoCv4:
 
                 nodes_from_text = self._append_adjectival_hints(nodes_from_text, sent)
 
-                new_relationships = self.client.get_new_relationships(
-                    nodes_from_text,  # 1. Nodes from Text
-                    active_nodes_text,  # 2. Nodes from Graph (explicit only)
-                    active_nodes_edges_text,  # 3. Edges from Graph (explicit only)
-                    current_all_text,  # 4. Text
-                    self.persona,  # 5. Persona
-                )
+                if self.REPLICATION_MODE:
+                    new_relationships = []
+                else:
+                    new_relationships = self.client.get_new_relationships(
+                        nodes_from_text,  # 1. Nodes from Text
+                        active_nodes_text,  # 2. Nodes from Graph (explicit only)
+                        active_nodes_edges_text,  # 3. Edges from Graph (explicit only)
+                        current_all_text,  # 4. Text
+                        self.persona,  # 5. Persona
+                    )
 
                 text_based_activated_nodes = current_sentence_text_based_nodes
                 sentence_lemma_keys = {
@@ -2328,33 +2368,19 @@ class AMoCv4:
                     )
 
                 # ==========================================================================
-                # TASK 2: SECONDARY LLM CALL FOR FORCED CONNECTIVITY
+                # REPLICATION_MODE: DO NOT auto-connect disconnected components
                 # ==========================================================================
-                # If ensure_active_connectivity() couldn't fully connect the graph
-                # (no existing edges could bridge components), trigger secondary LLM call
-                # to create minimal forced connectivity edges.
-                if not self.graph.check_active_connectivity():
-                    forced_edges = self._create_forced_connectivity_edges(
-                        story_context=(
-                            " ".join(prev_sentences[:-1])
-                            if len(prev_sentences) > 1
-                            else ""
-                        ),
-                        current_sentence=resolved_text,
-                    )
-                    if forced_edges:
-                        logging.info(
-                            "[Connectivity] Created %d forced connectivity edges via secondary LLM call",
-                            len(forced_edges),
-                        )
-                        added_edges.extend(forced_edges)
+                # Connectivity must come only from extracted relations
+                pass
 
                 # VISIBILITY DECAY: reduce visibility for inactive edges
                 self.graph.decay_inactive_edges()
                 logging.debug("[Activation] Decayed visibility for inactive edges")
-                self._restrict_active_to_current_explicit(
-                    list(self._explicit_nodes_current_sentence)
-                )
+                # Restrict active nodes only if there is at least one active edge
+                if any(edge.active for edge in self.graph.edges):
+                    self._restrict_active_to_current_explicit(
+                        list(self._explicit_nodes_current_sentence)
+                    )
                 # self.graph.set_nodes_score_based_on_distance_from_active_nodes(
                 #     current_sentence_text_based_nodes
                 # )
@@ -2366,13 +2392,27 @@ class AMoCv4:
                     self.graph.get_active_graph_repr(),
                 )
 
+            # Enforce invariant: no dangling nodes after sentence processing
+            self.graph.prune_dangling_nodes()
+            if self._explicit_nodes_current_sentence:
+                self._explicit_nodes_current_sentence = {
+                    n
+                    for n in self._explicit_nodes_current_sentence
+                    if n in self.graph.nodes
+                }
+            if self._anchor_nodes:
+                self._anchor_nodes = {
+                    n for n in self._anchor_nodes if n in self.graph.nodes
+                }
+
             sentence_id = i + 1
-            newly_inferred_nodes = {
-                n
-                for n in (set(self.graph.nodes) - nodes_before_sentence)
-                if n.node_source == NodeSource.INFERENCE_BASED
-            }
-            self._explicit_nodes_current_sentence |= newly_inferred_nodes
+            newly_inferred_nodes = set()
+            if not self.REPLICATION_MODE:
+                newly_inferred_nodes = {
+                    n
+                    for n in (set(self.graph.nodes) - nodes_before_sentence)
+                    if n.node_source == NodeSource.INFERENCE_BASED
+                }
 
             # BUILD PER-SENTENCE VIEW (only when strict mode is enabled)
             # When enabled, enforces:
@@ -2740,6 +2780,8 @@ class AMoCv4:
     def infer_new_relationships_step_0(
         self, sent: Span
     ) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
+        if self.REPLICATION_MODE:
+            return [], []
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
             self.get_senteces_text_based_nodes([sent], create_unexistent_nodes=False)
         )
@@ -2792,6 +2834,8 @@ class AMoCv4:
         graph_nodes_representation: str,
         graph_edges_representation: str,
     ) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
+        if self.REPLICATION_MODE:
+            return [], []
         nodes_from_text = ""
         for i, node in enumerate(current_sentence_text_based_nodes):
             nodes_from_text += (
@@ -2852,14 +2896,19 @@ class AMoCv4:
                     continue
                 edge.mark_as_reactivated(reset_score=True)
                 edge.visibility_score = self.edge_visibility
-                self._record_edge_in_graphs(edge, self._current_sentence_index)
+                if edge.is_asserted() or edge.is_reactivated() or edge.is_connector():
+                    self._record_edge_in_graphs(edge, self._current_sentence_index)
+
             # Enforce connectivity even in non-strict mode
             self._enforce_graph_connectivity()
             return
 
-        raw_indices = self.client.get_relevant_edges(
-            edges_text, prev_sentences_text, self.persona
-        )
+        if self.REPLICATION_MODE:
+            raw_indices = []
+        else:
+            raw_indices = self.client.get_relevant_edges(
+                edges_text, prev_sentences_text, self.persona
+            )
 
         valid_indices: List[int] = []
         for idx in raw_indices:
@@ -2922,7 +2971,9 @@ class AMoCv4:
 
         for idx, edge in enumerate(edges, start=1):
             if idx in selected or edge in newly_added_edges:
-                edge.active = True
+                if edge.is_property_edge():
+                    continue  # PROPERTY edges never reactivate
+                edge.mark_as_reactivated(reset_score=True)
                 edge.visibility_score = self.edge_visibility
                 self._record_edge_in_graphs(edge, self._current_sentence_index)
             else:
@@ -2995,6 +3046,75 @@ class AMoCv4:
             if edge is not None:
                 logging.debug(
                     f"[Deterministic] Created PROPERTY edge: {head_lemma} --is--> {adj_lemma}"
+                )
+
+        # 1b. Extract predicate adjectives (copula constructions) → PROPERTY nodes
+        for tok in sent:
+            if tok.pos_ != "ADJ" or tok.dep_ not in {"acomp", "attr"}:
+                continue
+
+            adj_lemma = tok.lemma_.lower()
+            head = tok.head
+            subj_token = None
+            for child in head.children:
+                if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {
+                    "NOUN",
+                    "PROPN",
+                }:
+                    subj_token = child
+                    break
+            if subj_token is None:
+                continue
+
+            head_lemma = subj_token.lemma_.lower()
+            head_node = None
+            for node in current_sentence_text_based_nodes:
+                if head_lemma in node.lemmas:
+                    head_node = node
+                    break
+            if head_node is None:
+                head_node = self.graph.get_node([head_lemma])
+            if head_node is None:
+                continue
+
+            if not self._admit_node(
+                lemma=adj_lemma,
+                node_type=NodeType.PROPERTY,
+                provenance="SYNTACTIC_PROPERTY",
+                sent=sent,
+            ):
+                continue
+
+            property_node = self.graph.add_or_get_node(
+                [adj_lemma],
+                adj_lemma,
+                NodeType.PROPERTY,
+                NodeSource.TEXT_BASED,
+                provenance=NodeProvenance.STORY_TEXT,
+            )
+
+            if property_node is not None:
+                property_node.mark_explicit_in_sentence(self._current_sentence_index)
+
+            if (
+                property_node is not None
+                and property_node not in current_sentence_text_based_nodes
+            ):
+                current_sentence_text_based_nodes.append(property_node)
+                current_sentence_text_based_words.append(adj_lemma)
+
+            edge = self._add_edge(
+                head_node,
+                property_node,
+                "is",
+                self.edge_visibility,
+                created_at_sentence=self._current_sentence_index,
+                relation_class=RelationClass.ATTRIBUTIVE,
+                justification=Justification.TEXTUAL,
+            )
+            if edge is not None:
+                logging.debug(
+                    f"[Deterministic] Created predicate PROPERTY edge: {head_lemma} --is--> {adj_lemma}"
                 )
 
         # 2. Extract prepositional objects → CONCEPT nodes
@@ -3115,9 +3235,12 @@ class AMoCv4:
                 f" - ({current_sentence_text_based_words[i]}, {node.node_type})\n"
             )
 
-        relationships = self.client.get_new_relationships_first_sentence(
-            nodes_from_text, sent.text, self.persona
-        )
+        if self.REPLICATION_MODE:
+            relationships = []
+        else:
+            relationships = self.client.get_new_relationships_first_sentence(
+                nodes_from_text, sent.text, self.persona
+            )
         # print(f"First sentence edges:\n{relationships}")
 
         for relationship in relationships:
@@ -3569,9 +3692,9 @@ class AMoCv4:
     def get_senteces_text_based_nodes(
         self, previous_sentences: List[Span], create_unexistent_nodes: bool = True
     ) -> Tuple[List[Node], List[str]]:
-
-        text_based_nodes: list[Node] = []
-        text_based_words: list[str] = []
+        # STRICT EXPLICIT RESET
+        text_based_nodes = []
+        text_based_words = []
 
         for sent in previous_sentences:
             content_words = get_content_words_from_sent(self.spacy_nlp, sent)
@@ -3644,4 +3767,13 @@ class AMoCv4:
                         text_based_nodes.append(node)
                         text_based_words.append(lemma)
 
-        return text_based_nodes, text_based_words
+        # Return unique values only
+        seen_nodes = set()
+        unique_nodes = []
+        unique_words = []
+        for node, word in zip(text_based_nodes, text_based_words):
+            if node not in seen_nodes:
+                seen_nodes.add(node)
+                unique_nodes.append(node)
+                unique_words.append(word)
+        return unique_nodes, unique_words

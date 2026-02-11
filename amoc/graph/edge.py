@@ -246,7 +246,8 @@ class Edge:
         """
         Activation decay disabled (replication mode uses visibility only).
         """
-        return
+        if not self.active and self.activation_score > 0:
+            self.activation_score -= 1
 
     def is_connector(self) -> bool:
         """Check if this edge is serving as a connector (for connectivity only)."""

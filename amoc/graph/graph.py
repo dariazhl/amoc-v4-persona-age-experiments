@@ -57,6 +57,8 @@ class Graph:
         "narration",
         "story",
     }
+    # Replication mode: retain edges even when visibility decays to zero.
+    REPLICATION_MODE: bool = False
 
     def __init__(self) -> None:
         self.nodes: Set[Node] = set()
@@ -144,7 +146,7 @@ class Graph:
         if len(primary_lemma) <= 1:
             return None
 
-        # BLOCK known garbage tokens
+        # BLOCK known garbage tokens (includes vague/generic terms)
         GARBAGE_LEMMAS = {
             "edge",
             "node",
@@ -154,6 +156,12 @@ class Graph:
             "target",
             "source",
             "t",
+            # Additional garbage per replication mode
+            "type",
+            "person",
+            "approach",
+            "kind",
+            "thing",
         }
 
         if primary_lemma in GARBAGE_LEMMAS:
@@ -607,8 +615,31 @@ class Graph:
             if not edge.active:
                 edge.reduce_visibility()
 
-        edges_to_remove = {e for e in self.edges if e.visibility_score <= 0}
-        self.edges -= edges_to_remove
+        if not self.REPLICATION_MODE:
+            # Changed threshold to -5 to prevent premature deletion
+            edges_to_remove = {e for e in self.edges if e.visibility_score < -5}
+            for edge in edges_to_remove:
+                self.remove_edge(edge)
+
+    def prune_dangling_nodes(self) -> None:
+        if not self.nodes:
+            return
+
+        connected_nodes = set()
+        for edge in self.edges:
+            connected_nodes.add(edge.source_node)
+            connected_nodes.add(edge.dest_node)
+
+        dangling = {
+            node
+            for node in self.nodes
+            if node.node_type != NodeType.EVENT
+            and not getattr(node, "ever_explicit", False)
+            and node not in connected_nodes
+        }
+
+        if dangling:
+            self.nodes -= dangling
 
     def get_active_subgraph(
         self,
