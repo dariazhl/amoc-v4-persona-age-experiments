@@ -390,12 +390,36 @@ class Graph:
                 )
 
         self.edges.add(edge)
+        self._apply_structural_event_supersession(edge)
         if edge not in source_node.edges:
             source_node.edges.append(edge)
         if edge not in dest_node.edges:
             dest_node.edges.append(edge)
 
         return edge
+
+    def _apply_structural_event_supersession(self, new_edge):
+        """
+        Abstract structural supersession:
+        If a new edge causes a state change between a subject-object pair,
+        remove previous state-preserving edges for that same pair.
+        No lexical assumptions.
+        """
+
+        subject = new_edge.source_node
+        object_ = new_edge.dest_node
+
+        for edge in list(self.edges):
+            if edge is new_edge:
+                continue
+
+            if edge.source_node == subject and edge.dest_node == object_:
+
+                # Structural logic only
+                if getattr(edge, "preserves_state", False) and getattr(
+                    new_edge, "causes_state", False
+                ):
+                    self.remove_edge(edge)
 
     def _would_maintain_connectivity(self, new_edge: Edge) -> bool:
         """
@@ -1243,7 +1267,7 @@ class Graph:
     # ==========================================================================
     # AMoCv4 HARD CONSTRAINTS - Surface-relation format enforcement
     # ==========================================================================
-    FORBIDDEN_EDGE_LABELS = {"agent_of", "target_of", "patient_of"}
+    FORBIDDEN_EDGE_LABELS = {"agent_of", "target_of", "patient_of", "relation"}
 
     def validate_amocv4_constraints(self) -> list[str]:
         """

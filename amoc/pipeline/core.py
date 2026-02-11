@@ -888,18 +888,19 @@ class AMoCv4:
         justification: Justification = None,
         persona_influenced: bool = False,
     ) -> Optional[Edge]:
-        """
-        Add edge with explicit ontology metadata.
-
-        Per Recommendation 1: Ontology is explicit, not inferred from labels.
-        The caller MUST pass relation_class and justification explicitly.
-        """
         # FAIL FAST: Ontology must be explicitly specified
         from amoc.graph.edge import InvalidEdgeError
 
-        if relation_class is None:
-            edge.metadata.setdefault("ontology_violations", []).append("DESCRIPTION")
-            return
+        # FAIL FAST: Ontology must be explicitly specified
+        if relation_class is None or justification is None:
+            if self.debug:
+                logging.warning(
+                    "[Ontology] Missing relation_class or justification for edge %s -> %s (%s)",
+                    source_node.get_text_representer(),
+                    dest_node.get_text_representer(),
+                    label,
+                )
+            return None
         if justification is None:
             edge.metadata.setdefault("ontology_violations", []).append("DESCRIPTION")
             return
@@ -958,18 +959,6 @@ class AMoCv4:
             else getattr(self, "_current_sentence_index", None)
         )
 
-        # ==========================================================================
-        # SINGLE-EDGE POLICY WITH SEMANTIC EQUIVALENCE (AMoC v4 Paper-Aligned)
-        # ==========================================================================
-        # Per AMoC paper: graphs display a single semantic relation between entities.
-        #
-        # SEMANTIC REPLACEMENT RULES:
-        # 1. If existing edge is SEMANTICALLY EQUIVALENT → REPLACE with new label
-        #    (e.g., "traverses" and "rides_through" are both MOTION)
-        # 2. If existing edge is SEMANTICALLY INCOMPATIBLE → REJECT new edge
-        #    (e.g., "kidnaps" (CAPTURE) vs "fights" (COMBAT) are different)
-        #
-        # This prevents paraphrase accumulation while allowing semantic updates.
         if not self.allow_multi_edges:
             existing_edge = self._get_existing_edge_between_nodes(
                 source_node, dest_node
@@ -984,6 +973,7 @@ class AMoCv4:
                     existing_edge.visibility_score = edge_forget
                     existing_edge.created_at_sentence = use_sentence
                     existing_edge.mark_as_asserted(reset_score=True)
+                    enforce_ontology_invariants(existing_edge)
 
                     if self.debug:
                         logging.debug(
@@ -1013,19 +1003,6 @@ class AMoCv4:
                     )
                     return existing_edge
                 else:
-                    # ==========================================================================
-                    # INCOMPATIBILITY DECAY: Both edges coexist, decay resolves conflict
-                    # ==========================================================================
-                    # Per AMoC v4 paper alignment: competing relations age out gradually.
-                    # DO NOT reject the new edge or replace the old edge.
-                    # Instead:
-                    # 1. Decay the existing edge (reduce visibility)
-                    # 2. Create new edge with NORMAL visibility (marked as asserted)
-                    # 3. Let natural decay resolve which relation survives
-                    #
-                    # If existing edge becomes inactive (visibility <= 0), remove it
-                    # and only then add the new edge as the sole edge.
-                    # ==========================================================================
                     existing_edge.reduce_visibility()
 
                     # If old edge decayed to inactive, remove it and add the new edge
@@ -1033,37 +1010,8 @@ class AMoCv4:
                         self.graph.remove_edge(existing_edge)
                         # Fall through to create new edge below
                     else:
-                        # BOTH EDGES COEXIST: old edge still active, add new edge alongside
-                        # New edge has NORMAL visibility and is marked as asserted
-                        new_edge = self._create_edge_with_event_mediation(
-                            source_node,
-                            dest_node,
-                            label,
-                            edge_forget,
-                            created_at_sentence=use_sentence,
-                            relation_class=relation_class,
-                            justification=justification,
-                        )
-                        if new_edge:
-                            # Mark as properly asserted with normal activation
-                            new_edge.mark_as_asserted(reset_score=True)
-
-                            trip_id = (
-                                new_edge.source_node.get_text_representer(),
-                                new_edge.label,
-                                new_edge.dest_node.get_text_representer(),
-                            )
-                            if trip_id not in self._triplet_intro:
-                                self._triplet_intro[trip_id] = (
-                                    use_sentence if use_sentence is not None else -1
-                                )
-
-                            self._record_edge_in_graphs(
-                                new_edge, self._current_sentence_index
-                            )
-                            return new_edge
-
-                        return None  # Failed to create competing edge
+                        # INCOMPATIBLE: replace old edge immediately (strict single-edge policy)
+                        self.graph.remove_edge(existing_edge)
 
         # No existing edge (or allow_multi_edges=True, or old edge was removed): create new edge
         edge = self._create_edge_with_event_mediation(
@@ -1189,7 +1137,7 @@ class AMoCv4:
                 continue
 
             # Forced connectivity edges must be created with correct ontology
-            edge = self.graph.add_edge(
+            edge = self._add_edge(
                 isolated_node,
                 focus_node,
                 edge_label,
@@ -1197,7 +1145,6 @@ class AMoCv4:
                 created_at_sentence=self._current_sentence_index,
                 relation_class=RelationClass.CONNECTIVE,
                 justification=Justification.CONNECTIVE,
-                inferred=True,
             )
 
             if edge is not None:
@@ -3027,30 +2974,17 @@ class AMoCv4:
         # Per paper Section 3.1:
         # - Non-relevant edges fade away (visibility_score decrements)
         # - When visibility_score reaches 0, edge becomes inactive
-        for j in range(1, len(edges) + 1):
-            edge = edges[j - 1]
-            if j not in selected and edges[j - 1] not in newly_added_edges:
-                # Paper-faithful: use reduce_visibility() for gradual decay
-                edge.reduce_visibility()
 
-                if not _active_subgraph_connected():
-                    # Keep as connectivity bridge - mark as CONNECTOR, not reactivated
-                    # Connectors don't count as asserted/reactivated
-                    edge.mark_as_connector()
-                    edge.visibility_score = 0  # lowest salience
-                    # Record bridge edges in active_graph to prevent disconnection in plots
-                    self._record_edge_in_graphs(edge, self._current_sentence_index)
-                else:
-                    self._record_edge_in_graphs(edge, self._current_sentence_index)
+        for idx, edge in enumerate(edges, start=1):
+            if idx in selected or edge in newly_added_edges:
+                edge.active = True
+                edge.visibility_score = self.edge_visibility
+                self._record_edge_in_graphs(edge, self._current_sentence_index)
+            else:
+                edge.active = False
 
         # Final connectivity sweep - ensure the entire graph remains connected
         self._enforce_graph_connectivity()
-
-    # ==========================================================================
-    # PAPER-FAITHFUL EXTRACTION: Deterministic linguistic extraction
-    # Per AMoC paper Figures 4-6: Adjectives become PROPERTY nodes, prepositional
-    # objects become CONCEPT nodes. All extraction is rule-based (no LLM).
-    # ==========================================================================
 
     def _extract_deterministic_structure(
         self,
