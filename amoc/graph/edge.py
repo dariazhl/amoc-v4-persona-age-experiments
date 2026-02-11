@@ -244,13 +244,9 @@ class Edge:
 
     def decay_activation(self) -> None:
         """
-        Activation decay:
-        - Only affects visual emphasis.
-        - Does NOT control edge survival.
+        Activation decay disabled (replication mode uses visibility only).
         """
-
-        if not self.active and self.activation_score > 0:
-            self.activation_score -= 1
+        return
 
     def is_connector(self) -> bool:
         """Check if this edge is serving as a connector (for connectivity only)."""

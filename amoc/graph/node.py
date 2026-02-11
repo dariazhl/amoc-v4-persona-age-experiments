@@ -88,11 +88,13 @@ class Node:
         #
         # INVARIANT: A node is explicit in sentence S ONLY if it appears in S's parse.
         # Carry-over nodes remain carry-over unless explicitly re-mentioned.
-        # Visualization color is driven ONLY by explicit_sentences.
+        # Visualization color uses ever_explicit (persistent once explicit).
         self.first_seen_sentence: Optional[int] = origin_sentence
         self.explicit_sentences: Set[int] = (
             {origin_sentence} if origin_sentence is not None else set()
         )
+        # ever_explicit: True if the node has ever been explicit in any sentence
+        self.ever_explicit: bool = origin_sentence is not None
 
         # NODE ROLE: Lightweight semantic role (ACTOR, OBJECT, PROPERTY, SETTING)
         # SETTING nodes exist for scene context only - they don't affect lifecycle logic
@@ -134,12 +136,13 @@ class Node:
         Do NOT infer explicitness from memory, edges, or prior sentences.
         """
         self.explicit_sentences.add(sentence_id)
+        self.ever_explicit = True
 
     def is_explicit_in_sentence(self, sentence_id: int) -> bool:
         """
         Check if this node is explicit (not carry-over) in the given sentence.
 
-        PHASE 2: Color assignment must use ONLY this method.
+        Explicitness checks must use ONLY this method.
         Degree, recency, connectivity, persona must NOT affect this.
         """
         return sentence_id in self.explicit_sentences

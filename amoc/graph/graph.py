@@ -138,6 +138,26 @@ class Graph:
         lemmas = [lemma.lower() for lemma in lemmas]
         if not lemmas or not lemmas[0]:
             return None
+        primary_lemma = lemmas[0].lower()
+
+        # BLOCK single-character junk
+        if len(primary_lemma) <= 1:
+            return None
+
+        # BLOCK known garbage tokens
+        GARBAGE_LEMMAS = {
+            "edge",
+            "node",
+            "relation",
+            "property",
+            "label",
+            "target",
+            "source",
+            "t",
+        }
+
+        if primary_lemma in GARBAGE_LEMMAS:
+            return None
         # EVENT nodes can have non-alphabetic names like "killing_knight_dragon_s0"
         # Only apply isalpha check to CONCEPT and PROPERTY nodes
         if node_type != NodeType.EVENT and not lemmas[0].isalpha():
@@ -160,8 +180,6 @@ class Graph:
         # ==========================================================================
         # CRITICAL: This gate MUST block persona-only lemmas BEFORE node creation.
         # Per AMoC v4 paper: Nodes come from STORY TEXT only, never persona.
-        primary_lemma = lemmas[0].lower()
-
         # GATE 1: Block lemmas that appear ONLY in persona (hard reject)
         if self._persona_only_lemmas and primary_lemma in self._persona_only_lemmas:
             logging.debug(

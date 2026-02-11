@@ -59,7 +59,7 @@ class AMoCv4:
         "describes",
     }
 
-    ENFORCE_ATTACHMENT_CONSTRAINT = False
+    ENFORCE_ATTACHMENT_CONSTRAINT = True
     ACTIVATION_MAX_DISTANCE = 2
     RELATION_BLACKLIST = {"describes", "is_at_stake"}
 
@@ -1773,12 +1773,6 @@ class AMoCv4:
             for warning in provenance_warnings:
                 logging.warning(warning)
 
-            # ==========================================================================
-            # AMoC-v4 FIGURE 7 COMPLIANCE: PROPERTY nodes are blue
-            # ==========================================================================
-            # Per AMoC-v4 Figure 7: Adjective PROPERTY nodes (young, beautiful, scorched)
-            # MUST appear as blue nodes. Combine property_nodes with any highlight_nodes.
-            # ==========================================================================
             blue_nodes_combined = set()
             if highlight_nodes:
                 blue_nodes_combined.update(highlight_nodes)
@@ -1787,6 +1781,11 @@ class AMoCv4:
                 node.get_text_representer()
                 for node in self.graph.nodes
                 if node.is_explicit_in_sentence(sentence_index)
+            ]
+            ever_explicit_nodes_for_plot = [
+                node.get_text_representer()
+                for node in self.graph.nodes
+                if node.ever_explicit
             ]
 
             saved_path = plot_amoc_triplets(
@@ -1804,6 +1803,7 @@ class AMoCv4:
                 sentence_text=sentence_text,
                 inactive_nodes=inactive_nodes,
                 explicit_nodes=explicit_nodes_for_plot,
+                ever_explicit_nodes=ever_explicit_nodes_for_plot,
                 salient_nodes=salient_nodes,
                 largest_component_only=largest_component_only,
                 positions=self._viz_positions,
@@ -1945,6 +1945,8 @@ class AMoCv4:
             self.active_graph = nx.MultiDiGraph()
             self._current_sentence_index = i + 1
             self.graph.set_current_sentence(self._current_sentence_index)
+            # STRICT RESET: All edges inactive at sentence start (paper-aligned)
+            self.graph.deactivate_all_edges()
             self._current_sentence_text = original_text
             self._anchor_drop_log: list[tuple[int, str, str, str, str]] = (
                 []
@@ -2019,13 +2021,8 @@ class AMoCv4:
                 if len(prev_sentences) > self.context_length:
                     prev_sentences.pop(0)
 
-                # NOTE: Per AMoC v4 paper (old_code.py ground truth):
-                # Edges are NOT deactivated at sentence start.
-                # Instead, they remain active until faded via reduce_visibility() in STEP 7.
-                # The gradual decay mechanism is: non-relevant edges call reduce_visibility()
-                # which decrements visibility_score. When visibility_score reaches 0, edge becomes inactive.
                 logging.debug(
-                    "[Activation] Sentence %d: edges carry forward, will fade if not relevant",
+                    "[Activation] Sentence %d: edges reset inactive at sentence start",
                     i,
                 )
 
@@ -2352,11 +2349,9 @@ class AMoCv4:
                         )
                         added_edges.extend(forced_edges)
 
-                # ACTIVATION LOGIC: Decay activation_score for inactive edges
+                # VISIBILITY DECAY: reduce visibility for inactive edges
                 self.graph.decay_inactive_edges()
-                logging.debug(
-                    "[Activation] Decayed activation scores for inactive edges"
-                )
+                logging.debug("[Activation] Decayed visibility for inactive edges")
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
                 )
@@ -3613,6 +3608,8 @@ class AMoCv4:
                             NodeSource.TEXT_BASED,
                             provenance=NodeProvenance.STORY_TEXT,
                             node_role=node_role,
+                            origin_sentence=self._current_sentence_index,
+                            mark_explicit=True,
                         )
                     else:
                         continue
@@ -3636,6 +3633,8 @@ class AMoCv4:
                             NodeSource.TEXT_BASED,
                             provenance=NodeProvenance.STORY_TEXT,
                             node_role=NodeRole.PROPERTY,
+                            origin_sentence=self._current_sentence_index,
+                            mark_explicit=True,
                         )
                     else:
                         continue

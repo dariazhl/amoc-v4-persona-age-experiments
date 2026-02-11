@@ -9,6 +9,9 @@ from collections import defaultdict
 
 DEFAULT_BLUE_NODES: Iterable[str] = ()
 
+# Replication mode: disable activation-based visual encoding
+REPLICATION_MODE = True
+
 # LAYOUT POLICY: Option B + D — Sub-Rings as primary, Collision as fallback
 # When nodes at the same hop distance exceed threshold, split into sub-rings
 MAX_NODES_PER_RING = 6  # Split ring if more than this many nodes
@@ -18,6 +21,8 @@ SUB_RING_RADIUS_OFFSET = (
 MIN_SPACING_PADDING = 0.25  # 25% padding on node diameter for collision detection
 RADIUS_GROWTH_MIN = 1.8  # Minimum allowed radius growth factor
 RADIUS_GROWTH_MAX = 2.2  # Maximum allowed radius growth factor
+RING_STEP = 20.0  # Fixed ring radius per level (paper-aligned)
+MAX_RADIUS = 120.0  # Hard cap on radial expansion to prevent explosion
 
 TRIVIAL_NODE_TEXTS = {
     # Determiners - should be stripped at node creation but filter here as safety
@@ -182,14 +187,15 @@ def _enforce_minimum_spacing(
                 continue
             if hub is not None and node == hub:
                 continue
-            pos[node] = (x * scale_step, y * scale_step)
+            new_x, new_y = x * scale_step, y * scale_step
+            if math.hypot(new_x, new_y) > MAX_RADIUS:
+                continue
+            pos[node] = (new_x, new_y)
 
 
 def _level_angle_seed(level: int) -> float:
-    # Golden-angle based deterministic seed per ring to avoid collinear
-    # single-node rings while keeping layouts stable across runs.
-    golden_angle = math.pi * (3.0 - math.sqrt(5.0))
-    return _wrap_angle(level * golden_angle)
+    # Fixed angle seed per ring (no randomness)
+    return 0.0
 
 
 def _point_segment_distance(
@@ -697,6 +703,7 @@ def plot_amoc_triplets(
     deactivated_concepts: Optional[List[str]] = None,
     new_nodes: Optional[List[str]] = None,
     explicit_nodes: Optional[Iterable[str]] = None,
+    ever_explicit_nodes: Optional[Iterable[str]] = None,
     salient_nodes: Optional[Iterable[str]] = None,
     inactive_nodes: Optional[Iterable[str]] = None,
     inactive_nodes_for_title: Optional[Iterable[str]] = None,
@@ -909,7 +916,7 @@ def plot_amoc_triplets(
 
     # Build sets for node categorization (refresh from parameter)
     inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
-    explicit_node_set = set(explicit_nodes) if explicit_nodes else set()
+    ever_explicit_node_set = set(ever_explicit_nodes) if ever_explicit_nodes else set()
     salient_node_set = set(salient_nodes) if salient_nodes else set()
 
     pos: Dict[str, Tuple[float, float]] = {}
@@ -945,11 +952,8 @@ def plot_amoc_triplets(
         ):
             hub = positions["__HUB__"]
         else:
-            # Select hub from active nodes (preferring blue_nodes/explicit)
-            hub_candidates = [
-                n for n in layout_nodes if n in blue_nodes
-            ] or layout_nodes
-            hub = max(hub_candidates, key=lambda n: (UG.degree(n), str(n)))
+            # Deterministic hub: highest degree node
+            hub = max(layout_nodes, key=lambda n: UG.degree(n))
             if positions is not None:
                 positions["__HUB__"] = hub
 
@@ -962,7 +966,7 @@ def plot_amoc_triplets(
         levels = nx.single_source_shortest_path_length(UG, hub)
         max_level = max(levels.values(), default=0)
 
-        ring_step = max(12.0, target_min_dist * 1.55)
+        ring_step = RING_STEP
         radii: Dict[int, float] = {}
 
         # If we have cached coordinates, keep existing nodes fixed and only
@@ -1000,9 +1004,7 @@ def plot_amoc_triplets(
                 effective_n = min(n_ring, MAX_NODES_PER_RING)
                 required_r = _ring_required_radius(effective_n, target_min_dist)
                 prev_r = radii.get(level - 1, 0.0)
-                radii[level] = max(
-                    required_r, prev_r + ring_step, max_r_by_level.get(level, 0.0)
-                )
+                radii[level] = level * RING_STEP
 
             # LAYOUT POLICY B: Place new nodes using sub-rings when overcrowded
             # Fill angular gaps around already placed nodes (if any).
@@ -1066,7 +1068,7 @@ def plot_amoc_triplets(
             for node in movable_nodes:
                 if node in pos:
                     continue
-                r = min(max_existing_r + ring_step, max_allowed_radius)
+                r = min(max_existing_r + ring_step, max_allowed_radius, MAX_RADIUS)
                 pos[node] = (r, 0.0)
 
             # LAYOUT POLICY D: Collision-avoidance pass as fallback
@@ -1099,7 +1101,7 @@ def plot_amoc_triplets(
                             break
                         # Check bounded growth before scaling
                         new_r = math.hypot(x * 1.10, y * 1.10)
-                        if new_r > max_allowed_radius:
+                        if new_r > max_allowed_radius or new_r > MAX_RADIUS:
                             break  # Don't exceed bounded growth
                         x *= 1.10
                         y *= 1.10
@@ -1135,7 +1137,7 @@ def plot_amoc_triplets(
                 effective_n = min(n_ring, MAX_NODES_PER_RING)
                 required_r = _ring_required_radius(effective_n, target_min_dist)
                 prev_r = radii.get(level - 1, 0.0)
-                radii[level] = max(required_r, prev_r + ring_step)
+                radii[level] = level * RING_STEP
 
             pos = {hub: (0.0, 0.0)}
             initial_radius = radii.get(1, ring_step)  # Track for bounded growth
@@ -1167,14 +1169,17 @@ def plot_amoc_triplets(
                     (math.hypot(x, y) for x, y in pos.values() if (x, y) != (0.0, 0.0)),
                     default=0.0,
                 )
-                if current_max_r >= max_allowed_radius:
+                if current_max_r >= max_allowed_radius or current_max_r >= MAX_RADIUS:
                     break  # Don't exceed bounded growth
                 for node, (x, y) in list(pos.items()):
                     if node == hub:
                         continue
                     new_x, new_y = x * 1.08, y * 1.08
                     # Respect bounded growth
-                    if math.hypot(new_x, new_y) <= max_allowed_radius:
+                    if (
+                        math.hypot(new_x, new_y) <= max_allowed_radius
+                        and math.hypot(new_x, new_y) <= MAX_RADIUS
+                    ):
                         pos[node] = (new_x, new_y)
             _set_axes_limits(ax, pos)
             required = _node_required_center_distance_data(
@@ -1191,7 +1196,10 @@ def plot_amoc_triplets(
                         continue
                     new_x, new_y = x * factor, y * factor
                     # Respect bounded growth
-                    if math.hypot(new_x, new_y) <= max_allowed_radius:
+                    if (
+                        math.hypot(new_x, new_y) <= max_allowed_radius
+                        and math.hypot(new_x, new_y) <= MAX_RADIUS
+                    ):
                         pos[node] = (new_x, new_y)
 
     if pos and hub is None:
@@ -1308,10 +1316,10 @@ def plot_amoc_triplets(
         )
 
     # Draw active nodes on top with full opacity
-    # PHASE 2: Use explicit_node_set for color (not blue_nodes)
+    # Color by ever-explicit status (paper-aligned)
     if active_in_graph:
         active_colors = [
-            "#a0cbe2" if node in explicit_node_set else "#ffe8a0"
+            "#a0cbe2" if node in ever_explicit_node_set else "#ffe8a0"
             for node in active_in_graph
         ]
         nx.draw_networkx_nodes(
@@ -1355,11 +1363,15 @@ def plot_amoc_triplets(
     # Helper to compute edge width/alpha from activation_score
     def _score_to_width(score: int, base_width: float = 1.3) -> float:
         """Map activation_score to edge width. Higher score = thicker edge."""
+        if REPLICATION_MODE:
+            return base_width
         # Score typically 0-3, map to 0.8-2.5 width
         return base_width + min(score, 3) * 0.4
 
     def _score_to_alpha(score: int, base_alpha: float = 1.0) -> float:
         """Map activation_score to edge alpha. Higher score = more opaque."""
+        if REPLICATION_MODE:
+            return base_alpha
         # Score typically 0-3, map to 0.4-1.0 alpha
         return min(1.0, base_alpha - (3 - min(score, 3)) * 0.15)
 
@@ -1394,7 +1406,7 @@ def plot_amoc_triplets(
             inactive_edges.append((u, v, k))
             inactive_edge_colors.append("#cccccc")
             # Lower width for inactive edges
-            inactive_edge_widths.append(0.6 + activation_score * 0.1)
+            inactive_edge_widths.append(0.6 if REPLICATION_MODE else 0.6 + activation_score * 0.1)
 
         else:
             normal_edges.append((u, v, k))
@@ -1415,6 +1427,10 @@ def plot_amoc_triplets(
             normal_edge_alphas.append(_score_to_alpha(activation_score))
         else:
             normal_edge_alphas.append(0.4)
+
+    if REPLICATION_MODE:
+        normal_edge_widths = [1.5 for _ in normal_edges]
+        normal_edge_alphas = [1.0 for _ in normal_edges]
 
     # Draw normal edges as solid lines with per-edge curvature for parallel edges
     # =========================================================================
