@@ -507,17 +507,7 @@ class Graph:
         max_distance: int,
         current_sentence: int,
     ) -> Set[Edge]:
-        """
-        Reactivate memory edges that are within max_distance of explicit sentence nodes.
 
-        Per AMoC v4 paper requirements:
-        - ATTRIBUTIVE edges must NEVER be reactivated (strict rule)
-        - PROPERTY nodes don't participate in BFS (no propagation through properties)
-        - Reactivation is sparse: limited to MAX_REACTIVATION_COUNT edges (≈1-3)
-        - Only edges within graph_distance ≤ max_distance are candidates
-
-        Returns the set of reactivated edges.
-        """
         if not explicit_nodes or max_distance < 1:
             return set()
 
@@ -595,8 +585,12 @@ class Graph:
         for edge in self.edges:
             if edge.activation_role == "connector":
                 continue
+
             if not edge.active:
-                edge.activation_score -= 1
+                edge.reduce_visibility()
+
+        edges_to_remove = {e for e in self.edges if e.visibility_score <= 0}
+        self.edges -= edges_to_remove
 
     def get_active_subgraph(
         self,

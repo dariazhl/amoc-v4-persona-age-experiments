@@ -6,6 +6,7 @@ import pandas as pd
 from spacy.tokens import Span, Token
 import networkx as nx
 
+from amoc.graph.node import NodeType
 from amoc.graph import Graph, Node, Edge, NodeType, NodeSource
 from amoc.graph.node import NodeProvenance, NodeRole
 from amoc.graph.edge import (
@@ -150,6 +151,30 @@ class AMoCv4:
         self._fixed_hub = None
         # Per-sentence graph view (rebuilt each sentence for isolation)
         self._per_sentence_view: Optional[PerSentenceGraph] = None
+
+    def _classify_relation(self, label: str) -> RelationClass:
+        label = label.lower()
+
+        EVENTIVE_VERBS = {
+            "attack",
+            "kill",
+            "destroy",
+            "build",
+            "ride",
+            "run",
+            "eat",
+            "strike",
+            "burn",
+            "move",
+        }
+
+        if label in {"is", "has", "belongs_to"}:
+            return RelationClass.ATTRIBUTIVE
+
+        if label in EVENTIVE_VERBS:
+            return RelationClass.EVENTIVE
+
+        return RelationClass.STATIVE
 
     def _admit_node(
         self,
@@ -601,7 +626,7 @@ class AMoCv4:
                 obj_node,
                 edge_label,
                 self.edge_visibility,
-                relation_class=RelationClass.EVENTIVE,  # TODO: derive from context if needed
+                relation_class=self._classify_relation(edge_label),
                 justification=Justification.TEXTUAL,
             )
             # Track added edge (for reactivation bookkeeping)
@@ -699,21 +724,6 @@ class AMoCv4:
         # Fallback: add "_event" suffix
         return f"{label}_event"
 
-    def _should_mediate_via_event(self, relation_label: str) -> bool:
-        """
-        DEPRECATED: Event mediation is no longer derived from labels.
-
-        Per Recommendation 1: Ontology is explicit, not inferred from strings.
-        Event mediation should be explicitly requested by the caller via
-        relation_class=RelationClass.EVENTIVE.
-
-        This method now always returns False - event mediation is disabled
-        by default and must be explicitly requested.
-        """
-        # Per Recommendation 1: Do not infer ontology from labels
-        # Event mediation must be explicitly requested
-        return False
-
     def _create_event_mediated_edges(
         self,
         source_node: Node,
@@ -777,6 +787,7 @@ class AMoCv4:
             edge_forget,
             created_at_sentence=sentence_idx,
             relation_class=RelationClass.EVENTIVE,
+            eventive_role=EventiveRole.PARTICIPATION,
             justification=Justification.TEXTUAL,
         )
 
@@ -806,6 +817,7 @@ class AMoCv4:
             edge_forget,
             created_at_sentence=sentence_idx,
             relation_class=RelationClass.EVENTIVE,
+            eventive_role=EventiveRole.PARTICIPATION,
             justification=Justification.TEXTUAL,
         )
 
@@ -888,8 +900,14 @@ class AMoCv4:
         justification: Justification = None,
         persona_influenced: bool = False,
     ) -> Optional[Edge]:
-        # FAIL FAST: Ontology must be explicitly specified
-        from amoc.graph.edge import InvalidEdgeError
+        attachable = self._get_attachable_nodes_for_sentence()
+
+        if (
+            not bypass_attachment_constraint
+            and source_node not in attachable
+            and dest_node not in attachable
+        ):
+            return None
 
         # FAIL FAST: Ontology must be explicitly specified
         if relation_class is None or justification is None:
@@ -901,9 +919,6 @@ class AMoCv4:
                     label,
                 )
             return None
-        if justification is None:
-            edge.metadata.setdefault("ontology_violations", []).append("DESCRIPTION")
-            return
 
         # Canonicalize relation label before edge creation
         # Removes parser prefixes/artifacts and normalizes format
@@ -911,47 +926,12 @@ class AMoCv4:
         if not label:
             return None
 
-        # Event mediation is disabled per Recommendation 1
-        # (ontology is not inferred from labels)
-
-        # STRICT MODE: enforce structural connectivity guarantee
-        if (
-            self.strict_attachament_constraint
-            and self.graph.edges
-            and not bypass_attachment_constraint
-            and not (
-                source_node.node_source == NodeSource.INFERENCE_BASED
-                or dest_node.node_source == NodeSource.INFERENCE_BASED
-                or source_node not in self.graph.nodes
-                or dest_node not in self.graph.nodes
-            )
-        ):
-            # Build undirected view of current graph
-            G = nx.Graph()
-            for e in self.graph.edges:
-                G.add_edge(e.source_node, e.dest_node)
-
-            # Find main component (prefer one containing anchors)
-            main_component: set[Node] = set()
-            for comp in nx.connected_components(G):
-                if any(n in self._anchor_nodes for n in comp):
-                    main_component = set(comp)
-                    break
-
-            # Fallback: largest component
-            if not main_component and G.number_of_nodes() > 0:
-                main_component = set(max(nx.connected_components(G), key=len))
-
-            # Nodes allowed to attach new edges
-            attachable = (
-                main_component
-                | self._anchor_nodes
-                | getattr(self, "_explicit_nodes_current_sentence", set())
-            )
-
-            # HARD GUARD: at least one endpoint must be attachable
-            if source_node not in attachable and dest_node not in attachable:
-                return None
+        if relation_class == RelationClass.EVENTIVE:
+            if (
+                source_node.node_type != NodeType.EVENT
+                and dest_node.node_type != NodeType.EVENT
+            ):
+                relation_class = RelationClass.STATIVE
 
         use_sentence = (
             created_at_sentence
@@ -1003,16 +983,18 @@ class AMoCv4:
                     )
                     return existing_edge
                 else:
-                    existing_edge.reduce_visibility()
+                    self.graph.remove_edge(existing_edge)
 
-                    # If old edge decayed to inactive, remove it and add the new edge
-                    if not existing_edge.active:
-                        self.graph.remove_edge(existing_edge)
-                        # Fall through to create new edge below
-                    else:
-                        # INCOMPATIBLE: replace old edge immediately (strict single-edge policy)
-                        self.graph.remove_edge(existing_edge)
-
+        if relation_class == RelationClass.EVENTIVE:
+            return self._create_event_mediated_edges(
+                source_node,
+                dest_node,
+                label,
+                edge_forget,
+                created_at_sentence=use_sentence,
+            )[
+                1
+            ]  # or return appropriate edge
         # No existing edge (or allow_multi_edges=True, or old edge was removed): create new edge
         edge = self._create_edge_with_event_mediation(
             source_node,
@@ -1059,26 +1041,6 @@ class AMoCv4:
         story_context: str,
         current_sentence: str,
     ) -> List[Edge]:
-        """
-        TASK 2: Create forced connectivity edges when existing edges cannot restore connectivity.
-
-        This is the SECONDARY LLM CALL that fires ONLY when:
-        1. ensure_active_connectivity() has been called
-        2. The graph is STILL disconnected (check_active_connectivity() returns False)
-        3. No existing edges in cumulative memory can bridge the components
-
-        The method:
-        1. Identifies disconnected components using get_nodes_needing_connection()
-        2. For each pair needing connection, calls LLM to generate a minimal edge
-        3. Creates the edge and marks it as forced_connection
-
-        Args:
-            story_context: Previous sentences for LLM context
-            current_sentence: Current sentence being processed
-
-        Returns:
-            List of newly created forced connectivity edges
-        """
         # Step 1: Check if graph is still disconnected
         if self.graph.check_active_connectivity():
             return []  # Already connected, no forced edges needed
@@ -1145,8 +1107,8 @@ class AMoCv4:
                 created_at_sentence=self._current_sentence_index,
                 relation_class=RelationClass.CONNECTIVE,
                 justification=Justification.CONNECTIVE,
+                bypass_attachment_constraint=True,
             )
-
             if edge is not None:
                 # Mark as forced connectivity edge (guards will pass now)
                 edge.mark_as_forced_connection()
@@ -1639,15 +1601,7 @@ class AMoCv4:
     def _get_existing_edge_between_nodes(
         self, source_node: Node, dest_node: Node
     ) -> Optional[Edge]:
-        """
-        Find an existing DIRECTED edge from source_node to dest_node.
-
-        Per AMoC paper: edges are directed semantic propositions.
-        (A → B) is distinct from (B → A).
-
-        Returns the existing edge if found, None otherwise.
-        """
-        for edge in source_node.edges:
+        for edge in self.graph.edges:
             if edge.source_node == source_node and edge.dest_node == dest_node:
                 return edge
         return None
@@ -1828,8 +1782,6 @@ class AMoCv4:
             blue_nodes_combined = set()
             if highlight_nodes:
                 blue_nodes_combined.update(highlight_nodes)
-            if property_nodes:
-                blue_nodes_combined.update(property_nodes)
 
             explicit_nodes_for_plot = [
                 node.get_text_representer()
@@ -2267,7 +2219,7 @@ class AMoCv4:
                         dest_node,
                         edge_label,
                         self.edge_visibility,
-                        relation_class=RelationClass.EVENTIVE,  # TODO: derive from context if needed
+                        relation_class=self._classify_relation(edge_label),
                         justification=Justification.TEXTUAL,
                     )
 
@@ -2901,11 +2853,9 @@ class AMoCv4:
             for edge in edges:
                 # Use proper state management - mark as reactivated
                 # PROPERTY edges should NOT be reactivated per paper rules
-                if not edge.is_property_edge():
-                    edge.active = True
-                    self._record_edge_in_graphs(edge, self._current_sentence_index)
-                else:
-                    edge.mark_as_reactivated(reset_score=True)
+                if edge.is_property_edge():
+                    continue
+                edge.mark_as_reactivated(reset_score=True)
                 edge.visibility_score = self.edge_visibility
                 self._record_edge_in_graphs(edge, self._current_sentence_index)
             # Enforce connectivity even in non-strict mode
@@ -2981,7 +2931,7 @@ class AMoCv4:
                 edge.visibility_score = self.edge_visibility
                 self._record_edge_in_graphs(edge, self._current_sentence_index)
             else:
-                edge.active = False
+                edge.reduce_visibility()
 
         # Final connectivity sweep - ensure the entire graph remains connected
         self._enforce_graph_connectivity()
@@ -3025,6 +2975,9 @@ class AMoCv4:
                 NodeSource.TEXT_BASED,
                 provenance=NodeProvenance.STORY_TEXT,
             )
+
+            if property_node is not None:
+                property_node.mark_explicit_in_sentence(self._current_sentence_index)
 
             # Track that this is a text-based node from current sentence
             if (
@@ -3103,6 +3056,9 @@ class AMoCv4:
                 provenance=NodeProvenance.STORY_TEXT,
                 node_role=NodeRole.SETTING,
             )
+
+            if obj_node is not None:
+                obj_node.mark_explicit_in_sentence(self._current_sentence_index)
 
             # Track that this is a text-based node from current sentence
             if (
@@ -3234,7 +3190,7 @@ class AMoCv4:
                 dest_node,
                 edge_label,
                 self.edge_visibility,
-                relation_class=RelationClass.EVENTIVE,  # TODO: derive from context if needed
+                relation_class=self._classify_relation(edge_label),
                 justification=Justification.IMPLIED,  # Inferred relationships
             )
 
@@ -3363,7 +3319,7 @@ class AMoCv4:
                 dest_node,
                 edge_label,
                 self.edge_visibility,
-                relation_class=RelationClass.EVENTIVE,  # TODO: derive from context if needed
+                relation_class=self._classify_relation(edge_label),
                 justification=Justification.IMPLIED,  # Inferred relationships
             )
 
@@ -3487,7 +3443,7 @@ class AMoCv4:
                 dest_node,
                 edge_label,
                 self.edge_visibility,
-                relation_class=RelationClass.EVENTIVE,  # TODO: derive from context if needed
+                relation_class=self._classify_relation(edge_label),
                 justification=Justification.IMPLIED,  # Inferred relationships
             )
             if potential_edge:
@@ -3630,22 +3586,8 @@ class AMoCv4:
 
                 # ---------- CONCEPT NODES (nouns / proper nouns) ----------
                 if word.pos_ in {"NOUN", "PROPN"}:
-                    # ==========================================================================
-                    # EXPLICIT NODE INVARIANT: All nouns/proper nouns from sentence text
-                    # must become nodes, regardless of relations or schema constraints.
-                    # This ensures SETTING nodes (forest, castle) are always present
-                    # even if they have no relations. Only filter: stop words.
-                    # ==========================================================================
                     if not lemma or lemma in self.spacy_nlp.Defaults.stop_words:
                         continue
-
-                    # ==========================================================================
-                    # NODE ROLE DETECTION (per AMoC v4 paper alignment)
-                    # Detect semantic role based on syntactic dependency:
-                    # - SETTING: nouns in prepositional phrases (pobj, obl) - locations/environments
-                    # - ACTOR: subjects of actions (nsubj, nsubjpass)
-                    # - OBJECT: direct objects and other nouns (dobj, attr, etc.)
-                    # ==========================================================================
                     node_role = None
                     if word.dep_ in {"pobj", "obl"}:
                         # Prepositional objects are typically locations/settings
@@ -3676,18 +3618,9 @@ class AMoCv4:
                         continue
 
                     if node is not None:
+                        node.mark_explicit_in_sentence(self._current_sentence_index)
                         text_based_nodes.append(node)
                         text_based_words.append(lemma)
-
-                # ---------- ADJECTIVE NODES (per AMoC-v4 Figure 7) ----------
-                # ==========================================================================
-                # EXPLICIT NODE INVARIANT: All adjectives from sentence text must become
-                # PROPERTY nodes, regardless of syntactic dep or relation participation.
-                # Per AMoC-v4: adjectives are explicit nodes in their origin sentence.
-                # They become inactive in later sentences unless reasserted.
-                # No dependency restrictions (amod/acomp/attr) for explicit text nodes.
-                # Only filter: stop words.
-                # ==========================================================================
                 elif word.pos_ == "ADJ":
                     if not lemma or lemma in self.spacy_nlp.Defaults.stop_words:
                         continue
@@ -3708,6 +3641,7 @@ class AMoCv4:
                         continue
 
                     if node is not None:
+                        node.mark_explicit_in_sentence(self._current_sentence_index)
                         text_based_nodes.append(node)
                         text_based_words.append(lemma)
 

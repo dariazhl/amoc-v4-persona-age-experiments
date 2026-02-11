@@ -866,13 +866,6 @@ def plot_amoc_triplets(
         if layout_from_active_only and not involves_inactive and is_edge_active:
             G_active.add_edge(src, dst, key=edge_key)
 
-    # INVARIANT 1: Nodes derived ONLY from triplets - no injection
-    explicit_node_set = set(explicit_nodes) if explicit_nodes else set()
-
-    for node_name in explicit_node_set:
-        if node_name not in G:
-            G.add_node(node_name)
-
     # If after injection the graph is still empty, return
     if G.number_of_nodes() == 0:
         return save_path
@@ -918,34 +911,6 @@ def plot_amoc_triplets(
     inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
     explicit_node_set = set(explicit_nodes) if explicit_nodes else set()
     salient_node_set = set(salient_nodes) if salient_nodes else set()
-
-    # ==========================================================================
-    # PHASE 2: COLOR ASSIGNMENT DRIVEN BY EXPLICIT_SENTENCES
-    # ==========================================================================
-    # Node colors are driven ONLY by explicit_nodes (sentence-scoped provenance):
-    # - EXPLICIT this sentence (in explicit_node_set): bright blue #a0cbe2
-    # - CARRY-OVER (active but not explicit): bright yellow #ffe8a0
-    # - INACTIVE: faded gray #d0d0d0
-    #
-    # INVARIANT: Degree, recency, connectivity, persona must NOT affect color.
-    # Only explicit_sentences drives the explicit/carry-over distinction.
-    node_colors = []
-    node_alphas = []
-    for node in G.nodes():
-        if node in inactive_node_set:
-            # Inactive nodes: gray and faded
-            node_colors.append("#d0d0d0")
-            node_alphas.append(0.5)
-        elif node in explicit_node_set:
-            # PHASE 2: Explicit this sentence → bright blue
-            # This node appears in the current sentence's dependency parse
-            node_colors.append("#a0cbe2")
-            node_alphas.append(1.0)
-        else:
-            # PHASE 2: Carry-over from previous sentences → bright yellow
-            # This node is active but NOT in explicit_node_set
-            node_colors.append("#ffe8a0")
-            node_alphas.append(1.0)
 
     pos: Dict[str, Tuple[float, float]] = {}
     nodes = list(G.nodes())
@@ -1756,7 +1721,9 @@ def plot_amoc_triplets(
         else (inactive_nodes if inactive_nodes is not None else deactivated_concepts)
     )
 
-    explicit_nodes_filtered = _filter_to_plotted(explicit_nodes, plotted_nodes)
+    explicit_nodes_filtered = (
+        list(explicit_nodes) if explicit_nodes is not None else None
+    )
     salient_nodes_filtered = _filter_to_plotted(salient_nodes, plotted_nodes)
     inactive_nodes_filtered = _filter_to_plotted(inactive_for_title, plotted_nodes)
 

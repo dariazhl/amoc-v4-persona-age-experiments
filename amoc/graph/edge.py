@@ -41,12 +41,6 @@ class Justification(Enum):
     CONNECTIVE = auto()  # added for connectivity
 
 
-class InvalidEdgeError(Exception):
-    """DEPRECATED: Invariants no longer raise. Kept for backwards compatibility."""
-
-    pass
-
-
 class EventiveRole(Enum):
     PARTICIPATION = auto()  # concept → event
     EFFECT = auto()  # event → concept
@@ -249,9 +243,13 @@ class Edge:
             self.activation_score = self.DEFAULT_ACTIVATION_SCORE
 
     def decay_activation(self) -> None:
-        if self.activation_role == "connector":
-            return
-        if not self.active:
+        """
+        Activation decay:
+        - Only affects visual emphasis.
+        - Does NOT control edge survival.
+        """
+
+        if not self.active and self.activation_score > 0:
             self.activation_score -= 1
 
     def is_connector(self) -> bool:
@@ -278,7 +276,9 @@ class Edge:
                 f"Forced connection edge should have justification=CONNECTIVE, got {self.justification}"
             )
         if not self.inferred:
-            violations.append("Forced connection edge should be inferred=True at creation")
+            violations.append(
+                "Forced connection edge should be inferred=True at creation"
+            )
 
         if violations:
             self.metadata.setdefault("ontology_violations", []).extend(violations)

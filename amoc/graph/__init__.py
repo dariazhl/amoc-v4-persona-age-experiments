@@ -4,7 +4,6 @@ from .edge import (
     RelationClass,
     Justification,
     EventiveRole,
-    InvalidEdgeError,
     enforce_ontology_invariants,
     assert_persona_did_not_modify_ontology,
     collect_edge_violations,
@@ -29,7 +28,6 @@ __all__ = [
     "RelationClass",
     "Justification",
     "EventiveRole",
-    "InvalidEdgeError",  # DEPRECATED: kept for backwards compatibility
     "enforce_ontology_invariants",
     "assert_persona_did_not_modify_ontology",
     "collect_edge_violations",
