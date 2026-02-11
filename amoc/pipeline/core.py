@@ -100,6 +100,7 @@ class AMoCv4:
         self.nr_relevant_edges = nr_relevant_edges
 
         self.graph = Graph()
+        self.graph._debug_no_filter = True
         self.spacy_nlp = spacy_nlp
 
         if self.spacy_nlp is None:
@@ -1883,6 +1884,12 @@ class AMoCv4:
             if property_nodes:
                 blue_nodes_combined.update(property_nodes)
 
+            explicit_nodes_for_plot = [
+                node.get_text_representer()
+                for node in self.graph.nodes
+                if node.is_explicit_in_sentence(sentence_index)
+            ]
+
             saved_path = plot_amoc_triplets(
                 triplets=triplets,
                 persona=self.persona,
@@ -1897,7 +1904,7 @@ class AMoCv4:
                 ),
                 sentence_text=sentence_text,
                 inactive_nodes=inactive_nodes,
-                explicit_nodes=explicit_nodes,
+                explicit_nodes=explicit_nodes_for_plot,
                 salient_nodes=salient_nodes,
                 largest_component_only=largest_component_only,
                 positions=self._viz_positions,
@@ -2038,6 +2045,7 @@ class AMoCv4:
             # Working-memory projection is rebuilt each sentence.
             self.active_graph = nx.MultiDiGraph()
             self._current_sentence_index = i + 1
+            self.graph.set_current_sentence(self._current_sentence_index)
             self._current_sentence_text = original_text
             self._anchor_drop_log: list[tuple[int, str, str, str, str]] = (
                 []
@@ -2060,18 +2068,6 @@ class AMoCv4:
                     [sent], create_unexistent_nodes=True
                 )
 
-                # union them as explicit nodes
-                # CRITICAL FIX: Explicit nodes are ALL nodes from current sentence text
-                # ==========================================================================
-                # AMoC-v4 FIGURE 7 COMPLIANCE: PROPERTY nodes are explicit in origin sentence
-                # ==========================================================================
-                # Per AMoC-v4 paper Figure 7: adjectives (PROPERTY nodes) like "young",
-                # "beautiful", "scorched" MUST be explicit nodes in their origin sentence.
-                # They appear as blue nodes connected via "is" edges.
-                #
-                # PROPERTY nodes are sentence-explicit, just like CONCEPT nodes.
-                # They are NOT latent or inferred - they appear directly in the text.
-                # ==========================================================================
                 self._explicit_nodes_current_sentence = {
                     n
                     for n in (
@@ -3097,7 +3093,10 @@ class AMoCv4:
             )
 
             # Track that this is a text-based node from current sentence
-            if property_node is not None and property_node not in current_sentence_text_based_nodes:
+            if (
+                property_node is not None
+                and property_node not in current_sentence_text_based_nodes
+            ):
                 current_sentence_text_based_nodes.append(property_node)
                 current_sentence_text_based_words.append(adj_lemma)
 
@@ -3172,7 +3171,10 @@ class AMoCv4:
             )
 
             # Track that this is a text-based node from current sentence
-            if obj_node is not None and obj_node not in current_sentence_text_based_nodes:
+            if (
+                obj_node is not None
+                and obj_node not in current_sentence_text_based_nodes
+            ):
                 current_sentence_text_based_nodes.append(obj_node)
                 current_sentence_text_based_words.append(obj_lemma)
 

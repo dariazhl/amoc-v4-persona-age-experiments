@@ -47,6 +47,17 @@ class Graph:
         "source",
     }
 
+    # Nodes that are NEVER allowed, even if explicit
+    NARRATION_ARTIFACT_LEMMAS: set[str] = {
+        "text",
+        "sentence",
+        "paragraph",
+        "mention",
+        "mentions",
+        "narration",
+        "story",
+    }
+
     def __init__(self) -> None:
         self.nodes: Set[Node] = set()
         self.edges: Set[Edge] = set()
@@ -135,10 +146,13 @@ class Graph:
         # ==========================================================================
         # PHASE 1: FORBIDDEN LEMMA BLOCKLIST (Hard Block Persona & Meta Nodes)
         # ==========================================================================
-        # Silently reject meta-ontological nouns and persona-derived terms.
-        # This check MUST occur before any node is added to the graph.
-        if any(lemma in self.FORBIDDEN_NODE_LEMMAS for lemma in lemmas):
-            logging.debug(f"FORBIDDEN LEMMA: Blocked meta/persona node '{lemmas[0]}'")
+        if provenance != NodeProvenance.STORY_TEXT:
+            if any(lemma in self.FORBIDDEN_NODE_LEMMAS for lemma in lemmas):
+                logging.debug(f"FORBIDDEN LEMMA: Blocked '{lemmas[0]}'")
+                return None
+
+        if any(lemma in self.NARRATION_ARTIFACT_LEMMAS for lemma in lemmas):
+            logging.debug(f"NARRATION ARTIFACT BLOCKED: {lemmas}")
             return None
 
         # ==========================================================================
@@ -159,16 +173,14 @@ class Graph:
         # Allow existing nodes to be retrieved (they were already validated)
         existing_node = self.get_node(lemmas)
         if existing_node is None:
-            # New node creation - check story grounding
             if self._story_lemmas is not None:
                 is_story_grounded = primary_lemma in self._story_lemmas
                 is_inferred = provenance == NodeProvenance.INFERRED_FROM_STORY
 
+                # Allow:
+                # - Story-grounded nodes
+                # - Inferred-from-story nodes
                 if not is_story_grounded and not is_inferred:
-                    logging.debug(
-                        f"PROVENANCE GATE: Blocked non-story lemma '{primary_lemma}' "
-                        f"(not in story_lemmas, provenance={provenance})"
-                    )
                     return None
 
         # Legacy admit callback (additional filtering if provided)
@@ -178,6 +190,7 @@ class Graph:
                 return None
 
         actual_text_l = (actual_text or "").lower()
+
         node = existing_node
         if node is None:
             node = Node(
@@ -191,6 +204,8 @@ class Graph:
                 node_role=node_role,
             )
             self.nodes.add(node)
+            if mark_explicit and origin_sentence is not None:
+                node.mark_explicit_in_sentence(origin_sentence)
         else:
             node.add_actual_text(actual_text_l)
             # Update role if node exists but had no role and we're providing one
@@ -844,6 +859,11 @@ class Graph:
             and (not only_text_based or node.node_source == NodeSource.TEXT_BASED)
         ]
 
+    def get_explicit_nodes_for_sentence(self, sentence_id: int):
+        return [
+            node for node in self.nodes if node.is_explicit_in_sentence(sentence_id)
+        ]
+
     def get_nodes_str(self, nodes: List[Node]) -> str:
         nodes_str = ""
         for node in sorted(nodes, key=lambda node: node.score):
@@ -1424,7 +1444,7 @@ class Graph:
     # - CONNECTIVE edges (structural, not semantic)
     # - INFERRED edges (not explicit in text)
     # - PERSONA_INFLUENCED edges (persona-driven, not story-core)
-    MAX_EDGES_PER_NODE: int = 3  # Soft cap on edges per node for visualization
+    MAX_EDGES_PER_NODE: int = 5  # Soft cap on edges per node for visualization
 
     def get_edges_for_plotting(
         self,
@@ -1565,6 +1585,10 @@ class Graph:
             List of edges ready for plotting.
             Graph structure is UNCHANGED.
         """
+        # --- PATCH 4: Debug mode override ---
+        if getattr(self, "_debug_no_filter", False):
+            return list(self.edges)
+
         # Step 1: Filter out non-semantic edges
         filtered = self.get_edges_for_plotting(
             exclude_connective=True,

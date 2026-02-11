@@ -456,7 +456,7 @@ def _compute_edge_curvatures(
             # Spread curvatures symmetrically around 0
             # E.g., for 2 edges: [-0.15, 0.15], for 3: [-0.2, 0, 0.2]
             base_rad = 0.15  # Base curvature radius
-            max_rad = 0.35   # Maximum curvature to prevent extreme curves
+            max_rad = 0.35  # Maximum curvature to prevent extreme curves
 
             # MULTI-EDGE LABEL PLACEMENT: Stagger t-parameters
             # For 2 edges: [0.4, 0.6], for 3: [0.35, 0.5, 0.65], etc.
@@ -525,8 +525,8 @@ def _compute_label_position_curved(
 
     # Quadratic Bezier: B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2
     # where P0=(x1,y1), P1=(cx,cy), P2=(x2,y2)
-    b_x = (1-t)**2 * x1 + 2*(1-t)*t * cx + t**2 * x2
-    b_y = (1-t)**2 * y1 + 2*(1-t)*t * cy + t**2 * y2
+    b_x = (1 - t) ** 2 * x1 + 2 * (1 - t) * t * cx + t**2 * x2
+    b_y = (1 - t) ** 2 * y1 + 2 * (1 - t) * t * cy + t**2 * y2
 
     return b_x, b_y
 
@@ -605,6 +605,7 @@ def _compute_label_angle_along_edge(
 #   - runner.py: collected as final_triplets, sentence_triplets, cumulative_triplets
 # ==========================================================================
 
+
 def _draw_triplet_overlay(
     ax,
     triplets: List[Tuple[str, str, str]],
@@ -633,8 +634,7 @@ def _draw_triplet_overlay(
     # Filter triplets to only those involving active nodes
     if active_nodes is not None:
         filtered_triplets = [
-            (s, r, o) for s, r, o in triplets
-            if s in active_nodes and o in active_nodes
+            (s, r, o) for s, r, o in triplets if s in active_nodes and o in active_nodes
         ]
     else:
         filtered_triplets = triplets
@@ -708,7 +708,9 @@ def plot_amoc_triplets(
     edge_activation_scores: Optional[Dict[Tuple[str, str, str], int]] = None,
     layout_from_active_only: bool = True,
     allow_multi_edges: bool = False,  # Paper-aligned: single edge per node pair (default)
-    active_triplets_for_overlay: Optional[List[Tuple[str, str, str]]] = None,  # TASK 2: Triplet overlay
+    active_triplets_for_overlay: Optional[
+        List[Tuple[str, str, str]]
+    ] = None,  # TASK 2: Triplet overlay
     show_triplet_overlay: bool = True,  # TASK 2: Control overlay visibility
 ) -> str:
 
@@ -855,12 +857,23 @@ def plot_amoc_triplets(
 
         # LAYOUT POLICY: Only active structure shapes layout
         # Add to active subgraph only if BOTH endpoints are active
-        is_edge_active = (src, dst) in active_edge_set or (src, dst, edge_key) in active_edge_set
+        is_edge_active = (src, dst) in active_edge_set or (
+            src,
+            dst,
+            edge_key,
+        ) in active_edge_set
         involves_inactive = src in inactive_node_set or dst in inactive_node_set
         if layout_from_active_only and not involves_inactive and is_edge_active:
             G_active.add_edge(src, dst, key=edge_key)
 
     # INVARIANT 1: Nodes derived ONLY from triplets - no injection
+    explicit_node_set = set(explicit_nodes) if explicit_nodes else set()
+
+    for node_name in explicit_node_set:
+        if node_name not in G:
+            G.add_node(node_name)
+
+    # If after injection the graph is still empty, return
     if G.number_of_nodes() == 0:
         return save_path
 
@@ -968,7 +981,9 @@ def plot_amoc_triplets(
             hub = positions["__HUB__"]
         else:
             # Select hub from active nodes (preferring blue_nodes/explicit)
-            hub_candidates = [n for n in layout_nodes if n in blue_nodes] or layout_nodes
+            hub_candidates = [
+                n for n in layout_nodes if n in blue_nodes
+            ] or layout_nodes
             hub = max(hub_candidates, key=lambda n: (UG.degree(n), str(n)))
             if positions is not None:
                 positions["__HUB__"] = hub
@@ -1221,7 +1236,9 @@ def plot_amoc_triplets(
     # Inactive nodes should not exert layout forces on active structure
     # Position them at the periphery, connected to their neighbors if possible
     if layout_from_active_only:
-        inactive_to_place = [n for n in nodes if n in inactive_node_set and n not in pos]
+        inactive_to_place = [
+            n for n in nodes if n in inactive_node_set and n not in pos
+        ]
         if inactive_to_place and pos:
             # Calculate current layout bounds
             max_r = max(
@@ -1329,7 +1346,8 @@ def plot_amoc_triplets(
     # PHASE 2: Use explicit_node_set for color (not blue_nodes)
     if active_in_graph:
         active_colors = [
-            "#a0cbe2" if node in explicit_node_set else "#ffe8a0" for node in active_in_graph
+            "#a0cbe2" if node in explicit_node_set else "#ffe8a0"
+            for node in active_in_graph
         ]
         nx.draw_networkx_nodes(
             G,
@@ -1395,7 +1413,11 @@ def plot_amoc_triplets(
             )
             # Use activation_score for structural edge width
             base_width = 2.5 if not involves_inactive else 1.5
-            structural_edge_widths.append(_score_to_width(activation_score, base_width) if is_active else base_width * 0.6)
+            structural_edge_widths.append(
+                _score_to_width(activation_score, base_width)
+                if is_active
+                else base_width * 0.6
+            )
 
         elif status == "implicit":
             implicit_edges.append((u, v, k))
@@ -1595,7 +1617,13 @@ def plot_amoc_triplets(
                 va="center",
                 rotation=label_angle,  # TASK 1: Rotate to follow edge
                 rotation_mode="anchor",  # Rotate around anchor point
-                bbox=dict(facecolor="white", edgecolor="green", alpha=0.95, pad=0.3, boxstyle="round,pad=0.15"),
+                bbox=dict(
+                    facecolor="white",
+                    edgecolor="green",
+                    alpha=0.95,
+                    pad=0.3,
+                    boxstyle="round,pad=0.15",
+                ),
                 zorder=10,  # Ensure labels render above edges
             )
         elif status == "implicit":
@@ -1624,7 +1652,13 @@ def plot_amoc_triplets(
                 va="center",
                 rotation=label_angle,  # TASK 1: Rotate to follow edge
                 rotation_mode="anchor",
-                bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=0.25, boxstyle="round,pad=0.1"),
+                bbox=dict(
+                    facecolor="white",
+                    edgecolor="none",
+                    alpha=0.85,
+                    pad=0.25,
+                    boxstyle="round,pad=0.1",
+                ),
                 zorder=9,  # Slightly lower z-order for inactive labels
             )
         else:
