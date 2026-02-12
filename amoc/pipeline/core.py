@@ -185,9 +185,15 @@ class AMoCv4:
     ) -> bool:
         lemma = lemma.lower().strip()
 
-        # 1. Lexical grounding (hard gate)
-        if lemma not in self.story_lemmas:
-            pass
+        # 3. Provenance guard (hard gate)
+        if provenance in {
+            "LLM_PROMPT",
+            "GRAPH_SERIALIZATION",
+            "CSV",
+            "PLOTTING",
+            "META",
+        }:
+            return False
 
         if node_type == NodeType.PROPERTY:
             if sent is None:
@@ -203,16 +209,6 @@ class AMoCv4:
 
             if not grounded:
                 return False
-
-        # 3. Provenance guard (hard gate)
-        if provenance in {
-            "LLM_PROMPT",
-            "GRAPH_SERIALIZATION",
-            "CSV",
-            "PLOTTING",
-            "META",
-        }:
-            return False
 
         if lemma not in self.story_lemmas and provenance not in {
             "INFERRED_RELATION",
@@ -359,6 +355,20 @@ class AMoCv4:
             anchor_nodes=self._anchor_nodes,
             sentence_index=sentence_index,
         )
+
+        # ============================================================
+        # HARD INVARIANT:
+        # Explicit nodes must always appear in projection
+        # ============================================================
+        if (
+            self._per_sentence_view is not None
+            and self._per_sentence_view.is_empty
+            and explicit_nodes
+        ):
+            self._per_sentence_view.explicit_nodes = set(explicit_nodes)
+            self._per_sentence_view.carryover_nodes = set()
+            self._per_sentence_view.active_edges = set()
+
         return self._per_sentence_view
 
     def _get_attachable_nodes_for_sentence(self) -> set[Node]:
@@ -438,7 +448,7 @@ class AMoCv4:
             if dist >= max_distance:
                 continue
             for edge in node.edges:
-                if not edge.active:
+                if edge.visibility_score <= 0:
                     continue
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
@@ -1054,13 +1064,6 @@ class AMoCv4:
         return trips
 
     def _restrict_active_to_current_explicit(self, explicit_nodes: List[Node]) -> None:
-        """
-        Paper-aligned projection without snap-to-zero collapse.
-
-        - Explicit nodes = distance 0
-        - Nodes within radius get new distances
-        - Nodes outside radius KEEP previous score (no forced decay here)
-        """
         # ------------------------------------------------------------
         # SENTENCE 1 PROTECTION
         # ------------------------------------------------------------
@@ -1091,21 +1094,29 @@ class AMoCv4:
                 edge.mark_as_asserted(reset_score=True)
 
         for node in self.graph.nodes:
+
+            # Explicit nodes must NEVER decay
+            if node in explicit_nodes:
+                node.score = 0
+                continue
+
             if node in distances:
                 node.score = distances[node]
             else:
-                # Do NOT snap to inactive.
-                # Let decay handle fading.
                 node.score = min(node.score + 1, 100)
 
-        # ------------------------------------------------------------------
-        # HARD GUARANTEE: At least one edge must remain active
-        # ------------------------------------------------------------------
-        if not any(edge.active for edge in self.graph.edges):
-            for edge in self.graph.edges:
-                if edge.visibility_score > 0:
-                    edge.mark_as_reactivated(reset_score=False)
-                    break
+        # ------------------------------------------------------------
+        # Recompute edge active state from node projection
+        # ------------------------------------------------------------
+        for edge in self.graph.edges:
+            if (
+                edge.visibility_score > 0
+                and edge.source_node.score <= self.max_distance_from_active_nodes
+                and edge.dest_node.score <= self.max_distance_from_active_nodes
+            ):
+                edge.active = True
+            else:
+                edge.active = False
 
     def _get_nodes_with_active_edges(self) -> set[Node]:
         active_nodes: set[Node] = set()
@@ -1631,6 +1642,13 @@ class AMoCv4:
             if triplets_override is not None
             else self._graph_edges_to_triplets(only_active=only_active)
         )
+        # ============================================================
+        # HARD EXPLICIT NODE VISIBILITY GUARANTEE
+        # ============================================================
+        if not triplets and explicit_nodes:
+            # Force layout nodes even without edges
+            triplets = []
+
         age_for_filename = self.persona_age if self.persona_age is not None else -1
         try:
             # --- FIX: ensure every node that may be plotted has a concrete position ---
@@ -1641,6 +1659,12 @@ class AMoCv4:
                     nodes_to_plot.add(u)
                 if v:
                     nodes_to_plot.add(v)
+
+            # 2. Explicit nodes must ALWAYS be plotted
+            if explicit_nodes:
+                for node_text in explicit_nodes:
+                    if node_text:
+                        nodes_to_plot.add(node_text)
 
             for lst in (inactive_nodes, explicit_nodes, salient_nodes, highlight_nodes):
                 if lst:
@@ -1692,12 +1716,7 @@ class AMoCv4:
             explicit_nodes_for_plot = [
                 node.get_text_representer()
                 for node in self._explicit_nodes_current_sentence
-                if (
-                    node.node_source == NodeSource.TEXT_BASED
-                    and node.get_text_representer()
-                    and node.get_text_representer() not in META_LEMMAS
-                    and node.is_explicit_in_sentence(self._current_sentence_index)
-                )
+                if node.is_explicit_in_sentence(self._current_sentence_index)
             ]
 
             ever_explicit_nodes_for_plot = [
@@ -1740,10 +1759,16 @@ class AMoCv4:
                 logging.info(
                     "[Plot] Saved sentence %d graph to %s", sentence_index, saved_path
                 )
+            elif explicit_nodes:
+                logging.info(
+                    "[Plot] Saved sentence %d graph (explicit nodes only) to %s",
+                    sentence_index,
+                    saved_path,
+                )
             else:
                 logging.info(
-                    "[Plot] Sentence %d graph skipped (no active edges)",
-                    sentence_index + 1,
+                    "[Plot] Sentence %d graph empty (no explicit nodes, no edges)",
+                    sentence_index,
                 )
         except Exception:
             logging.error("Failed to plot graph snapshot", exc_info=True)
@@ -1950,7 +1975,6 @@ class AMoCv4:
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
                 )
-
             else:
                 added_edges = []
                 current_sentence = sent
@@ -2290,78 +2314,6 @@ class AMoCv4:
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
                 )
-
-                # ============================================================
-                # HARD REQUIREMENT:
-                # All explicit nodes must participate in ≥1 active edge
-                # ============================================================
-
-                violating_nodes = [
-                    node
-                    for node in self._explicit_nodes_current_sentence
-                    if not any(
-                        e.active and (e.source_node == node or e.dest_node == node)
-                        for e in self.graph.edges
-                    )
-                ]
-
-                if violating_nodes:
-                    logging.warning(
-                        "[ExplicitInvariant] Nodes without active edges: %s",
-                        [n.get_text_representer() for n in violating_nodes],
-                    )
-
-                    forced_edges = self._create_forced_connectivity_edges(
-                        story_context=(
-                            " ".join(prev_sentences[:-1])
-                            if len(prev_sentences) > 1
-                            else ""
-                        ),
-                        current_sentence=resolved_text,
-                    )
-
-                    if forced_edges:
-                        added_edges.extend(forced_edges)
-
-                        # Re-run projection AFTER forced recovery
-                        self._restrict_active_to_current_explicit(
-                            list(self._explicit_nodes_current_sentence)
-                        )
-
-                # ==========================================================================
-                # STRUCTURAL RECOVERY PATCH
-                # Ensure per-sentence graph never produces zero active edges
-                # ==========================================================================
-                current_active_edges = [e for e in self.graph.edges if e.active]
-
-                if (
-                    not current_active_edges
-                    and len(self.graph.edges) > 0
-                    and len(self._explicit_nodes_current_sentence) > 0
-                ):
-                    logging.warning(
-                        "[RecoveryPatch] No active edges after processing sentence %d. "
-                        "Triggering recovery LLM call.",
-                        self._current_sentence_index,
-                    )
-                    logging.debug("[Activation] Decayed visibility for inactive edges")
-                    recovery_edges = self._create_forced_connectivity_edges(
-                        story_context=(
-                            " ".join(prev_sentences[:-1])
-                            if len(prev_sentences) > 1
-                            else ""
-                        ),
-                        current_sentence=resolved_text,
-                    )
-
-                    if recovery_edges:
-                        added_edges.extend(recovery_edges)
-                        # Finally decay
-
-                        # Re-run projection AFTER recovery
-                        self._restrict_active_to_current_explicit(
-                            list(self._explicit_nodes_current_sentence)
-                        )
             if self.debug:
                 logging.info(
                     "Active graph after sentence %d:\n%s",
@@ -2429,15 +2381,6 @@ class AMoCv4:
             )
 
             current_active_nodes = self._get_nodes_with_active_edges()
-            # ------------------------------------------------------------
-            # HARD SAFETY: Never allow total active collapse
-            # ------------------------------------------------------------
-            if not any(edge.active for edge in self.graph.edges):
-                for edge in self.graph.edges:
-                    if edge.visibility_score > 0:
-                        edge.mark_as_reactivated(reset_score=False)
-                        break
-
             # Connectivity check using per-sentence view (only in strict mode)
             if (
                 per_sentence_view is not None
@@ -2468,69 +2411,40 @@ class AMoCv4:
                     current_active_nodes
                 )
                 recently_deactivated_nodes = set(gone)
-            # Use per-sentence view for node categorization (constraint-first design)
-            # This ensures inactive nodes are properly excluded from all outputs
+
             if self._per_sentence_view is not None:
-                # Explicit nodes from per-sentence view (guaranteed present)
                 explicit_nodes_for_plot = sorted(
                     filter(
                         None,
                         {
-                            node.get_text_representer()
-                            for node in self._per_sentence_view.explicit_nodes
+                            n.get_text_representer()
+                            for n in self._per_sentence_view.explicit_nodes
                         },
                     )
                 )
-                # Carry-over nodes (salient) from per-sentence view
+
                 salient_nodes_for_plot = sorted(
                     filter(
                         None,
                         {
-                            node.get_text_representer()
-                            for node in self._per_sentence_view.carryover_nodes
+                            n.get_text_representer()
+                            for n in self._per_sentence_view.carryover_nodes
                         },
                     )
                 )
-                # Inactive nodes: all cumulative nodes NOT in the per-sentence active set
-                all_cumulative_node_texts = {
-                    node.get_text_representer()
-                    for node in self.graph.nodes
-                    if node.get_text_representer()
+
+                all_nodes = {
+                    n.get_text_representer()
+                    for n in self.graph.nodes
+                    if n.get_text_representer()
                 }
-                active_node_texts = set(explicit_nodes_for_plot) | set(
+
+                active_nodes = set(explicit_nodes_for_plot) | set(
                     salient_nodes_for_plot
                 )
-                inactive_nodes_for_plot = sorted(
-                    all_cumulative_node_texts - active_node_texts
-                )
-            else:
-                # Fallback to legacy behavior if no per-sentence view
-                inactive_nodes_for_plot = sorted(
-                    filter(
-                        None,
-                        {
-                            node.get_text_representer()
-                            for node in self._cumulative_deactivated_nodes_for_plot
-                        },
-                    )
-                )
-                explicit_nodes_for_plot = sorted(
-                    filter(
-                        None,
-                        {
-                            node.get_text_representer()
-                            for node in current_sentence_text_based_nodes
-                        },
-                    )
-                )
-                salient_nodes_for_plot = sorted(
-                    {
-                        node.get_text_representer()
-                        for node in current_active_nodes
-                        if node.get_text_representer()
-                    }
-                    - set(explicit_nodes_for_plot)
-                )
+
+                inactive_nodes_for_plot = sorted(all_nodes - active_nodes)
+
             # Only keep the deactivated set for targeted inference when the
             # attachment constraint is enforced.
             if self.ENFORCE_ATTACHMENT_CONSTRAINT:
@@ -2551,29 +2465,25 @@ class AMoCv4:
                     else None
                 )
 
+                explicit_nodes_for_plot = [
+                    node.get_text_representer()
+                    for node in self._explicit_nodes_current_sentence
+                    if node.get_text_representer()
+                ]
+
                 active_triplets = self._reconstruct_semantic_triplets(
                     only_active=True,
                     restrict_nodes=active_nodes,
                 )
-                # ==========================================================================
-                # PROJECTION CONTINUITY PATCH
-                # ==========================================================================
-                # If no active triplets in this sentence,
-                # reuse the previous sentence's active projection.
 
-                if not active_triplets:
-                    if (
-                        hasattr(self, "_previous_active_triplets")
-                        and self._previous_active_triplets
-                    ):
-                        logging.debug(
-                            "[ContinuityPatch] No active edges this sentence — reusing previous projection."
-                        )
-                        active_triplets = list(self._previous_active_triplets)
-                    else:
-                        logging.debug(
-                            "[ContinuityPatch] No active edges and no previous state to reuse."
-                        )
+                # ============================================================
+                # PROJECTION CONTINUITY + EXPLICIT FALLBACK
+                # ============================================================
+                if not active_triplets and explicit_nodes_for_plot:
+                    logging.debug(
+                        "[Projection] No active edges — plotting explicit nodes only."
+                    )
+                    active_triplets = []
 
                 # Store current projection snapshot for next iteration
                 self._previous_active_triplets = list(active_triplets)
@@ -3250,6 +3160,17 @@ class AMoCv4:
                                 justification=Justification.TEXTUAL,
                             )
                             break
+                    elif subj and not obj:
+                        subj_node = self.graph.get_node([subj.lemma_.lower()])
+                        if subj_node:
+                            self._add_edge(
+                                subj_node,
+                                subj_node,
+                                tok.lemma_.lower(),
+                                self.edge_visibility,
+                                relation_class=RelationClass.EVENTIVE,
+                                justification=Justification.TEXTUAL,
+                            )
 
     def init_graph(self, sent: Span) -> None:
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
