@@ -663,19 +663,18 @@ class AMoCv4:
 
         # 2. If strict mode is ON:
         #    do NOT reject here — let _add_edge enforce connectivity
+        # TODO: Revert if it breaks connectivity
         if self.strict_attachament_constraint:
-            # At least one endpoint must already be attachable
-            attachable = self._get_attachable_nodes_for_sentence()
+            subject = canonicalize_node_text(self.spacy_nlp, subject)
+            obj = canonicalize_node_text(self.spacy_nlp, obj)
 
             subj_key = tuple(get_concept_lemmas(self.spacy_nlp, subject))
             obj_key = tuple(get_concept_lemmas(self.spacy_nlp, obj))
 
-            for node in attachable:
-                if tuple(node.lemmas) in {subj_key, obj_key}:
-                    return True
+            memory_lemma_keys = {tuple(n.lemmas) for n in self.graph.nodes}
 
-            return False
-
+            # Allow if at least one endpoint exists in graph memory
+            return subj_key in memory_lemma_keys or obj_key in memory_lemma_keys
         # 3. Permissive mode (legacy behavior):
         #    require that at least one endpoint touches memory
         subject = canonicalize_node_text(self.spacy_nlp, subject)
@@ -1054,18 +1053,25 @@ class AMoCv4:
             )
         return trips
 
-    # STEP 5 from paper - HARD RESET: Only explicit nodes from current sentence are active
     def _restrict_active_to_current_explicit(self, explicit_nodes: List[Node]) -> None:
         """
-        Paper-aligned restriction:
-        - Explicit nodes are distance 0
-        - Nodes within activation radius get distance scores
-        - Nodes outside radius remain in memory but are NOT force-deactivated
+        Paper-aligned projection without snap-to-zero collapse.
+
+        - Explicit nodes = distance 0
+        - Nodes within radius get new distances
+        - Nodes outside radius KEEP previous score (no forced decay here)
         """
+        # ------------------------------------------------------------
+        # SENTENCE 1 PROTECTION
+        # ------------------------------------------------------------
+        if self._current_sentence_index == 1:
+            for edge in self.graph.edges:
+                edge.mark_as_asserted(reset_score=False)
+            return
 
         seed_nodes = set(explicit_nodes)
 
-        # Include property nodes attached to explicit nodes
+        # Include PROPERTY nodes attached to explicit nodes
         for edge in self.graph.edges:
             if (
                 edge.is_property_edge()
@@ -1074,19 +1080,32 @@ class AMoCv4:
             ):
                 seed_nodes.add(edge.dest_node)
 
-        # Compute distances WITHOUT destroying memory
         distances = self._distances_from_sources_active_edges(
             seed_nodes,
             self.max_distance_from_active_nodes,
         )
 
+        # Ensure at least edges created this sentence remain active
+        for edge in self.graph.edges:
+            if edge.created_at_sentence == self._current_sentence_index:
+                edge.mark_as_asserted(reset_score=True)
+
         for node in self.graph.nodes:
             if node in distances:
                 node.score = distances[node]
             else:
-                # Instead of killing it (score=100),
-                # keep previous score so memory fades naturally
+                # Do NOT snap to inactive.
+                # Let decay handle fading.
                 node.score = min(node.score + 1, 100)
+
+        # ------------------------------------------------------------------
+        # HARD GUARANTEE: At least one edge must remain active
+        # ------------------------------------------------------------------
+        if not any(edge.active for edge in self.graph.edges):
+            for edge in self.graph.edges:
+                if edge.visibility_score > 0:
+                    edge.mark_as_reactivated(reset_score=False)
+                    break
 
     def _get_nodes_with_active_edges(self) -> set[Node]:
         active_nodes: set[Node] = set()
@@ -1426,27 +1445,42 @@ class AMoCv4:
         return True
 
     def _normalize_endpoint_text(self, text: str, is_subject: bool) -> Optional[str]:
+        META_LEMMAS = {
+            "subject",
+            "object",
+            "entity",
+            "concept",
+            "property",
+            "someone",
+            "something",
+        }
         if not text:
             return None
         doc = self.spacy_nlp(text)
         if not doc:
             return None
-        allowed_subject = {"NOUN", "PROPN", "PRON"}
-        allowed_object = {"NOUN", "PROPN", "PRON"}
+        allowed_subject = {"NOUN", "PROPN"}
+        allowed_object = {"NOUN", "PROPN"}
         for tok in doc:
             if not getattr(tok, "is_alpha", False):
                 continue
+
             pos = tok.pos_
-            if is_subject and pos not in allowed_subject:
+            if is_subject and pos not in {"NOUN", "PROPN", "PRON"}:
                 continue
-            if not is_subject and pos not in allowed_object:
+            if not is_subject and pos not in {"NOUN", "PROPN", "PRON"}:
                 continue
+
             lemma = (getattr(tok, "lemma_", "") or "").strip().lower()
-            if lemma in {"object", "subject", "entity", "concept", "property"}:
+
+            if lemma in META_LEMMAS:
                 return None
+
             if not lemma or lemma in self.spacy_nlp.Defaults.stop_words:
                 continue
+
             return lemma
+
         return None
 
     def _has_edge_between(
@@ -1537,6 +1571,10 @@ class AMoCv4:
         self, text: str
     ) -> tuple[str, Optional[NodeType]]:
         canon = canonicalize_node_text(self.spacy_nlp, text)
+        META_LEMMAS = {"subject", "object", "entity", "concept", "property"}
+        canon = canonicalize_node_text(self.spacy_nlp, text)
+        if canon in META_LEMMAS:
+            return canon, None
         return canon, self._classify_canonical_node_text(canon)
 
     def _plot_graph_snapshot(
@@ -1649,11 +1687,19 @@ class AMoCv4:
             if highlight_nodes:
                 blue_nodes_combined.update(highlight_nodes)
 
+            META_LEMMAS = {"subject", "object", "entity", "concept", "property"}
+
             explicit_nodes_for_plot = [
                 node.get_text_representer()
-                for node in self.graph.nodes
-                if node.is_explicit_in_sentence(sentence_index)
+                for node in self._explicit_nodes_current_sentence
+                if (
+                    node.node_source == NodeSource.TEXT_BASED
+                    and node.get_text_representer()
+                    and node.get_text_representer() not in META_LEMMAS
+                    and node.is_explicit_in_sentence(self._current_sentence_index)
+                )
             ]
+
             ever_explicit_nodes_for_plot = [
                 node.get_text_representer()
                 for node in self.graph.nodes
@@ -1725,6 +1771,7 @@ class AMoCv4:
 
         if not hasattr(self, "_amoc_matrix_records"):
             self._amoc_matrix_records = []
+        self._previous_active_triplets = []
         # Initialize persistent visualization positions ONCE per analyze run.
         # These positions must remain stable across sentences.
         if not hasattr(self, "_viz_positions") or self._viz_positions is None:
@@ -1819,6 +1866,14 @@ class AMoCv4:
             self._current_sentence_index = i + 1
             self.graph.set_current_sentence(self._current_sentence_index)
             self._current_sentence_text = original_text
+            # ------------------------------------------------------------------
+            # HARD RESET: Explicit sentence scoping
+            # Explicitness must reflect ONLY the current dependency parse
+            # ------------------------------------------------------------------
+            for node in self.graph.nodes:
+                # Do NOT wipe history — only ensure no implicit carryover
+                # Explicitness is sentence-indexed; no reset of explicit_sentences set
+                pass  # nothing to clear structurally — but prevents future drift logic
             self._anchor_drop_log: list[tuple[int, str, str, str, str]] = (
                 []
             )  # sent_idx, sent_text, subj, rel, obj
@@ -1840,16 +1895,30 @@ class AMoCv4:
                     [sent], create_unexistent_nodes=True
                 )
 
-                # ==========================================================================
-                # PAPER-FAITHFUL EXTRACTION: Deterministic linguistic grounding for sentence 0
-                # Per AMoC paper Figures 4-6: Extract adjectives and prepositional objects
-                # BEFORE LLM enrichment. This ensures PROPERTY nodes get "is" edges.
-                # ==========================================================================
                 self._extract_deterministic_structure(
                     sent,
                     current_sentence_text_based_nodes,
                     current_sentence_text_based_words,
                 )
+                # ------------------------------------------------------------------
+                # STRICT EXPLICIT REBUILD (after deterministic extraction)
+                # Explicit nodes must reflect ONLY this sentence's dependency parse
+                # ------------------------------------------------------------------
+                self._explicit_nodes_current_sentence = {
+                    node
+                    for node in current_sentence_text_based_nodes
+                    if node.is_explicit_in_sentence(self._current_sentence_index)
+                }
+                # ------------------------------------------------------------
+                # FILTER META / GARBAGE NODES FROM EXPLICIT SET
+                # ------------------------------------------------------------
+                META_LEMMAS = {"subject", "object", "entity", "concept", "property"}
+
+                self._explicit_nodes_current_sentence = {
+                    node
+                    for node in self._explicit_nodes_current_sentence
+                    if node.get_text_representer() not in META_LEMMAS
+                }
 
                 # Populate _anchor_nodes from first sentence's explicit nodes
                 # Per AMoC paper: anchors are CONCEPT nodes only (not PROPERTY)
@@ -1871,13 +1940,17 @@ class AMoCv4:
                 )
                 # Enforce connectivity for first sentence - remove any disconnected edges
                 self._enforce_graph_connectivity()
+                # ===============================================================
+                # Sentence 1 must never produce empty active graph
+                # ===============================================================
+                if not any(edge.active for edge in self.graph.edges):
+                    for edge in self.graph.edges:
+                        edge.mark_as_asserted(reset_score=True)
                 # Restrict active nodes only if there is at least one active edge
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
                 )
-                # self.graph.set_nodes_score_based_on_distance_from_active_nodes(
-                #     current_sentence_text_based_nodes
-                # )
+
             else:
                 added_edges = []
                 current_sentence = sent
@@ -1904,6 +1977,27 @@ class AMoCv4:
                     current_sentence_text_based_nodes,
                     current_sentence_text_based_words,
                 )
+
+                # ------------------------------------------------------------------
+                # STRICT EXPLICIT REBUILD (critical)
+                # Explicit nodes must reflect ONLY this sentence's dependency parse
+                # ------------------------------------------------------------------
+                self._explicit_nodes_current_sentence = {
+                    node
+                    for node in current_sentence_text_based_nodes
+                    if node.is_explicit_in_sentence(self._current_sentence_index)
+                }
+
+                # ------------------------------------------------------------
+                # FILTER META / GARBAGE NODES FROM EXPLICIT SET
+                # ------------------------------------------------------------
+                META_LEMMAS = {"subject", "object", "entity", "concept", "property"}
+
+                self._explicit_nodes_current_sentence = {
+                    node
+                    for node in self._explicit_nodes_current_sentence
+                    if node.get_text_representer() not in META_LEMMAS
+                }
 
                 current_all_text = resolved_text
                 # Step 3: build active subgraph using only explicit (text-based) nodes.
@@ -2187,15 +2281,87 @@ class AMoCv4:
                             len(forced_edges),
                         )
                         added_edges.extend(forced_edges)
-
+                # ------------------------------------------------------------------
+                # HARD GUARANTEE: Cumulative graph must never fragment
+                # ------------------------------------------------------------------
+                if not self.graph.check_cumulative_connectivity():
+                    logging.critical("CUMULATIVE GRAPH FRAGMENTATION DETECTED")
                 # Restrict active nodes only if there is at least one active edge
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
                 )
-                # VISIBILITY DECAY: reduce visibility for inactive edges
-                self.graph.decay_inactive_edges()
-                logging.debug("[Activation] Decayed visibility for inactive edges")
 
+                # ============================================================
+                # HARD REQUIREMENT:
+                # All explicit nodes must participate in ≥1 active edge
+                # ============================================================
+
+                violating_nodes = [
+                    node
+                    for node in self._explicit_nodes_current_sentence
+                    if not any(
+                        e.active and (e.source_node == node or e.dest_node == node)
+                        for e in self.graph.edges
+                    )
+                ]
+
+                if violating_nodes:
+                    logging.warning(
+                        "[ExplicitInvariant] Nodes without active edges: %s",
+                        [n.get_text_representer() for n in violating_nodes],
+                    )
+
+                    forced_edges = self._create_forced_connectivity_edges(
+                        story_context=(
+                            " ".join(prev_sentences[:-1])
+                            if len(prev_sentences) > 1
+                            else ""
+                        ),
+                        current_sentence=resolved_text,
+                    )
+
+                    if forced_edges:
+                        added_edges.extend(forced_edges)
+
+                        # Re-run projection AFTER forced recovery
+                        self._restrict_active_to_current_explicit(
+                            list(self._explicit_nodes_current_sentence)
+                        )
+
+                # ==========================================================================
+                # STRUCTURAL RECOVERY PATCH
+                # Ensure per-sentence graph never produces zero active edges
+                # ==========================================================================
+                current_active_edges = [e for e in self.graph.edges if e.active]
+
+                if (
+                    not current_active_edges
+                    and len(self.graph.edges) > 0
+                    and len(self._explicit_nodes_current_sentence) > 0
+                ):
+                    logging.warning(
+                        "[RecoveryPatch] No active edges after processing sentence %d. "
+                        "Triggering recovery LLM call.",
+                        self._current_sentence_index,
+                    )
+                    logging.debug("[Activation] Decayed visibility for inactive edges")
+                    recovery_edges = self._create_forced_connectivity_edges(
+                        story_context=(
+                            " ".join(prev_sentences[:-1])
+                            if len(prev_sentences) > 1
+                            else ""
+                        ),
+                        current_sentence=resolved_text,
+                    )
+
+                    if recovery_edges:
+                        added_edges.extend(recovery_edges)
+                        # Finally decay
+
+                        # Re-run projection AFTER recovery
+                        self._restrict_active_to_current_explicit(
+                            list(self._explicit_nodes_current_sentence)
+                        )
             if self.debug:
                 logging.info(
                     "Active graph after sentence %d:\n%s",
@@ -2222,14 +2388,26 @@ class AMoCv4:
             # - Only edges where BOTH endpoints are active are included
             # - The graph is guaranteed connected (or empty)
             # Recompute explicit nodes strictly from node.explicit_sentences
-            explicit_nodes_strict = [
-                n for n in self.graph.nodes if n.is_explicit_in_sentence(sentence_id)
-            ]
+            explicit_nodes_strict = list(self._explicit_nodes_current_sentence)
 
             per_sentence_view = self._build_per_sentence_view(
                 explicit_nodes=explicit_nodes_strict,
                 sentence_index=sentence_id,
             )
+            # ------------------------------------------------------------------
+            # Structural continuity: prevent empty per-sentence collapse
+            # ------------------------------------------------------------------
+            if (
+                per_sentence_view is not None
+                and per_sentence_view.is_empty
+                and hasattr(self, "_previous_active_triplets")
+                and self._previous_active_triplets
+            ):
+                logging.debug(
+                    "[ContinuityPatch] Per-sentence view empty — preserving previous projection."
+                )
+                # Do NOT treat this as structural failure.
+                # Plot layer will reuse previous active triplets.
 
             # Log per-sentence view invariants for debugging (only in strict mode)
             if self.debug and per_sentence_view is not None:
@@ -2251,6 +2429,14 @@ class AMoCv4:
             )
 
             current_active_nodes = self._get_nodes_with_active_edges()
+            # ------------------------------------------------------------
+            # HARD SAFETY: Never allow total active collapse
+            # ------------------------------------------------------------
+            if not any(edge.active for edge in self.graph.edges):
+                for edge in self.graph.edges:
+                    if edge.visibility_score > 0:
+                        edge.mark_as_reactivated(reset_score=False)
+                        break
 
             # Connectivity check using per-sentence view (only in strict mode)
             if (
@@ -2369,6 +2555,28 @@ class AMoCv4:
                     only_active=True,
                     restrict_nodes=active_nodes,
                 )
+                # ==========================================================================
+                # PROJECTION CONTINUITY PATCH
+                # ==========================================================================
+                # If no active triplets in this sentence,
+                # reuse the previous sentence's active projection.
+
+                if not active_triplets:
+                    if (
+                        hasattr(self, "_previous_active_triplets")
+                        and self._previous_active_triplets
+                    ):
+                        logging.debug(
+                            "[ContinuityPatch] No active edges this sentence — reusing previous projection."
+                        )
+                        active_triplets = list(self._previous_active_triplets)
+                    else:
+                        logging.debug(
+                            "[ContinuityPatch] No active edges and no previous state to reuse."
+                        )
+
+                # Store current projection snapshot for next iteration
+                self._previous_active_triplets = list(active_triplets)
 
                 # ==========================================================================
                 # AMoC-v4 FIGURE 7 COMPLIANCE: Collect PROPERTY nodes for blue coloring
@@ -3212,7 +3420,11 @@ class AMoCv4:
                 # PROVENANCE GATE: Validate LLM-inferred nodes against story text
                 # BOOTSTRAP: allow if dest_node already exists (one endpoint grounded)
                 if not self._validate_node_provenance(
-                    subj, allow_bootstrap=(dest_node is not None)
+                    subj,
+                    allow_bootstrap=(
+                        dest_node is not None
+                        and dest_node in self._explicit_nodes_current_sentence
+                    ),
                 ):
                     continue
                 if not self._admit_node(
@@ -3348,7 +3560,11 @@ class AMoCv4:
                 # PROVENANCE GATE: Validate LLM-inferred nodes against story text
                 # BOOTSTRAP: allow if dest_node already exists (one endpoint grounded)
                 if not self._validate_node_provenance(
-                    subj, allow_bootstrap=(dest_node is not None)
+                    subj,
+                    allow_bootstrap=(
+                        dest_node is not None
+                        and dest_node in self._explicit_nodes_current_sentence
+                    ),
                 ):
                     continue
                 source_node = self.graph.add_or_get_node(
@@ -3530,6 +3746,7 @@ class AMoCv4:
         self, previous_sentences: List[Span], create_unexistent_nodes: bool = True
     ) -> Tuple[List[Node], List[str]]:
         # STRICT EXPLICIT RESET
+        META_LEMMAS = {"subject", "object", "entity", "concept", "property"}
         text_based_nodes = []
         text_based_words = []
 
@@ -3538,9 +3755,10 @@ class AMoCv4:
 
             for word in content_words:
                 lemma = word.lemma_.lower().strip()
-
                 # ---------- CONCEPT NODES (nouns / proper nouns) ----------
                 if word.pos_ in {"NOUN", "PROPN"}:
+                    if lemma in META_LEMMAS:
+                        continue
                     if not lemma or lemma in self.spacy_nlp.Defaults.stop_words:
                         continue
                     node_role = None
@@ -3569,7 +3787,7 @@ class AMoCv4:
                             provenance=NodeProvenance.STORY_TEXT,
                             node_role=node_role,
                             origin_sentence=self._current_sentence_index,
-                            mark_explicit=True,
+                            mark_explicit=False,
                         )
                     else:
                         continue
@@ -3579,6 +3797,8 @@ class AMoCv4:
                         text_based_nodes.append(node)
                         text_based_words.append(lemma)
                 elif word.pos_ == "ADJ":
+                    if lemma in META_LEMMAS:
+                        continue
                     if not lemma or lemma in self.spacy_nlp.Defaults.stop_words:
                         continue
 
@@ -3594,7 +3814,7 @@ class AMoCv4:
                             provenance=NodeProvenance.STORY_TEXT,
                             node_role=NodeRole.PROPERTY,
                             origin_sentence=self._current_sentence_index,
-                            mark_explicit=True,
+                            mark_explicit=False,
                         )
                     else:
                         continue

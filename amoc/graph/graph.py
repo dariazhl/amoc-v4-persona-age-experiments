@@ -481,7 +481,12 @@ class Graph:
         dest_connected = new_edge.dest_node in G.nodes()
 
         # Dependent relations require at least one endpoint to be grounded
-        return source_connected or dest_connected
+        if not source_connected and not dest_connected:
+            return False
+
+        # simulate addition and test connectivity
+        G.add_edge(new_edge.source_node, new_edge.dest_node)
+        return nx.is_connected(G)
 
     def check_if_similar_edge_exists(self, edge: Edge, edge_visibility: int) -> bool:
         if edge in self.edges:
@@ -552,7 +557,7 @@ class Graph:
 
         concept_seeds = {
             n
-            for n in (explicit_nodes | memory_nodes | inferred_nodes)
+            for n in explicit_nodes
             if n.node_type != NodeType.PROPERTY and not n.is_setting()
         }
 
@@ -640,7 +645,14 @@ class Graph:
     ) -> Tuple[Set[Node], Set[Edge]]:
         active_edges: Set[Edge] = set()
         active_nodes: Set[Node] = set()
+        concept_active_nodes: Set[Node] = set()
 
+        for edge in self.edges:
+            if edge.active and edge.activation_score > activation_threshold:
+                if edge.source_node.node_type != NodeType.PROPERTY:
+                    concept_active_nodes.add(edge.source_node)
+                if edge.dest_node.node_type != NodeType.PROPERTY:
+                    concept_active_nodes.add(edge.dest_node)
         for edge in self.edges:
             if not edge.active:
                 continue
@@ -659,7 +671,7 @@ class Graph:
                     if edge.source_node.node_type == NodeType.CONCEPT
                     else edge.dest_node
                 )
-                if concept_end not in active_nodes:
+                if concept_end not in concept_active_nodes:
                     continue
                 # Property edge is valid - include it
 
@@ -1659,3 +1671,11 @@ class Graph:
             )
 
         return filtered
+
+    def check_cumulative_connectivity(self):
+        G = nx.Graph()
+        for edge in self.edges:
+            G.add_edge(edge.source_node, edge.dest_node)
+        if G.number_of_nodes() <= 1:
+            return True
+        return nx.is_connected(G)
