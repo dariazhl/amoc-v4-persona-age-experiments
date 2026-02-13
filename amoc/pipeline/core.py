@@ -49,7 +49,6 @@ class AMoCv4:
     # NOTE: Simple "is" and "be" are KEPT because the AMoC paper uses them
     # (e.g., "knight - is - brave" in Figure 7)
     GENERIC_RELATION_LABELS = {
-        "appears",
         "contains",
         "includes",
         "include",
@@ -183,9 +182,16 @@ class AMoCv4:
         provenance: str,
         sent: Optional[Span] = None,
     ) -> bool:
+        """
+        Gate for node admission.
+
+        INVARIANTS (STEP 4):
+        - Inferred nodes must attach to at least one ACTIVE node
+        - No floating abstraction nodes allowed
+        """
         lemma = lemma.lower().strip()
 
-        # 3. Provenance guard (hard gate)
+        # Provenance guard (hard gate)
         if provenance in {
             "LLM_PROMPT",
             "GRAPH_SERIALIZATION",
@@ -210,10 +216,18 @@ class AMoCv4:
             if not grounded:
                 return False
 
-        if lemma not in self.story_lemmas and provenance not in {
+        # STEP 4: Strict attachment guard for inference
+        # Story-grounded nodes are always allowed
+        is_story_grounded = lemma in self.story_lemmas
+
+        # Inference is allowed ONLY if the node can attach to an ACTIVE node
+        is_allowed_inference = provenance in {
             "INFERRED_RELATION",
             "INFERENCE_BASED",
-        }:
+        } and self._has_active_attachment(lemma)
+
+        # If neither story grounded nor allowed inference, reject
+        if not is_story_grounded and not is_allowed_inference:
             return False
 
         return True
@@ -864,11 +878,6 @@ class AMoCv4:
             if use_sentence == self._current_sentence_index:
                 edge.mark_as_asserted(reset_score=True)
 
-            # Mark edge as ASSERTED this sentence (per AMoC v4 paper semantics)
-            # Only assert if edge is created in current sentence (prevents old edges from reactivating)
-            if use_sentence == self._current_sentence_index:
-                edge.mark_as_asserted(reset_score=True)
-
             trip_id = (
                 edge.source_node.get_text_representer(),
                 edge.label,
@@ -1063,7 +1072,49 @@ class AMoCv4:
             )
         return trips
 
+    def _distances_from_projection_sources(
+        self, sources: set[Node], max_distance: int
+    ) -> dict[Node, int]:
+        """
+        BFS from projection sources using ONLY active edges.
+
+        INVARIANTS:
+        - Traverse ONLY edges where edge.active == True
+        - DO NOT modify edge.active during traversal
+        - Returns distance dict from sources
+        """
+        if not sources:
+            return {}
+        distances: dict[Node, int] = {s: 0 for s in sources}
+        queue: deque[Node] = deque(sources)
+        while queue:
+            node = queue.popleft()
+            dist = distances[node]
+            if dist >= max_distance:
+                continue
+            for edge in node.edges:
+                # INVARIANT: Only traverse ACTIVE edges
+                if not edge.active:
+                    continue
+                neighbor = (
+                    edge.dest_node if edge.source_node == node else edge.source_node
+                )
+                if neighbor in distances:
+                    continue
+                distances[neighbor] = dist + 1
+                queue.append(neighbor)
+        return distances
+
     def _restrict_active_to_current_explicit(self, explicit_nodes: List[Node]) -> None:
+        """
+        Compute projection and update node scores.
+
+        INVARIANTS:
+        - Active nodes = nodes connected by ACTIVE edges only
+        - Projection uses: explicit_nodes ∪ previously_active_nodes
+        - BFS traverses ONLY active edges
+        - Projection must NEVER activate edges (read-only)
+        """
         # ------------------------------------------------------------
         # SENTENCE 1 PROTECTION
         # ------------------------------------------------------------
@@ -1072,29 +1123,35 @@ class AMoCv4:
                 edge.mark_as_asserted(reset_score=False)
             return
 
-        seed_nodes = set(explicit_nodes)
-
-        # Include PROPERTY nodes attached to explicit nodes
-        for edge in self.graph.edges:
-            if (
-                edge.is_property_edge()
-                and edge.source_node in seed_nodes
-                and edge.visibility_score > 0
-            ):
-                seed_nodes.add(edge.dest_node)
-
-        distances = self._distances_from_sources_active_edges(
-            seed_nodes,
-            self.max_distance_from_active_nodes,
-        )
-
-        # Ensure at least edges created this sentence remain active
+        # Edges created this sentence are asserted (this is allowed - not projection)
         for edge in self.graph.edges:
             if edge.created_at_sentence == self._current_sentence_index:
                 edge.mark_as_asserted(reset_score=True)
 
-        for node in self.graph.nodes:
+        # STEP 2: Compute projection sources
+        # projection_sources = explicit_nodes ∪ previously_active_nodes
+        previously_active_nodes = self._get_nodes_with_active_edges()
+        projection_sources = set(explicit_nodes) | previously_active_nodes
 
+        # Include PROPERTY nodes attached to explicit nodes via active edges
+        for edge in self.graph.edges:
+            if (
+                edge.active
+                and edge.is_property_edge()
+                and edge.source_node in projection_sources
+                and edge.visibility_score > 0
+            ):
+                projection_sources.add(edge.dest_node)
+
+        # BFS from projection_sources using ONLY active edges
+        # DO NOT modify edge.active inside BFS
+        distances = self._distances_from_projection_sources(
+            projection_sources,
+            self.max_distance_from_active_nodes,
+        )
+
+        # Update node scores based on distances
+        for node in self.graph.nodes:
             # Explicit nodes must NEVER decay
             if node in explicit_nodes:
                 node.score = 0
@@ -1106,12 +1163,17 @@ class AMoCv4:
                 node.score = min(node.score + 1, 100)
 
         # ------------------------------------------------------------
-        # Recompute edge active state from node projection
+        # Recompute edge active state from projection (RESTORE)
         # ------------------------------------------------------------
         for edge in self.graph.edges:
+            if edge.visibility_score <= 0:
+                edge.active = False
+                continue
+
+            # Edge remains active only if BOTH endpoints
+            # are within projection distance threshold
             if (
-                edge.visibility_score > 0
-                and edge.source_node.score <= self.max_distance_from_active_nodes
+                edge.source_node.score <= self.max_distance_from_active_nodes
                 and edge.dest_node.score <= self.max_distance_from_active_nodes
             ):
                 edge.active = True
@@ -1133,6 +1195,27 @@ class AMoCv4:
             | self._explicit_nodes_current_sentence
         )
         return node in attachable
+
+    def _can_attach_lemma(self, active_node: Node, lemma: str) -> bool:
+        """
+        Returns True if the lemma can attach to the given active node.
+        Attachment rule: lemma matches any lemma of the active node.
+        """
+        lemma_lower = lemma.lower().strip()
+        return lemma_lower in active_node.lemmas
+
+    def _has_active_attachment(self, lemma: str) -> bool:
+        """
+        Inferred node is allowed ONLY if it can attach to
+        at least one currently ACTIVE node.
+        """
+        active_nodes = self._get_nodes_with_active_edges()
+
+        for node in active_nodes:
+            if self._can_attach_lemma(node, lemma):
+                return True
+
+        return False
 
     def _normalize_label(self, label: str) -> str:
         norm = (label or "").strip().lower()
@@ -2326,6 +2409,21 @@ class AMoCv4:
                     n for n in self._anchor_nodes if n in self.graph.nodes
                 }
 
+            # ------------------------------------------------------------
+            # GLOBAL EDGE DECAY (POST-PROJECTION)
+            # Must run AFTER plotting and projection.
+            # ------------------------------------------------------------
+            for edge in self.graph.edges:
+                # Do not decay edges created this sentence
+                if edge.created_at_sentence == self._current_sentence_index:
+                    continue
+
+                if edge.visibility_score > 0:
+                    edge.visibility_score -= 1
+
+                if edge.visibility_score <= 0:
+                    edge.active = False
+
             sentence_id = i + 1
             newly_inferred_nodes = {
                 n
@@ -2955,6 +3053,7 @@ class AMoCv4:
                 "is",
                 self.edge_visibility,
                 created_at_sentence=self._current_sentence_index,
+                bypass_attachment_constraint=True,
                 relation_class=RelationClass.ATTRIBUTIVE,
                 justification=Justification.TEXTUAL,
             )
@@ -3024,6 +3123,7 @@ class AMoCv4:
                 "is",
                 self.edge_visibility,
                 created_at_sentence=self._current_sentence_index,
+                bypass_attachment_constraint=True,
                 relation_class=RelationClass.ATTRIBUTIVE,
                 justification=Justification.TEXTUAL,
             )
@@ -3163,14 +3263,22 @@ class AMoCv4:
                     elif subj and not obj:
                         subj_node = self.graph.get_node([subj.lemma_.lower()])
                         if subj_node:
-                            self._add_edge(
-                                subj_node,
-                                subj_node,
+                            event_node = self.graph.add_or_get_node(
+                                [tok.lemma_.lower()],
                                 tok.lemma_.lower(),
-                                self.edge_visibility,
-                                relation_class=RelationClass.EVENTIVE,
-                                justification=Justification.TEXTUAL,
+                                NodeType.EVENT,
+                                NodeSource.TEXT_BASED,
+                                provenance=NodeProvenance.STORY_TEXT,
                             )
+                            if event_node:
+                                self._add_edge(
+                                    subj_node,
+                                    event_node,
+                                    tok.lemma_.lower(),
+                                    self.edge_visibility,
+                                    relation_class=RelationClass.EVENTIVE,
+                                    justification=Justification.TEXTUAL,
+                                )
 
     def init_graph(self, sent: Span) -> None:
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
