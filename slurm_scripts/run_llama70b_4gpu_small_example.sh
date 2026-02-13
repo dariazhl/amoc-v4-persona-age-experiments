@@ -57,6 +57,11 @@ else
     echo "No story file provided"
 fi
 
+STORY_ARG=""
+if [[ -n "${STORY_FILE}" ]]; then
+    STORY_ARG="--story-text ${STORY_FILE}"
+fi
+
 # =========================
 # Run AMoC
 # =========================
@@ -69,4 +74,4 @@ bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
     --file "${INPUT_FILE}" \
     --strict-reactivate-function \
     --strict-attachament-constraint \
-    --story-text "${STORY_FILE}"
+    ${STORY_ARG}

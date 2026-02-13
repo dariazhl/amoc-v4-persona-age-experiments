@@ -1110,12 +1110,15 @@ class AMoCv4:
         self, sources: set[Node], max_distance: int
     ) -> dict[Node, int]:
         """
-        BFS from projection sources using ONLY edges with visibility_score > 0.
+        BFS from projection sources using ONLY active edges.
 
         INVARIANTS:
-        - Traverse ONLY edges where edge.visibility_score > 0
+        - Traverse ONLY edges where edge.active == True
         - DO NOT modify any edge state during traversal
         - Returns distance dict from sources
+
+        Paper-aligned: Projection operates on structural salience (active),
+        NOT on decay state (visibility_score).
         """
         if not sources:
             return {}
@@ -1127,8 +1130,8 @@ class AMoCv4:
             if dist >= max_distance:
                 continue
             for edge in node.edges:
-                # INVARIANT: Only traverse edges with positive visibility
-                if edge.visibility_score <= 0:
+                # INVARIANT: Only traverse ACTIVE edges (structural salience)
+                if not edge.active:
                     continue
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
@@ -1158,14 +1161,15 @@ class AMoCv4:
                 edge.mark_as_asserted(reset_score=True)
 
         # ------------------------------------------------------------
-        # 2. Capture carry-over active nodes (from visibility, not stale active)
+        # 2. Capture carry-over active nodes (from structural salience)
+        # Paper-aligned: Carryover derives from edge.active, NOT visibility
         # ------------------------------------------------------------
-        previously_active_nodes = set()
-        for edge in self.graph.edges:
-            if edge.visibility_score > 0:
-                previously_active_nodes.add(edge.source_node)
-                previously_active_nodes.add(edge.dest_node)
-
+        # Carryover = nodes still inside previous projection window
+        previously_active_nodes = {
+            node
+            for node in self.graph.nodes
+            if node.score <= self.max_distance_from_active_nodes
+        }
         # ------------------------------------------------------------
         # 3. Reset all node scores (hard reset to prevent drift)
         # ------------------------------------------------------------
@@ -1307,7 +1311,7 @@ class AMoCv4:
             )
 
         # Active projection (salience)
-        if edge.active or edge.visibility_score > 0:
+        if edge.active:
             self.active_graph.add_edge(
                 u,
                 v,
@@ -2006,6 +2010,7 @@ class AMoCv4:
             self._current_sentence_index = i + 1
             self.graph.set_current_sentence(self._current_sentence_index)
             self._current_sentence_text = original_text
+
             # ------------------------------------------------------------------
             # HARD RESET: Explicit sentence scoping
             # Explicitness must reflect ONLY the current dependency parse
@@ -2429,6 +2434,27 @@ class AMoCv4:
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
                 )
+                # ------------------------------------------------------------
+                # GLOBAL EDGE DECAY (Paper Step 4)
+                # Order:
+                #   1. Assert edges
+                #   2. Projection
+                #   3. Reactivation
+                #   4. Fade non-selected edges
+                # ------------------------------------------------------------
+                for edge in self.graph.edges:
+
+                    # Do not decay edges created this sentence
+                    if edge.created_at_sentence == self._current_sentence_index:
+                        continue
+
+                    # Only decay edges not structurally active
+                    if not edge.is_asserted() and not edge.is_reactivated():
+                        if edge.visibility_score > 0:
+                            edge.visibility_score -= 1
+
+                        if edge.visibility_score <= 0:
+                            edge.active = False
             if self.debug:
                 logging.info(
                     "Active graph after sentence %d:\n%s",
@@ -2440,21 +2466,6 @@ class AMoCv4:
                 self._anchor_nodes = {
                     n for n in self._anchor_nodes if n in self.graph.nodes
                 }
-
-            # ------------------------------------------------------------
-            # GLOBAL EDGE DECAY (POST-PROJECTION)
-            # Must run AFTER plotting and projection.
-            # ------------------------------------------------------------
-            for edge in self.graph.edges:
-                # Do not decay edges created this sentence
-                if edge.created_at_sentence == self._current_sentence_index:
-                    continue
-
-                if edge.visibility_score > 0:
-                    edge.visibility_score -= 1
-
-                if edge.visibility_score <= 0:
-                    edge.active = False
 
             sentence_id = i + 1
             newly_inferred_nodes = {
@@ -3858,27 +3869,22 @@ class AMoCv4:
                         text_based_nodes.append(node)
                         text_based_words.append(lemma)
                 elif word.pos_ == "ADJ":
-                    if lemma in META_LEMMAS:
-                        continue
-                    if not lemma or lemma in self.spacy_nlp.Defaults.stop_words:
-                        continue
+                    # --------------------------------------------------------
+                    # HARD PROPERTY GROUNDING (persona-invariant)
+                    # If spaCy says ADJ → always create PROPERTY node
+                    # No stopword filtering. No prior state dependence.
+                    # --------------------------------------------------------
 
-                    node = self.graph.get_node([lemma])
-                    if node is not None:
-                        node.add_actual_text(lemma)
-                    elif create_unexistent_nodes:
-                        node = self.graph.add_or_get_node(
-                            [lemma],
-                            lemma,
-                            NodeType.PROPERTY,
-                            NodeSource.TEXT_BASED,
-                            provenance=NodeProvenance.STORY_TEXT,
-                            node_role=NodeRole.PROPERTY,
-                            origin_sentence=self._current_sentence_index,
-                            mark_explicit=False,
-                        )
-                    else:
-                        continue
+                    node = self.graph.add_or_get_node(
+                        [lemma],
+                        lemma,
+                        NodeType.PROPERTY,
+                        NodeSource.TEXT_BASED,
+                        provenance=NodeProvenance.STORY_TEXT,
+                        node_role=NodeRole.PROPERTY,
+                        origin_sentence=self._current_sentence_index,
+                        mark_explicit=False,
+                    )
 
                     if node is not None:
                         node.mark_explicit_in_sentence(self._current_sentence_index)
