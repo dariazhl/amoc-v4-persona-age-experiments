@@ -25,7 +25,6 @@ from amoc.nlp.spacy_utils import (
     get_concept_lemmas,
     canonicalize_node_text,
     get_content_words_from_sent,
-    extract_adjectival_modifiers,
     extract_prepositional_objects,
     canonicalize_edge_label,
     is_adverb_token,
@@ -2051,9 +2050,9 @@ class AMoCv4:
                     current_sentence_text_based_nodes,
                     current_sentence_text_based_words,
                 )
+
                 # ------------------------------------------------------------------
-                # STRICT EXPLICIT REBUILD (after deterministic extraction)
-                # Explicit nodes must reflect ONLY this sentence's dependency parse
+                # STRICT EXPLICIT REBUILD (authoritative for this sentence)
                 # ------------------------------------------------------------------
                 self._explicit_nodes_current_sentence = {
                     node
@@ -2061,20 +2060,6 @@ class AMoCv4:
                     if node.is_explicit_in_sentence(self._current_sentence_index)
                 }
 
-                # HARD FREEZE — explicit set immutable for this sentence
-                self._explicit_nodes_current_sentence = set(
-                    self._explicit_nodes_current_sentence
-                )
-
-                # ------------------------------------------------------------------
-                # FREEZE explicit set for this sentence (no later mutation allowed)
-                # ------------------------------------------------------------------
-                self._explicit_nodes_current_sentence = set(
-                    self._explicit_nodes_current_sentence
-                )
-                # ------------------------------------------------------------
-                # FILTER META / GARBAGE NODES FROM EXPLICIT SET
-                # ------------------------------------------------------------
                 META_LEMMAS = {"subject", "object", "entity", "concept", "property"}
 
                 self._explicit_nodes_current_sentence = {
@@ -2083,7 +2068,7 @@ class AMoCv4:
                     if node.get_text_representer() not in META_LEMMAS
                 }
 
-                # HARD FREEZE — explicit set immutable for this sentence
+                # Freeze once
                 self._explicit_nodes_current_sentence = set(
                     self._explicit_nodes_current_sentence
                 )
@@ -2146,8 +2131,7 @@ class AMoCv4:
                 )
 
                 # ------------------------------------------------------------------
-                # STRICT EXPLICIT REBUILD (critical)
-                # Explicit nodes must reflect ONLY this sentence's dependency parse
+                # STRICT EXPLICIT REBUILD (authoritative for this sentence)
                 # ------------------------------------------------------------------
                 self._explicit_nodes_current_sentence = {
                     node
@@ -2155,16 +2139,6 @@ class AMoCv4:
                     if node.is_explicit_in_sentence(self._current_sentence_index)
                 }
 
-                # ------------------------------------------------------------------
-                # FREEZE explicit set for this sentence (no later mutation allowed)
-                # ------------------------------------------------------------------
-                self._explicit_nodes_current_sentence = set(
-                    self._explicit_nodes_current_sentence
-                )
-
-                # ------------------------------------------------------------
-                # FILTER META / GARBAGE NODES FROM EXPLICIT SET
-                # ------------------------------------------------------------
                 META_LEMMAS = {"subject", "object", "entity", "concept", "property"}
 
                 self._explicit_nodes_current_sentence = {
@@ -2172,6 +2146,11 @@ class AMoCv4:
                     for node in self._explicit_nodes_current_sentence
                     if node.get_text_representer() not in META_LEMMAS
                 }
+
+                # Freeze once
+                self._explicit_nodes_current_sentence = set(
+                    self._explicit_nodes_current_sentence
+                )
 
                 current_all_text = resolved_text
                 # Step 3: build active subgraph using only explicit (text-based) nodes.
@@ -3071,21 +3050,48 @@ class AMoCv4:
         current_sentence_text_based_nodes: List[Node],
         current_sentence_text_based_words: List[str],
     ) -> None:
-        # 1. Extract adjectival modifiers → PROPERTY nodes
-        adj_modifiers = extract_adjectival_modifiers(sent)
-        for mod in adj_modifiers:
-            adj_lemma = mod["adjective"]
-            head_lemma = mod["head_noun"]
 
-            # Find or skip if head noun is not already a CONCEPT node
-            head_node = None
-            for node in current_sentence_text_based_nodes:
-                if head_lemma in node.lemmas:
-                    head_node = node
-                    break
+        # ------------------------------------------------------------
+        # PROPERTY EXTRACTION (HARDENED)
+        # ------------------------------------------------------------
 
+        for tok in sent:
+
+            # Case 1: Attributive adjectives (amod)
+            if tok.dep_ == "amod" and tok.head.pos_ in {"NOUN", "PROPN"}:
+                adj_lemma = tok.lemma_.lower()
+                head_lemma = tok.head.lemma_.lower()
+
+            # Case 2: Predicate adjectives (copula constructions)
+            elif tok.dep_ in {"acomp", "attr"}:
+                if not any(child.lemma_ == "be" for child in tok.head.children):
+                    continue
+
+                # Allow ADJ or participial VBN
+                if not (
+                    tok.pos_ == "ADJ" or (tok.pos_ == "VERB" and tok.tag_ == "VBN")
+                ):
+                    continue
+
+                subj = next(
+                    (c for c in tok.head.children if c.dep_ in {"nsubj", "nsubjpass"}),
+                    None,
+                )
+                if subj is None:
+                    continue
+
+                adj_lemma = tok.lemma_.lower()
+                head_lemma = subj.lemma_.lower()
+
+            else:
+                continue
+
+            # -----------------------
+            # Attach to existing CONCEPT
+            # -----------------------
+
+            head_node = self.graph.get_node([head_lemma])
             if head_node is None:
-                # Head noun not in current sentence nodes - skip
                 continue
 
             # Create PROPERTY node for the adjective
@@ -3103,21 +3109,16 @@ class AMoCv4:
                 NodeType.PROPERTY,
                 NodeSource.TEXT_BASED,
                 provenance=NodeProvenance.STORY_TEXT,
+                origin_sentence=self._current_sentence_index,
             )
 
-            if property_node is not None:
-                property_node.mark_explicit_in_sentence(self._current_sentence_index)
+            property_node.mark_explicit_in_sentence(self._current_sentence_index)
 
-            # Track that this is a text-based node from current sentence
-            if (
-                property_node is not None
-                and property_node not in current_sentence_text_based_nodes
-            ):
+            if property_node not in current_sentence_text_based_nodes:
                 current_sentence_text_based_nodes.append(property_node)
                 current_sentence_text_based_words.append(adj_lemma)
 
-            # Create edge: concept --is--> property (through centralized path)
-            edge = self._add_edge(
+            self._add_edge(
                 head_node,
                 property_node,
                 "is",
@@ -3127,80 +3128,6 @@ class AMoCv4:
                 relation_class=RelationClass.ATTRIBUTIVE,
                 justification=Justification.TEXTUAL,
             )
-            if edge is not None:
-                logging.debug(
-                    f"[Deterministic] Created PROPERTY edge: {head_lemma} --is--> {adj_lemma}"
-                )
-
-        # 1b. Extract predicate adjectives (copula constructions) → PROPERTY nodes
-        for tok in sent:
-            if tok.pos_ != "ADJ" or tok.dep_ not in {"acomp", "attr"}:
-                continue
-
-            adj_lemma = tok.lemma_.lower()
-            head = tok.head
-            subj_token = None
-            for child in head.children:
-                if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {
-                    "NOUN",
-                    "PROPN",
-                }:
-                    subj_token = child
-                    break
-            if subj_token is None:
-                continue
-
-            head_lemma = subj_token.lemma_.lower()
-            head_node = None
-            for node in current_sentence_text_based_nodes:
-                if head_lemma in node.lemmas:
-                    head_node = node
-                    break
-            if head_node is None:
-                head_node = self.graph.get_node([head_lemma])
-            if head_node is None:
-                continue
-
-            if not self._admit_node(
-                lemma=adj_lemma,
-                node_type=NodeType.PROPERTY,
-                provenance="SYNTACTIC_PROPERTY",
-                sent=sent,
-            ):
-                continue
-
-            property_node = self.graph.add_or_get_node(
-                [adj_lemma],
-                adj_lemma,
-                NodeType.PROPERTY,
-                NodeSource.TEXT_BASED,
-                provenance=NodeProvenance.STORY_TEXT,
-            )
-
-            if property_node is not None:
-                property_node.mark_explicit_in_sentence(self._current_sentence_index)
-
-            if (
-                property_node is not None
-                and property_node not in current_sentence_text_based_nodes
-            ):
-                current_sentence_text_based_nodes.append(property_node)
-                current_sentence_text_based_words.append(adj_lemma)
-
-            edge = self._add_edge(
-                head_node,
-                property_node,
-                "is",
-                self.edge_visibility,
-                created_at_sentence=self._current_sentence_index,
-                bypass_attachment_constraint=True,
-                relation_class=RelationClass.ATTRIBUTIVE,
-                justification=Justification.TEXTUAL,
-            )
-            if edge is not None:
-                logging.debug(
-                    f"[Deterministic] Created predicate PROPERTY edge: {head_lemma} --is--> {adj_lemma}"
-                )
 
         # 2. Extract prepositional objects → CONCEPT nodes
         prep_objects = extract_prepositional_objects(sent)
@@ -3895,17 +3822,17 @@ class AMoCv4:
                         node.mark_explicit_in_sentence(self._current_sentence_index)
                         text_based_nodes.append(node)
                         text_based_words.append(lemma)
-                # ---------- PROPERTY NODES (adjectives) ----------
-                elif word.pos_ == "ADJ":
-                    if not lemma:
-                        continue
+                # # ---------- PROPERTY NODES (adjectives) ----------
+                # elif word.pos_ == "ADJ":
+                #     if not lemma:
+                #         continue
 
-                    existing = self.graph.get_node([lemma])
+                #     existing = self.graph.get_node([lemma])
 
-                    if existing and existing.node_type == NodeType.PROPERTY:
-                        existing.mark_explicit_in_sentence(self._current_sentence_index)
-                        text_based_nodes.append(existing)
-                        text_based_words.append(lemma)
+                #     if existing and existing.node_type == NodeType.PROPERTY:
+                #         existing.mark_explicit_in_sentence(self._current_sentence_index)
+                #         text_based_nodes.append(existing)
+                #         text_based_words.append(lemma)
 
         # Return unique values only
         seen_nodes = set()
