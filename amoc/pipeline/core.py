@@ -773,6 +773,40 @@ class AMoCv4:
         justification: Justification = None,
         persona_influenced: bool = False,
     ) -> Optional[Edge]:
+        # ------------------------------------------------------------
+        # SELF-LOOP SANITIZATION (LLM FIX)
+        # Convert self-loop intransitives into EVENT structure
+        # dragon --appears--> dragon  →  dragon --appears--> appear_event
+        # ------------------------------------------------------------
+        if source_node == dest_node:
+            canon_label = Graph.canonicalize_relation_label(label)
+            if not canon_label:
+                return None
+
+            if not self._is_valid_relation_label(canon_label):
+                return None
+            event_node = self.graph.add_or_get_node(
+                [canon_label],
+                canon_label,
+                NodeType.EVENT,
+                NodeSource.TEXT_BASED,
+                provenance=NodeProvenance.STORY_TEXT,
+            )
+            if event_node:
+                return self._add_edge(
+                    source_node,
+                    event_node,
+                    canon_label,
+                    edge_forget,
+                    created_at_sentence=created_at_sentence,
+                    bypass_attachment_constraint=bypass_attachment_constraint,
+                    skip_event_mediation=skip_event_mediation,
+                    relation_class=relation_class or RelationClass.EVENTIVE,
+                    justification=justification,
+                    persona_influenced=persona_influenced,
+                )
+            return None
+
         attachable = self._get_attachable_nodes_for_sentence()
 
         if not bypass_attachment_constraint:
@@ -1076,11 +1110,11 @@ class AMoCv4:
         self, sources: set[Node], max_distance: int
     ) -> dict[Node, int]:
         """
-        BFS from projection sources using ONLY active edges.
+        BFS from projection sources using ONLY edges with visibility_score > 0.
 
         INVARIANTS:
-        - Traverse ONLY edges where edge.active == True
-        - DO NOT modify edge.active during traversal
+        - Traverse ONLY edges where edge.visibility_score > 0
+        - DO NOT modify any edge state during traversal
         - Returns distance dict from sources
         """
         if not sources:
@@ -1093,8 +1127,8 @@ class AMoCv4:
             if dist >= max_distance:
                 continue
             for edge in node.edges:
-                # INVARIANT: Only traverse ACTIVE edges
-                if not edge.active:
+                # INVARIANT: Only traverse edges with positive visibility
+                if edge.visibility_score <= 0:
                     continue
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
@@ -1106,72 +1140,70 @@ class AMoCv4:
         return distances
 
     def _restrict_active_to_current_explicit(self, explicit_nodes: List[Node]) -> None:
-        """
-        Compute projection and update node scores.
+        # # ------------------------------------------------------------
+        # # SENTENCE 1 PROTECTION
+        # # ------------------------------------------------------------
+        # if self._current_sentence_index == 1:
+        #     for node in self.graph.nodes:
+        #         node.score = 0 if node in explicit_nodes else 1
 
-        INVARIANTS:
-        - Active nodes = nodes connected by ACTIVE edges only
-        - Projection uses: explicit_nodes ∪ previously_active_nodes
-        - BFS traverses ONLY active edges
-        - Projection must NEVER activate edges (read-only)
-        """
-        # ------------------------------------------------------------
-        # SENTENCE 1 PROTECTION
-        # ------------------------------------------------------------
-        if self._current_sentence_index == 1:
-            for edge in self.graph.edges:
-                edge.mark_as_asserted(reset_score=False)
-            return
+        #     for edge in self.graph.edges:
+        #         edge.mark_as_asserted(reset_score=False)
+        #         edge.active = True
+        #     return
 
         # Edges created this sentence are asserted (this is allowed - not projection)
         for edge in self.graph.edges:
             if edge.created_at_sentence == self._current_sentence_index:
                 edge.mark_as_asserted(reset_score=True)
 
-        # STEP 2: Compute projection sources
-        # projection_sources = explicit_nodes ∪ previously_active_nodes
-        previously_active_nodes = self._get_nodes_with_active_edges()
+        # ------------------------------------------------------------
+        # 2. Capture carry-over active nodes (from visibility, not stale active)
+        # ------------------------------------------------------------
+        previously_active_nodes = set()
+        for edge in self.graph.edges:
+            if edge.visibility_score > 0:
+                previously_active_nodes.add(edge.source_node)
+                previously_active_nodes.add(edge.dest_node)
+
+        # ------------------------------------------------------------
+        # 3. Reset all node scores (hard reset to prevent drift)
+        # ------------------------------------------------------------
+        for node in self.graph.nodes:
+            node.score = 100
+
+        # ------------------------------------------------------------
+        # 4. Define projection sources
+        # ------------------------------------------------------------
         projection_sources = set(explicit_nodes) | previously_active_nodes
 
-        # Include PROPERTY nodes attached to explicit nodes via active edges
-        for edge in self.graph.edges:
-            if (
-                edge.active
-                and edge.is_property_edge()
-                and edge.source_node in projection_sources
-                and edge.visibility_score > 0
-            ):
-                projection_sources.add(edge.dest_node)
-
-        # BFS from projection_sources using ONLY active edges
-        # DO NOT modify edge.active inside BFS
+        # ------------------------------------------------------------
+        # 5. BFS using canonical traversal function
+        # ------------------------------------------------------------
         distances = self._distances_from_projection_sources(
             projection_sources,
             self.max_distance_from_active_nodes,
         )
 
-        # Update node scores based on distances
+        # ------------------------------------------------------------
+        # 6. Update node scores
+        # ------------------------------------------------------------
         for node in self.graph.nodes:
-            # Explicit nodes must NEVER decay
-            if node in explicit_nodes:
-                node.score = 0
-                continue
-
             if node in distances:
                 node.score = distances[node]
             else:
                 node.score = min(node.score + 1, 100)
 
         # ------------------------------------------------------------
-        # Recompute edge active state from projection (RESTORE)
+        # 7. Recompute edge.active from visibility + node distance
         # ------------------------------------------------------------
         for edge in self.graph.edges:
+
+            # Decayed edges are never active
             if edge.visibility_score <= 0:
                 edge.active = False
                 continue
 
-            # Edge remains active only if BOTH endpoints
-            # are within projection distance threshold
             if (
                 edge.source_node.score <= self.max_distance_from_active_nodes
                 and edge.dest_node.score <= self.max_distance_from_active_nodes
