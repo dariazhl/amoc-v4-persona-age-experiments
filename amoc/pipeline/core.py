@@ -1832,17 +1832,23 @@ class AMoCv4:
 
             META_LEMMAS = {"subject", "object", "entity", "concept", "property"}
 
-            explicit_nodes_for_plot = [
-                node.get_text_representer()
-                for node in self._explicit_nodes_current_sentence
-                if node.is_explicit_in_sentence(self._current_sentence_index)
-            ]
+            # SNAPSHOT explicit state (frozen per sentence)
+            explicit_nodes_for_plot = sorted(
+                {
+                    n.get_text_representer()
+                    for n in self._explicit_nodes_current_sentence
+                    if n.get_text_representer()
+                }
+            )
 
-            ever_explicit_nodes_for_plot = [
-                node.get_text_representer()
-                for node in self.graph.nodes
-                if node.ever_explicit
-            ]
+            # ever_explicit is monotonic — safe to compute globally
+            ever_explicit_nodes_for_plot = sorted(
+                {
+                    node.get_text_representer()
+                    for node in self.graph.nodes
+                    if node.ever_explicit and node.get_text_representer()
+                }
+            )
 
             saved_path = plot_amoc_triplets(
                 triplets=triplets,
@@ -2054,6 +2060,18 @@ class AMoCv4:
                     for node in current_sentence_text_based_nodes
                     if node.is_explicit_in_sentence(self._current_sentence_index)
                 }
+
+                # HARD FREEZE — explicit set immutable for this sentence
+                self._explicit_nodes_current_sentence = set(
+                    self._explicit_nodes_current_sentence
+                )
+
+                # ------------------------------------------------------------------
+                # FREEZE explicit set for this sentence (no later mutation allowed)
+                # ------------------------------------------------------------------
+                self._explicit_nodes_current_sentence = set(
+                    self._explicit_nodes_current_sentence
+                )
                 # ------------------------------------------------------------
                 # FILTER META / GARBAGE NODES FROM EXPLICIT SET
                 # ------------------------------------------------------------
@@ -2064,6 +2082,11 @@ class AMoCv4:
                     for node in self._explicit_nodes_current_sentence
                     if node.get_text_representer() not in META_LEMMAS
                 }
+
+                # HARD FREEZE — explicit set immutable for this sentence
+                self._explicit_nodes_current_sentence = set(
+                    self._explicit_nodes_current_sentence
+                )
 
                 # Populate _anchor_nodes from first sentence's explicit nodes
                 # Per AMoC paper: anchors are CONCEPT nodes only (not PROPERTY)
@@ -2131,6 +2154,13 @@ class AMoCv4:
                     for node in current_sentence_text_based_nodes
                     if node.is_explicit_in_sentence(self._current_sentence_index)
                 }
+
+                # ------------------------------------------------------------------
+                # FREEZE explicit set for this sentence (no later mutation allowed)
+                # ------------------------------------------------------------------
+                self._explicit_nodes_current_sentence = set(
+                    self._explicit_nodes_current_sentence
+                )
 
                 # ------------------------------------------------------------
                 # FILTER META / GARBAGE NODES FROM EXPLICIT SET
@@ -2443,7 +2473,6 @@ class AMoCv4:
                 #   4. Fade non-selected edges
                 # ------------------------------------------------------------
                 for edge in self.graph.edges:
-
                     # Do not decay edges created this sentence
                     if edge.created_at_sentence == self._current_sentence_index:
                         continue
@@ -2649,16 +2678,15 @@ class AMoCv4:
 
                 # AMoCv4 surface-relation format: edges ARE the semantic triplets
                 # Just collect active edge pairs directly
-                active_edge_pairs = set()
-                for edge in self.graph.edges:
-                    if not edge.active:
-                        continue
-                    active_edge_pairs.add(
-                        (
-                            edge.source_node.get_text_representer(),
-                            edge.dest_node.get_text_representer(),
-                        )
+                snapshot_edges = [e for e in self.graph.edges if e.active]
+
+                active_edge_pairs = {
+                    (
+                        edge.source_node.get_text_representer(),
+                        edge.dest_node.get_text_representer(),
                     )
+                    for edge in snapshot_edges
+                }
 
                 # ==========================================================================
                 # BUG FIX: Use original_text for plot titles, NOT sent.text
@@ -2687,16 +2715,15 @@ class AMoCv4:
                 )
                 # Cumulative memory view
                 # AMoCv4 surface-relation format: edges ARE the semantic triplets
-                cumulative_active_pairs = set()
-                for edge in self.graph.edges:
-                    if not edge.active:
-                        continue
-                    cumulative_active_pairs.add(
-                        (
-                            edge.source_node.get_text_representer(),
-                            edge.dest_node.get_text_representer(),
-                        )
+                snapshot_edges = [e for e in self.graph.edges if e.active]
+
+                cumulative_active_pairs = {
+                    (
+                        edge.source_node.get_text_representer(),
+                        edge.dest_node.get_text_representer(),
                     )
+                    for edge in snapshot_edges
+                }
 
                 self._plot_graph_snapshot(
                     sentence_index=i,
@@ -3868,27 +3895,16 @@ class AMoCv4:
                         node.mark_explicit_in_sentence(self._current_sentence_index)
                         text_based_nodes.append(node)
                         text_based_words.append(lemma)
+                # ---------- PROPERTY NODES (adjectives) ----------
                 elif word.pos_ == "ADJ":
-                    # --------------------------------------------------------
-                    # HARD PROPERTY GROUNDING (persona-invariant)
-                    # If spaCy says ADJ → always create PROPERTY node
-                    # No stopword filtering. No prior state dependence.
-                    # --------------------------------------------------------
+                    if not lemma:
+                        continue
 
-                    node = self.graph.add_or_get_node(
-                        [lemma],
-                        lemma,
-                        NodeType.PROPERTY,
-                        NodeSource.TEXT_BASED,
-                        provenance=NodeProvenance.STORY_TEXT,
-                        node_role=NodeRole.PROPERTY,
-                        origin_sentence=self._current_sentence_index,
-                        mark_explicit=False,
-                    )
+                    existing = self.graph.get_node([lemma])
 
-                    if node is not None:
-                        node.mark_explicit_in_sentence(self._current_sentence_index)
-                        text_based_nodes.append(node)
+                    if existing and existing.node_type == NodeType.PROPERTY:
+                        existing.mark_explicit_in_sentence(self._current_sentence_index)
+                        text_based_nodes.append(existing)
                         text_based_words.append(lemma)
 
         # Return unique values only

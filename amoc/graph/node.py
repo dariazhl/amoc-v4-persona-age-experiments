@@ -31,10 +31,11 @@ class NodeRole(Enum):
     - Have NO agency and do NOT affect inference or lifecycle
     - Exist only to preserve scene context
     """
-    ACTOR = 1      # Persons, agents (typically nsubj)
-    OBJECT = 2     # Things (typically dobj)
-    PROPERTY = 3   # Adjectives (attributes)
-    SETTING = 4    # Locations, environments (typically pobj)
+
+    ACTOR = 1  # Persons, agents (typically nsubj)
+    OBJECT = 2  # Things (typically dobj)
+    PROPERTY = 3  # Adjectives (attributes)
+    SETTING = 4  # Locations, environments (typically pobj)
 
 
 class NodeSource(Enum):
@@ -49,7 +50,8 @@ class NodeProvenance(Enum):
     CRITICAL: Only STORY_TEXT and INFERRED_FROM_STORY are valid for graph nodes.
     PERSONA nodes must NEVER be created - persona influences weights only.
     """
-    STORY_TEXT = 1           # Node derived from story sentence tokens
+
+    STORY_TEXT = 1  # Node derived from story sentence tokens
     INFERRED_FROM_STORY = 2  # Node inferred by LLM but validated against story
     # PERSONA = 3            # INVALID - must never be used for nodes
 
@@ -96,6 +98,13 @@ class Node:
         # ever_explicit: True if the node has ever been explicit in any sentence
         self.ever_explicit: bool = origin_sentence is not None
 
+        # ------------------------------------------------------------------
+        # INVARIANT: If node has origin_sentence, it must be explicit there
+        # ------------------------------------------------------------------
+        if self.origin_sentence is not None:
+            self.explicit_sentences.add(self.origin_sentence)
+            self.ever_explicit = True
+
         # NODE ROLE: Lightweight semantic role (ACTOR, OBJECT, PROPERTY, SETTING)
         # SETTING nodes exist for scene context only - they don't affect lifecycle logic
         self.node_role: Optional[NodeRole] = node_role
@@ -103,6 +112,9 @@ class Node:
         # CRITICAL ASSERTION: Nodes must never come from persona
         # Persona influences salience/weights only, never content
         # This assertion is a fail-fast guard against persona leakage
+
+        if self.node_type == NodeType.PROPERTY and self.node_role is None:
+            self.node_role = NodeRole.PROPERTY
 
     def __eq__(self, other: "Node") -> bool:
         return self.lemmas == other.lemmas
