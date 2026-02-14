@@ -1170,17 +1170,11 @@ class AMoCv4:
                 queue.append(neighbor)
         return distances
 
-    def _restrict_active_to_current_explicit(self, explicit_nodes: List[Node]) -> None:
-        """
-        Rebuild working-memory projection for the current sentence.
-
-        Design guarantees:
-        - Projection sources = explicit nodes + structurally active carryover nodes
-        - Carryover is derived from ACTIVE edges only (not node scores)
-        - No distance drift
-        - No visibility-based leakage
-        - Hard reset of node scores every sentence
-        """
+    # purely structural projection method with explicit-node guarantee
+    def _restrict_active_to_current_explicit(
+        self,
+        explicit_nodes: List[Node],
+    ) -> None:
 
         # ------------------------------------------------------------
         # 1. Assert edges created in this sentence
@@ -1190,34 +1184,23 @@ class AMoCv4:
                 edge.mark_as_asserted(reset_score=True)
 
         # ------------------------------------------------------------
-        # 2. Collect structural carryover nodes
-        #    Carryover = nodes participating in ACTIVE edges
-        # ------------------------------------------------------------
-        previously_active_nodes = {
-            n
-            for e in self.graph.edges
-            if e.active
-            for n in (e.source_node, e.dest_node)
-        }
-
-        # ------------------------------------------------------------
-        # 3. Hard reset node scores (prevents drift)
+        # 2. Hard reset node scores
         # ------------------------------------------------------------
         for node in self.graph.nodes:
             node.score = 100
 
         # ------------------------------------------------------------
-        # 4. Define projection sources
+        # 3. If no explicit nodes → no projection
         # ------------------------------------------------------------
-        projection_sources = set(explicit_nodes) | previously_active_nodes
+        if not explicit_nodes:
+            for edge in self.graph.edges:
+                edge.active = False
+            return
 
-        # If absolutely nothing exists (extreme edge case),
-        # fallback to explicit nodes only.
-        if not projection_sources:
-            projection_sources = set(explicit_nodes)
+        projection_sources = set(explicit_nodes)
 
         # ------------------------------------------------------------
-        # 5. BFS projection from structural sources
+        # 4. BFS projection from explicit nodes
         # ------------------------------------------------------------
         distances = self._distances_from_projection_sources(
             projection_sources,
@@ -1225,23 +1208,27 @@ class AMoCv4:
         )
 
         # ------------------------------------------------------------
-        # 6. Update node scores strictly from BFS window
+        # 5. INVARIANT: explicit nodes must always exist in window
         # ------------------------------------------------------------
-        for node in self.graph.nodes:
-            if node in distances:
-                node.score = distances[node]
+        for node in explicit_nodes:
+            distances.setdefault(node, 0)
 
         # ------------------------------------------------------------
-        # 7. Recompute edge.active strictly from projection window
+        # 6. Update node scores strictly from window
+        # ------------------------------------------------------------
+        for node in self.graph.nodes:
+            node.score = distances.get(node, 100)
+
+        # ------------------------------------------------------------
+        # 7. Activate edges strictly inside projection window
+        #    (BOTH endpoints must be inside)
         # ------------------------------------------------------------
         for edge in self.graph.edges:
 
-            # Decayed edges are never active
             if edge.visibility_score <= 0:
                 edge.active = False
                 continue
 
-            # Edge active only if BOTH endpoints inside projection window
             if edge.source_node in distances and edge.dest_node in distances:
                 edge.active = True
             else:
@@ -2021,16 +2008,31 @@ class AMoCv4:
 
         doc = self.spacy_nlp(self.story_text)
         resolved_sentences: list[tuple[Span, str, str]] = []
+
         for orig_sent in doc.sents:
+            resolved_text = orig_sent.text
             if replace_pronouns:
                 candidate = self.resolve_pronouns(orig_sent.text)
                 if isinstance(candidate, str) and candidate.strip():
                     resolved_text = _clean_resolved_sentence(orig_sent.text, candidate)
+            # ------------------------------------------------------------
+            # LLM JSON contamination guard — MUST happen BEFORE parsing
+            # ------------------------------------------------------------
+            if resolved_text and resolved_text.strip().startswith("{"):
+                logging.error(
+                    "LLM JSON contamination detected — reverting to original sentence."
+                )
+                resolved_text = orig_sent.text
+            # ------------------------------------------------------------
+            # Parse AFTER guard
+            # ------------------------------------------------------------
             resolved_doc = self.spacy_nlp(resolved_text)
             if not resolved_doc:
                 resolved_text = orig_sent.text
                 resolved_doc = self.spacy_nlp(resolved_text)
+
             resolved_span = resolved_doc[0 : len(resolved_doc)]
+
             resolved_sentences.append((resolved_span, resolved_text, orig_sent.text))
 
         prev_sentences: list[str] = []
@@ -2788,6 +2790,16 @@ class AMoCv4:
                     restrict_nodes=active_nodes,
                 )
 
+                # ------------------------------------------------------------
+                # HARD GUARANTEE: Explicit PROPERTY nodes must always plot
+                # ------------------------------------------------------------
+                for node in self._explicit_nodes_current_sentence:
+                    if node.node_type == NodeType.PROPERTY:
+                        label = node.get_text_representer()
+                        if label and all(label not in t for t in active_triplets):
+                            # inject isolated property node
+                            active_triplets.append(("", "", label))
+
                 # ============================================================
                 # PROJECTION CONTINUITY + EXPLICIT FALLBACK
                 # ============================================================
@@ -3207,243 +3219,155 @@ class AMoCv4:
         # Final connectivity sweep - ensure the entire graph remains connected
         self._enforce_graph_connectivity()
 
+    # creates edges
     def _extract_deterministic_structure(
         self,
         sent: Span,
-        current_sentence_text_based_nodes: List[Node],
-        current_sentence_text_based_words: List[str],
+        sentence_nodes: List[Node],
+        sentence_words: List[str],
     ) -> None:
 
-        # ------------------------------------------------------------
-        # PROPERTY EXTRACTION (HARDENED)
-        # ------------------------------------------------------------
+        def get_node(token):
+            return self.graph.get_node([token.lemma_.lower()])
 
-        for tok in sent:
+        for token in sent:
 
-            # Case 1: Attributive adjectives (amod)
-            if tok.dep_ == "amod" and tok.head.pos_ in {"NOUN", "PROPN"}:
-                adj_lemma = tok.lemma_.lower()
-                head_lemma = tok.head.lemma_.lower()
+            # ============================================================
+            #  COPULAR PROPERTIES (ADJ / VBN complements)
+            #
+            # knight was unfamiliar
+            # armor was scorched
+            # princess was thankful
+            # ============================================================
+            if token.dep_ in {"acomp", "attr"} and (
+                token.pos_ == "ADJ" or (token.pos_ == "VERB" and token.tag_ == "VBN")
+            ):
 
-            # Case 2: Predicate adjectives (copula constructions)
-            elif tok.dep_ in {"acomp", "attr"}:
-                if not any(child.lemma_ == "be" for child in tok.head.children):
-                    continue
-
-                # Allow ADJ or participial VBN
-                if not (
-                    tok.pos_ == "ADJ" or (tok.pos_ == "VERB" and tok.tag_ == "VBN")
-                ):
+                head = token.head
+                if head.lemma_ != "be":
                     continue
 
                 subj = next(
-                    (c for c in tok.head.children if c.dep_ in {"nsubj", "nsubjpass"}),
+                    (c for c in head.children if c.dep_ in {"nsubj", "nsubjpass"}),
                     None,
                 )
-                if subj is None:
+
+                if subj:
+                    subj_node = get_node(subj)
+                    prop_node = get_node(token)
+
+                    if subj_node and prop_node:
+                        self._add_edge(
+                            subj_node,
+                            prop_node,
+                            label="is",
+                            relation_class=RelationClass.ATTRIBUTIVE,
+                            justification=Justification.TEXTUAL,
+                            edge_forget=self.edge_visibility,
+                            created_at_sentence=self._current_sentence_index,
+                        )
+
+            # ============================================================
+            # ROOT COPULAR (ADJ or VBN as ROOT)
+            #
+            # armor was scorched
+            # knight was unfamiliar
+            # ============================================================
+            if token.dep_ == "ROOT" and (
+                token.pos_ == "ADJ" or (token.pos_ == "VERB" and token.tag_ == "VBN")
+            ):
+
+                cop = next((c for c in token.children if c.dep_ == "cop"), None)
+                subj = next(
+                    (c for c in token.children if c.dep_ in {"nsubj", "nsubjpass"}),
+                    None,
+                )
+
+                if cop and subj:
+                    subj_node = get_node(subj)
+                    prop_node = get_node(token)
+
+                    if subj_node and prop_node:
+                        self._add_edge(
+                            subj_node,
+                            prop_node,
+                            label="is",
+                            relation_class=RelationClass.ATTRIBUTIVE,
+                            justification=Justification.TEXTUAL,
+                            edge_forget=self.edge_visibility,
+                            created_at_sentence=self._current_sentence_index,
+                        )
+
+            # ============================================================
+            # ATTRIBUTIVE MODIFIERS
+            #
+            # beautiful princess
+            # young knight
+            # ============================================================
+            if token.dep_ == "amod":
+
+                head_node = get_node(token.head)
+                prop_node = get_node(token)
+
+                if head_node and prop_node:
+                    self._add_edge(
+                        head_node,
+                        prop_node,
+                        label="is",
+                        relation_class=RelationClass.ATTRIBUTIVE,
+                        justification=Justification.TEXTUAL,
+                        edge_forget=self.edge_visibility,
+                        created_at_sentence=self._current_sentence_index,
+                    )
+
+            # ============================================================
+            # EVENTIVE VERBS (ONLY VERBS ALLOWED AS RELATIONS)
+            #
+            # knight fought dragon
+            # dragon kidnapped princess
+            # ============================================================
+            if token.pos_ == "VERB" and token.lemma_ != "be":
+
+                subj = next(
+                    (c for c in token.children if c.dep_ in {"nsubj", "nsubjpass"}),
+                    None,
+                )
+
+                if not subj:
                     continue
 
-                adj_lemma = tok.lemma_.lower()
-                head_lemma = subj.lemma_.lower()
+                subj_node = get_node(subj)
+                if not subj_node:
+                    continue
 
-            else:
-                continue
+                # --------------------------------------------------------
+                # Direct objects (dobj / attr)
+                # --------------------------------------------------------
+                objects = [c for c in token.children if c.dep_ in {"dobj", "attr"}]
 
-            # -----------------------
-            # Attach to existing CONCEPT
-            # -----------------------
-            head_node = self.graph.get_node([head_lemma])
-            if head_node is None:
-                # Try to recover from current sentence nodes
-                for n in current_sentence_text_based_nodes:
-                    if head_lemma in n.lemmas:
-                        head_node = n
-                        break
-            if head_node is None:
-                continue
+                # --------------------------------------------------------
+                # Handle coordination (life and death)
+                # --------------------------------------------------------
+                expanded_objects = []
+                for obj in objects:
+                    expanded_objects.append(obj)
+                    expanded_objects.extend(list(obj.conjuncts))
 
-            # Create PROPERTY node for the adjective
-            if not self._admit_node(
-                lemma=adj_lemma,
-                node_type=NodeType.PROPERTY,
-                provenance="SYNTACTIC_PROPERTY",
-                sent=sent,
-            ):
-                continue
+                for obj_token in expanded_objects:
 
-            property_node = self.graph.add_or_get_node(
-                [adj_lemma],
-                adj_lemma,
-                NodeType.PROPERTY,
-                NodeSource.TEXT_BASED,
-                provenance=NodeProvenance.STORY_TEXT,
-                origin_sentence=self._current_sentence_index,
-            )
+                    obj_node = get_node(obj_token)
+                    if not obj_node:
+                        continue
 
-            property_node.mark_explicit_in_sentence(self._current_sentence_index)
-
-            if property_node not in current_sentence_text_based_nodes:
-                current_sentence_text_based_nodes.append(property_node)
-                current_sentence_text_based_words.append(adj_lemma)
-
-            self._add_edge(
-                head_node,
-                property_node,
-                "is",
-                self.edge_visibility,
-                created_at_sentence=self._current_sentence_index,
-                bypass_attachment_constraint=True,
-                relation_class=RelationClass.ATTRIBUTIVE,
-                justification=Justification.TEXTUAL,
-            )
-
-        # 2. Extract prepositional objects → CONCEPT nodes
-        prep_objects = extract_prepositional_objects(sent)
-        logging.debug(
-            f"[Deterministic] Extracted {len(prep_objects)} prep objects from: {sent.text}"
-        )
-        for prep_obj in prep_objects:
-            logging.debug(f"[Deterministic] Processing prep object: {prep_obj}")
-
-        for prep_obj in prep_objects:
-            subj_lemma = prep_obj["subject"]
-            obj_lemma = prep_obj["object"]
-            edge_label = prep_obj["label"]
-
-            subj_node = None
-
-            # First: check current sentence text-based nodes
-            for node in current_sentence_text_based_nodes:
-                if subj_lemma in node.lemmas:
-                    subj_node = node
-                    break
-
-            # Second: check all existing graph nodes (for cross-sentence attachment)
-            if subj_node is None:
-                subj_node = self.graph.get_node([subj_lemma])
-
-            if subj_node is None:
-                # Subject not in graph at all - skip
-                logging.debug(
-                    f"[Deterministic] SKIP prep: subject '{subj_lemma}' not in graph"
-                )
-                continue
-
-            # Create CONCEPT node for the prepositional object
-            if not self._admit_node(
-                lemma=obj_lemma,
-                node_type=NodeType.CONCEPT,
-                provenance="STORY_TEXT",
-                sent=sent,
-            ):
-                logging.debug(
-                    f"[Deterministic] SKIP prep: _admit_node rejected '{obj_lemma}'. "
-                    f"In story_lemmas: {obj_lemma in self.story_lemmas}"
-                )
-                continue
-
-            # Prepositional objects are SETTING nodes (locations/environments)
-            obj_node = self.graph.add_or_get_node(
-                [obj_lemma],
-                obj_lemma,
-                NodeType.CONCEPT,
-                NodeSource.TEXT_BASED,
-                provenance=NodeProvenance.STORY_TEXT,
-                node_role=NodeRole.SETTING,
-            )
-
-            if obj_node is not None:
-                obj_node.mark_explicit_in_sentence(self._current_sentence_index)
-
-            # Track that this is a text-based node from current sentence
-            if (
-                obj_node is not None
-                and obj_node not in current_sentence_text_based_nodes
-            ):
-                current_sentence_text_based_nodes.append(obj_node)
-                current_sentence_text_based_words.append(obj_lemma)
-
-            # Normalize and create edge through centralized path
-            original_label = edge_label
-            norm_label = self._normalize_edge_label(edge_label)
-            if not norm_label:
-                logging.debug(
-                    f"[Deterministic] Prep edge rejected, but node kept: "
-                    f"{subj_lemma} --X--> {obj_lemma}"
-                )
-                continue
-            edge = self._add_edge(
-                subj_node,
-                obj_node,
-                norm_label,
-                self.edge_visibility,
-                created_at_sentence=self._current_sentence_index,
-                bypass_attachment_constraint=True,
-                relation_class=RelationClass.STATIVE,  # Prepositional relations are typically stative
-                justification=Justification.TEXTUAL,
-            )
-            if edge is not None:
-                logging.debug(
-                    f"[Deterministic] Created prep edge: {subj_lemma} --{norm_label}--> {obj_lemma}"
-                )
-
-            else:
-                logging.debug(
-                    f"[Deterministic] SKIP prep: _add_edge returned None for "
-                    f"{subj_lemma} --{edge_label}--> {obj_lemma}"
-                )
-
-        sentence_edges = [
-            edge
-            for edge in self.graph.edges
-            if edge.created_at_sentence == self._current_sentence_index
-        ]
-
-        if not any(edge.active for edge in sentence_edges):
-            for tok in sent:
-                if tok.pos_ == "VERB":
-                    subj = next(
-                        (c for c in tok.children if c.dep_ in {"nsubj", "nsubjpass"}),
-                        None,
+                    self._add_edge(
+                        subj_node,
+                        obj_node,
+                        label=token.lemma_,  # ONLY VERB USED
+                        relation_class=self._classify_relation(token.lemma_),
+                        justification=Justification.TEXTUAL,
+                        edge_forget=self.edge_visibility,
+                        created_at_sentence=self._current_sentence_index,
                     )
-                    obj = next(
-                        (c for c in tok.children if c.dep_ in {"dobj", "attr", "oprd"}),
-                        None,
-                    )
-
-                    if subj and obj:
-                        subj_node = self.graph.get_node([subj.lemma_.lower()])
-                        obj_node = self.graph.get_node([obj.lemma_.lower()])
-
-                        if subj_node and obj_node:
-                            self._add_edge(
-                                subj_node,
-                                obj_node,
-                                tok.lemma_.lower(),
-                                self.edge_visibility,
-                                relation_class=RelationClass.EVENTIVE,
-                                justification=Justification.TEXTUAL,
-                            )
-                            break
-                    elif subj and not obj:
-                        subj_node = self.graph.get_node([subj.lemma_.lower()])
-                        if subj_node:
-                            event_node = self.graph.add_or_get_node(
-                                [tok.lemma_.lower()],
-                                tok.lemma_.lower(),
-                                NodeType.EVENT,
-                                NodeSource.TEXT_BASED,
-                                provenance=NodeProvenance.STORY_TEXT,
-                            )
-                            if event_node:
-                                self._add_edge(
-                                    subj_node,
-                                    event_node,
-                                    tok.lemma_.lower(),
-                                    self.edge_visibility,
-                                    relation_class=RelationClass.EVENTIVE,
-                                    justification=Justification.TEXTUAL,
-                                )
 
     def init_graph(self, sent: Span) -> None:
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
@@ -3953,47 +3877,48 @@ class AMoCv4:
 
         return phrase_nodes
 
+    # creates nodes only
     def get_senteces_text_based_nodes(
-        self, previous_sentences: List[Span], create_unexistent_nodes: bool = True
+        self,
+        previous_sentences: List[Span],
+        create_unexistent_nodes: bool = True,
     ) -> Tuple[List[Node], List[str]]:
-        # STRICT EXPLICIT RESET
+
         META_LEMMAS = {"subject", "object", "entity", "concept", "property"}
-        text_based_nodes = []
-        text_based_words = []
+
+        text_based_nodes: List[Node] = []
+        text_based_words: List[str] = []
 
         for sent in previous_sentences:
-
             content_words = get_content_words_from_sent(self.spacy_nlp, sent)
 
             for word in content_words:
                 lemma = word.lemma_.lower().strip()
-                # GLOBAL TOKEN FILTER (Patch 3)
+
                 if not lemma:
                     continue
+
                 if lemma in self.spacy_nlp.Defaults.stop_words:
                     continue
-                # ---------- CONCEPT NODES (nouns / proper nouns) ----------
+
+                # ------------------------------------------
+                # CONCEPT NODES (nouns / proper nouns)
+                # ------------------------------------------
                 if word.pos_ in {"NOUN", "PROPN"}:
                     if lemma in META_LEMMAS:
                         continue
+
                     node_role = None
-                    if word.dep_ in {"pobj", "obl"}:
-                        # Prepositional objects are typically locations/settings
-                        node_role = NodeRole.SETTING
-                    elif word.dep_ in {"nsubj", "nsubjpass"}:
-                        # Subjects are typically actors/agents
+                    if word.dep_ in {"nsubj", "nsubjpass"}:
                         node_role = NodeRole.ACTOR
+                    elif word.dep_ in {"pobj", "obl"}:
+                        node_role = NodeRole.SETTING
                     else:
-                        # Default to OBJECT for other noun dependencies
                         node_role = NodeRole.OBJECT
 
                     node = self.graph.get_node([lemma])
-                    if node is not None:
-                        node.add_actual_text(lemma)
-                        # Update role if not already set
-                        if node.node_role is None:
-                            node.node_role = node_role
-                    elif create_unexistent_nodes:
+
+                    if node is None and create_unexistent_nodes:
                         node = self.graph.add_or_get_node(
                             [lemma],
                             lemma,
@@ -4004,24 +3929,27 @@ class AMoCv4:
                             origin_sentence=self._current_sentence_index,
                             mark_explicit=False,
                         )
-                    else:
-                        continue
 
-                    if node is not None:
-                        node.mark_explicit_in_sentence(self._current_sentence_index)
-                        text_based_nodes.append(node)
-                        text_based_words.append(lemma)
-                elif word.pos_ == "ADJ":
-
-                    lemma = word.lemma_.lower().strip()
-                    if not lemma or lemma in self.spacy_nlp.Defaults.stop_words:
-                        continue
-
-                    # -------------------------------------------------
-                    # Ensure PROPERTY node exists (always allow)
-                    # -------------------------------------------------
-                    node = self.graph.get_node([lemma])
                     if node is None:
+                        continue
+
+                    node.mark_explicit_in_sentence(self._current_sentence_index)
+
+                    text_based_nodes.append(node)
+                    text_based_words.append(lemma)
+
+                # ------------------------------------------
+                # PROPERTY NODES (adjectives)
+                # ------------------------------------------
+                elif word.pos_ == "ADJ" or (
+                    word.pos_ == "VERB"
+                    and word.tag_ == "VBN"
+                    and word.dep_ in {"acomp", "attr", "amod", "ROOT"}
+                ):
+
+                    node = self.graph.get_node([lemma])
+
+                    if node is None and create_unexistent_nodes:
                         node = self.graph.add_or_get_node(
                             [lemma],
                             lemma,
@@ -4029,41 +3957,26 @@ class AMoCv4:
                             NodeSource.TEXT_BASED,
                             provenance=NodeProvenance.STORY_TEXT,
                             origin_sentence=self._current_sentence_index,
-                            mark_explicit=True,
+                            mark_explicit=False,
                         )
+
+                    if node is None:
+                        continue
 
                     node.mark_explicit_in_sentence(self._current_sentence_index)
 
                     text_based_nodes.append(node)
                     text_based_words.append(lemma)
 
-                    # -------------------------------------------------
-                    # If copular adjective, attach to subject
-                    #    princess was thankful
-                    #    armor was scorched
-                    # -------------------------------------------------
-                    # Attach adjective to its head if adjectival modifier or complement
-                    if word.dep_ in {"amod", "acomp"}:
-                        head = word.head
-                        subj_node = self.graph.get_node([head.lemma_.lower()])
-                        if subj_node:
-                            self._add_edge(
-                                subj_node,
-                                node,
-                                label="is",
-                                relation_class=RelationClass.ATTRIBUTIVE,
-                                justification=Justification.TEXTUAL,
-                                edge_forget=self.edge_visibility,
-                                created_at_sentence=self._current_sentence_index,
-                            )
+        # Return unique
+        seen = set()
+        unique_nodes = []
+        unique_words = []
 
-            # Return unique values only
-            seen_nodes = set()
-            unique_nodes = []
-            unique_words = []
-            for node, word in zip(text_based_nodes, text_based_words):
-                if node not in seen_nodes:
-                    seen_nodes.add(node)
-                    unique_nodes.append(node)
-                    unique_words.append(word)
+        for node, word in zip(text_based_nodes, text_based_words):
+            if node not in seen:
+                seen.add(node)
+                unique_nodes.append(node)
+                unique_words.append(word)
+
         return unique_nodes, unique_words
