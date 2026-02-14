@@ -198,12 +198,29 @@ class Graph:
         existing_node = self.get_node(lemmas)
         if existing_node is None:
             if self._story_lemmas is not None:
-                is_story_grounded = primary_lemma in self._story_lemmas
+                primary_lemma = lemmas[0]
+
+                ed_stem = (
+                    primary_lemma[:-2]
+                    if primary_lemma.endswith("ed") and len(primary_lemma) > 2
+                    else None
+                )
+
+                ing_stem = (
+                    primary_lemma[:-3]
+                    if primary_lemma.endswith("ing") and len(primary_lemma) > 3
+                    else None
+                )
+
+                is_story_grounded = (
+                    primary_lemma in self._story_lemmas
+                    or actual_text in self._story_lemmas
+                    or (ed_stem and ed_stem in self._story_lemmas)
+                    or (ing_stem and ing_stem in self._story_lemmas)
+                )
+
                 is_inferred = provenance == NodeProvenance.INFERRED_FROM_STORY
 
-                # Allow:
-                # - Story-grounded nodes
-                # - Inferred-from-story nodes
                 if not is_story_grounded and not is_inferred:
                     return None
 
@@ -603,7 +620,14 @@ class Graph:
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
-                if neighbor.node_type == NodeType.PROPERTY or neighbor.is_setting():
+                if (
+                    neighbor.node_type == NodeType.PROPERTY
+                    or neighbor.is_setting()
+                    or (
+                        neighbor.node_role is not None
+                        and neighbor.node_role not in {NodeRole.ACTOR, NodeRole.OBJECT}
+                    )
+                ):
                     continue
                 if neighbor not in reachable_nodes:
                     reachable_nodes[neighbor] = dist + 1
@@ -671,7 +695,10 @@ class Graph:
                     if edge.source_node.node_type == NodeType.CONCEPT
                     else edge.dest_node
                 )
-                if concept_end not in concept_active_nodes:
+                if (
+                    concept_end not in concept_active_nodes
+                    and not concept_end.is_explicit_in_sentence(current_sentence)
+                ):
                     continue
                 # Property edge is valid - include it
 

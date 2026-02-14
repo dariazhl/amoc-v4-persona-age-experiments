@@ -809,7 +809,11 @@ class AMoCv4:
         attachable = self._get_attachable_nodes_for_sentence()
 
         if not bypass_attachment_constraint:
-            if source_node not in attachable and dest_node not in attachable:
+            if (
+                relation_class != RelationClass.ATTRIBUTIVE
+                and source_node not in attachable
+                and dest_node not in attachable
+            ):
                 # Allow inference expansion if at least one endpoint
                 # is within activation distance of explicit nodes
                 distances = self._distances_from_sources_active_edges(
@@ -830,12 +834,6 @@ class AMoCv4:
                 )
             return None
 
-        # Canonicalize relation label before edge creation
-        # Removes parser prefixes/artifacts and normalizes format
-        label = Graph.canonicalize_relation_label(label)
-        if not label:
-            return None
-
         # ============================================================
         # HARD GUARD: Prevent verb-object duplication
         # Blocks: knight --turn--> turn
@@ -848,6 +846,12 @@ class AMoCv4:
                 label,
                 dest_text,
             )
+            return None
+
+        # Canonicalize relation label before edge creation
+        # Removes parser prefixes/artifacts and normalizes format
+        label = Graph.canonicalize_relation_label(label)
+        if not label:
             return None
 
         use_sentence = (
@@ -2035,9 +2039,9 @@ class AMoCv4:
             self.active_graph = nx.MultiDiGraph()
             self._current_sentence_index = i + 1
             self.graph.set_current_sentence(self._current_sentence_index)
-            self._current_sentence_text = original_text
-
             import copy
+
+            self._current_sentence_text = original_text
 
             # === TRANSACTION SNAPSHOT (before mutating graph) ===
             _graph_snapshot = copy.deepcopy(self.graph)
@@ -2471,6 +2475,66 @@ class AMoCv4:
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
                 )
+                # ============================================================
+                # HARD INVARIANT: Per-sentence projection must never be empty
+                # Stage 1: Forced edge creation
+                # Stage 2: Hard revert
+                # ============================================================
+
+                current_active_nodes = self._get_nodes_with_active_edges()
+
+                if not current_active_nodes:
+
+                    logging.warning(
+                        "[Invariant] Empty projection at sentence %d. Forcing minimal edge.",
+                        self._current_sentence_index,
+                    )
+
+                    # -------------------------------
+                    # Stage 1 — FORCE minimal edge
+                    # -------------------------------
+                    forced_success = False
+
+                    explicit_nodes = list(self._explicit_nodes_current_sentence)
+
+                    if len(explicit_nodes) >= 2:
+                        src = explicit_nodes[0]
+                        dst = explicit_nodes[1]
+
+                        if src != dst:
+                            edge = self._add_edge(
+                                src,
+                                dst,
+                                label="related_to",
+                                edge_forget=self.edge_visibility,
+                                created_at_sentence=self._current_sentence_index,
+                                bypass_attachment_constraint=True,
+                                relation_class=RelationClass.CONNECTIVE,
+                                justification=Justification.CONNECTIVE,
+                            )
+                            if edge:
+                                forced_success = True
+
+                    # Recompute projection
+                    self._restrict_active_to_current_explicit(
+                        list(self._explicit_nodes_current_sentence)
+                    )
+
+                    current_active_nodes = self._get_nodes_with_active_edges()
+
+                    # -------------------------------
+                    # Stage 2 — HARD REVERT
+                    # -------------------------------
+                    if not current_active_nodes:
+
+                        logging.error(
+                            "[Invariant] Forced edge failed. Reverting to previous sentence state."
+                        )
+
+                        self.graph = _graph_snapshot
+                        self._anchor_nodes = _anchor_snapshot
+                        self._triplet_intro = _triplet_intro_snapshot
+
                 # ============================================================
                 # HARD INVARIANT: Projection must never be empty
                 # ============================================================
@@ -3953,11 +4017,7 @@ class AMoCv4:
                             lemma,
                             NodeType.PROPERTY,
                             NodeSource.TEXT_BASED,
-                            provenance=(
-                                NodeProvenance.STORY_TEXT
-                                if lemma in self.story_lemmas
-                                else NodeProvenance.INFERRED_FROM_STORY
-                            ),
+                            provenance=NodeProvenance.STORY_TEXT,
                             origin_sentence=self._current_sentence_index,
                             mark_explicit=False,
                         )
