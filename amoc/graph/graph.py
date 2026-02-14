@@ -199,7 +199,6 @@ class Graph:
         if existing_node is None:
             if self._story_lemmas is not None:
                 primary_lemma = lemmas[0]
-
                 ed_stem = (
                     primary_lemma[:-2]
                     if primary_lemma.endswith("ed") and len(primary_lemma) > 2
@@ -214,14 +213,17 @@ class Graph:
 
                 is_story_grounded = (
                     primary_lemma in self._story_lemmas
-                    or actual_text in self._story_lemmas
                     or (ed_stem and ed_stem in self._story_lemmas)
                     or (ing_stem and ing_stem in self._story_lemmas)
                 )
 
                 is_inferred = provenance == NodeProvenance.INFERRED_FROM_STORY
 
-                if not is_story_grounded and not is_inferred:
+                if (
+                    node_type != NodeType.PROPERTY
+                    and not is_story_grounded
+                    and not is_inferred
+                ):
                     return None
 
         # Legacy admit callback (additional filtering if provided)
