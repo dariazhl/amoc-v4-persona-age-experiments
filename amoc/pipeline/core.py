@@ -836,6 +836,20 @@ class AMoCv4:
         if not label:
             return None
 
+        # ============================================================
+        # HARD GUARD: Prevent verb-object duplication
+        # Blocks: knight --turn--> turn
+        # ============================================================
+        dest_text = dest_node.get_text_representer()
+        if dest_text and dest_text.strip().lower() == label.strip().lower():
+            logging.warning(
+                "[Guard] Rejected duplicate verb-object edge: %s --%s--> %s",
+                source_node.get_text_representer(),
+                label,
+                dest_text,
+            )
+            return None
+
         use_sentence = (
             created_at_sentence
             if created_at_sentence is not None
@@ -887,6 +901,13 @@ class AMoCv4:
                     return existing_edge
                 else:
                     self.graph.remove_edge(existing_edge)
+
+        # prevent knight - turn - turn
+        if (
+            label == source_node.get_text_representer()
+            or label == dest_node.get_text_representer()
+        ):
+            return None
 
         # No existing edge (or allow_multi_edges=True, or old edge was removed): create new edge
         edge = self._create_edge_with_event_mediation(
@@ -2016,6 +2037,13 @@ class AMoCv4:
             self.graph.set_current_sentence(self._current_sentence_index)
             self._current_sentence_text = original_text
 
+            import copy
+
+            # === TRANSACTION SNAPSHOT (before mutating graph) ===
+            _graph_snapshot = copy.deepcopy(self.graph)
+            _anchor_snapshot = copy.deepcopy(self._anchor_nodes)
+            _triplet_intro_snapshot = copy.deepcopy(self._triplet_intro)
+
             # ------------------------------------------------------------------
             # HARD RESET: Explicit sentence scoping
             # Explicitness must reflect ONLY the current dependency parse
@@ -2443,6 +2471,91 @@ class AMoCv4:
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
                 )
+                # ============================================================
+                # HARD INVARIANT: Projection must never be empty
+                # ============================================================
+                current_active_nodes = self._get_nodes_with_active_edges()
+
+                if not current_active_nodes:
+
+                    logging.warning(
+                        "[Invariant] Empty projection at sentence %d. Triggering fallback.",
+                        self._current_sentence_index,
+                    )
+
+                    # -------------------------
+                    # Stage 1: Retry LLM once
+                    # -------------------------
+                    retry_relationships = self.client.get_new_relationships(
+                        nodes_from_text,
+                        active_nodes_text,
+                        active_nodes_edges_text,
+                        current_all_text,
+                        self.persona,
+                    )
+
+                    retry_success = False
+
+                    for relationship in retry_relationships:
+                        if (
+                            isinstance(relationship, (list, tuple))
+                            and len(relationship) == 3
+                        ):
+                            subj, rel, obj = relationship
+                            subj = self._normalize_endpoint_text(subj, is_subject=True)
+                            obj = self._normalize_endpoint_text(obj, is_subject=False)
+
+                            if not subj or not obj or subj == obj:
+                                continue
+
+                            source_node = self.get_node_from_new_relationship(
+                                subj,
+                                graph_active_nodes,
+                                current_sentence_text_based_nodes,
+                                current_sentence_text_based_words,
+                                node_source=NodeSource.TEXT_BASED,
+                                create_node=True,
+                            )
+
+                            dest_node = self.get_node_from_new_relationship(
+                                obj,
+                                graph_active_nodes,
+                                current_sentence_text_based_nodes,
+                                current_sentence_text_based_words,
+                                node_source=NodeSource.TEXT_BASED,
+                                create_node=True,
+                            )
+
+                            if source_node and dest_node:
+                                edge = self._add_edge(
+                                    source_node,
+                                    dest_node,
+                                    rel,
+                                    self.edge_visibility,
+                                    relation_class=self._classify_relation(rel),
+                                    justification=Justification.TEXTUAL,
+                                )
+                                if edge:
+                                    retry_success = True
+                                    break
+
+                    # Recompute projection after retry
+                    self._restrict_active_to_current_explicit(
+                        list(self._explicit_nodes_current_sentence)
+                    )
+
+                    if not self._get_nodes_with_active_edges():
+                        logging.error(
+                            "[Invariant] Retry failed. Reverting to previous graph state."
+                        )
+
+                        # -------------------------
+                        # Stage 2: HARD REVERT
+                        # -------------------------
+                        self.graph = _graph_snapshot
+                        self._anchor_nodes = _anchor_snapshot
+                        self._triplet_intro = _triplet_intro_snapshot
+
                 # ------------------------------------------------------------
                 # GLOBAL EDGE DECAY (Paper Step 4)
                 # Order:
@@ -3089,8 +3202,13 @@ class AMoCv4:
             # -----------------------
             # Attach to existing CONCEPT
             # -----------------------
-
             head_node = self.graph.get_node([head_lemma])
+            if head_node is None:
+                # Try to recover from current sentence nodes
+                for n in current_sentence_text_based_nodes:
+                    if head_lemma in n.lemmas:
+                        head_node = n
+                        break
             if head_node is None:
                 continue
 
@@ -3822,17 +3940,32 @@ class AMoCv4:
                         node.mark_explicit_in_sentence(self._current_sentence_index)
                         text_based_nodes.append(node)
                         text_based_words.append(lemma)
-                # # ---------- PROPERTY NODES (adjectives) ----------
-                # elif word.pos_ == "ADJ":
-                #     if not lemma:
-                #         continue
+                elif word.pos_ == "ADJ":
+                    if not lemma:
+                        continue
+                    if lemma in self.spacy_nlp.Defaults.stop_words:
+                        continue
 
-                #     existing = self.graph.get_node([lemma])
+                    node = self.graph.get_node([lemma])
+                    if node is None and create_unexistent_nodes:
+                        node = self.graph.add_or_get_node(
+                            [lemma],
+                            lemma,
+                            NodeType.PROPERTY,
+                            NodeSource.TEXT_BASED,
+                            provenance=(
+                                NodeProvenance.STORY_TEXT
+                                if lemma in self.story_lemmas
+                                else NodeProvenance.INFERRED_FROM_STORY
+                            ),
+                            origin_sentence=self._current_sentence_index,
+                            mark_explicit=False,
+                        )
 
-                #     if existing and existing.node_type == NodeType.PROPERTY:
-                #         existing.mark_explicit_in_sentence(self._current_sentence_index)
-                #         text_based_nodes.append(existing)
-                #         text_based_words.append(lemma)
+                    if node is not None:
+                        node.mark_explicit_in_sentence(self._current_sentence_index)
+                        text_based_nodes.append(node)
+                        text_based_words.append(lemma)
 
         # Return unique values only
         seen_nodes = set()
