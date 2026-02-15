@@ -204,7 +204,11 @@ class PerSentenceGraphBuilder:
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
 
-                # Allow PROPERTY nodes to persist once introduced
+                # CRITICAL (Paper-aligned):
+                # PROPERTY nodes do NOT propagate activation.
+                # They only appear if their edge is active.
+                if neighbor.node_type == NodeType.PROPERTY:
+                    continue
 
                 if neighbor in distances:
                     continue
@@ -303,10 +307,19 @@ class PerSentenceGraphBuilder:
         # ------------------------------------------------------------
         active_nodes, active_edges = self.cumulative_graph.get_active_subgraph()
 
+        # -----------------------------------------------------------
         # ------------------------------------------------------------
-        # 2. Guarantee explicit nodes are always plotted
-        # ------------------------------------------------------------
-        active_nodes |= self._explicit_nodes
+        # 2. Guarantee explicit nodes only if they have active edges
+        active_nodes |= {
+            n
+            for n in self._explicit_nodes
+            if any(
+                e.active
+                and e.visibility_score > 0
+                and (e.source_node == n or e.dest_node == n)
+                for e in active_edges
+            )
+        }
 
         # ------------------------------------------------------------
         # 3. Connectivity enforcement (presentation only)

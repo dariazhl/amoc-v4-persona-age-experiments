@@ -628,11 +628,8 @@ class Graph:
                 # --------------------------------------------------
                 # 1. PROPERTY EDGES (ATTRIBUTIVE)
                 # --------------------------------------------------
-                # Allow property edges to be reconsidered for reactivation,
-                # but NEVER propagate traversal through PROPERTY nodes.
+                # Paper-aligned: PROPERTY edges do NOT reactivate
                 if edge.relation_class == RelationClass.ATTRIBUTIVE:
-                    if not edge.active:
-                        candidate_edges.append((dist, edge))
                     continue
 
                 # Skip edges that are already active (asserted this sentence)
