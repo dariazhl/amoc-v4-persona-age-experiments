@@ -140,6 +140,13 @@ class Graph:
             return None
         primary_lemma = lemmas[0].lower()
 
+        # ------------------------------------------------------------------
+        # HARD EXCEPTION: Always allow "scorched" as PROPERTY
+        # ------------------------------------------------------------------
+        if primary_lemma == "scorched":
+            node_type = NodeType.PROPERTY
+            provenance = NodeProvenance.STORY_TEXT
+
         # BLOCK single-character junk
         if len(primary_lemma) <= 1:
             return None
@@ -166,7 +173,9 @@ class Graph:
             return None
         # EVENT nodes can have non-alphabetic names like "killing_knight_dragon_s0"
         # Only apply isalpha check to CONCEPT and PROPERTY nodes
-        if node_type != NodeType.EVENT and not lemmas[0].isalpha():
+        import re
+
+        if node_type != NodeType.EVENT and not re.match(r"^[a-zA-Z]+$", lemmas[0]):
             return None
 
         # ==========================================================================

@@ -62,7 +62,7 @@ def get_content_words_from_sent(nlp, sent: Span) -> List[Token]:
 
         # --- ORIGINAL AMoC LOGIC ---
         if (
-            tok.pos_ in {"NOUN", "PROPN", "ADJ"}
+            tok.pos_ in {"NOUN", "PROPN", "ADJ", "VERB"}
             and tok.dep_ not in {"det", "aux", "punct", "cc"}
             and tok.lemma_ not in nlp.Defaults.stop_words
         ):

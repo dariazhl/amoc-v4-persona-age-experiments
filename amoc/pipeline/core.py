@@ -174,6 +174,101 @@ class AMoCv4:
 
         return RelationClass.STATIVE
 
+    def init_graph(self, sent: Span) -> None:
+        current_sentence_text_based_nodes, current_sentence_text_based_words = (
+            self.get_senteces_text_based_nodes([sent], create_unexistent_nodes=True)
+        )
+
+        # ==========================================================================
+        # PAPER-FAITHFUL EXTRACTION: Deterministic linguistic grounding
+        # Per AMoC paper Figures 4-6: Extract adjectives and prepositional objects
+        # BEFORE LLM enrichment. This ensures "young" and "forest" appear in Sentence 1.
+        # ==========================================================================
+        self._extract_deterministic_structure(
+            sent,
+            current_sentence_text_based_nodes,
+            current_sentence_text_based_words,
+        )
+
+        nodes_from_text = ""
+        for i, node in enumerate(current_sentence_text_based_nodes):
+            nodes_from_text += (
+                f" - ({current_sentence_text_based_words[i]}, {node.node_type})\n"
+            )
+
+        relationships = self.client.get_new_relationships_first_sentence(
+            nodes_from_text, sent.text, self.persona
+        )
+        # print(f"First sentence edges:\n{relationships}")
+        for relationship in relationships:
+            if len(relationship) != 3:
+                continue
+            if not relationship[0] or not relationship[2]:
+                continue
+            if relationship[0] == relationship[2]:
+                continue
+            if not isinstance(relationship[0], str) or not isinstance(
+                relationship[2], str
+            ):
+                continue
+            norm_subj = self._normalize_endpoint_text(relationship[0], is_subject=True)
+            norm_obj = self._normalize_endpoint_text(relationship[2], is_subject=False)
+            if norm_subj is None or norm_obj is None:
+                continue
+            if not self._passes_attachment_constraint(
+                norm_subj,
+                norm_obj,
+                current_sentence_text_based_words,
+                current_sentence_text_based_nodes,
+                list(self.graph.nodes),
+                self._get_nodes_with_active_edges(),
+            ):
+                continue
+            source_node = self.get_node_from_text(
+                norm_subj,
+                current_sentence_text_based_nodes,
+                current_sentence_text_based_words,
+                node_source=NodeSource.TEXT_BASED,
+                create_node=True,
+            )
+            dest_node = self.get_node_from_text(
+                norm_obj,
+                current_sentence_text_based_nodes,
+                current_sentence_text_based_words,
+                node_source=NodeSource.TEXT_BASED,
+                create_node=True,
+            )
+            edge_label = relationship[1].replace("(edge)", "").strip()
+            edge_label = self._normalize_edge_label(edge_label)
+            if not self._is_valid_relation_label(edge_label):
+                continue
+            if source_node is None or dest_node is None:
+                continue
+
+            # DIRECTION CANONICALIZATION: Normalize passive voice to active
+            canon_label, canon_src, canon_dst, was_swapped = (
+                self._canonicalize_edge_direction(
+                    edge_label,
+                    source_node.get_text_representer(),
+                    dest_node.get_text_representer(),
+                )
+            )
+            if was_swapped:
+                source_node, dest_node = dest_node, source_node
+                edge_label = canon_label
+
+            # AMoCv4 surface-relation format: direct edge between entities
+            # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
+            # Direction: source (subject/agent) → dest (object/patient)
+            self._add_edge(
+                source_node,
+                dest_node,
+                edge_label,
+                self.edge_visibility,
+                relation_class=self._classify_relation(edge_label),
+                justification=Justification.IMPLIED,  # Inferred relationships
+            )
+
     def _admit_node(
         self,
         lemma: str,
@@ -1177,51 +1272,58 @@ class AMoCv4:
     ) -> None:
 
         # ------------------------------------------------------------
-        # 1. Assert edges created in this sentence
+        # 1️⃣ Assert edges created in current sentence
         # ------------------------------------------------------------
         for edge in self.graph.edges:
             if edge.created_at_sentence == self._current_sentence_index:
                 edge.mark_as_asserted(reset_score=True)
 
         # ------------------------------------------------------------
-        # 2. Hard reset node scores
+        # 2️⃣ Hard reset node projection state
         # ------------------------------------------------------------
         for node in self.graph.nodes:
-            node.score = 100
+            node.score = 100  # 100 = outside projection window
 
         # ------------------------------------------------------------
-        # 3. If no explicit nodes → no projection
+        # 3️⃣ If no explicit nodes → no projection
         # ------------------------------------------------------------
         if not explicit_nodes:
             for edge in self.graph.edges:
                 edge.active = False
             return
 
-        projection_sources = set(explicit_nodes)
+        # ------------------------------------------------------------
+        # 4️⃣ Projection seeds = EXPLICIT NODES ONLY
+        #     (no structural carryover injection)
+        # ------------------------------------------------------------
+        projection_seeds = set(explicit_nodes)
 
         # ------------------------------------------------------------
-        # 4. BFS projection from explicit nodes
+        # 5️⃣ BFS window
         # ------------------------------------------------------------
         distances = self._distances_from_projection_sources(
-            projection_sources,
+            projection_seeds,
             self.max_distance_from_active_nodes,
         )
 
-        # ------------------------------------------------------------
-        # 5. INVARIANT: explicit nodes must always exist in window
-        # ------------------------------------------------------------
+        # Invariant: explicit nodes always inside window
         for node in explicit_nodes:
             distances.setdefault(node, 0)
 
         # ------------------------------------------------------------
-        # 6. Update node scores strictly from window
+        # 6️⃣ Update node projection membership
         # ------------------------------------------------------------
         for node in self.graph.nodes:
-            node.score = distances.get(node, 100)
+            if node in distances:
+                node.score = distances[node]
+            else:
+                node.score = 100
 
         # ------------------------------------------------------------
-        # 7. Activate edges strictly inside projection window
-        #    (BOTH endpoints must be inside)
+        # 7️⃣ Activate edges
+        #     Edge active iff:
+        #       • visibility_score > 0
+        #       • BOTH endpoints inside projection window
         # ------------------------------------------------------------
         for edge in self.graph.edges:
 
@@ -3233,59 +3335,47 @@ class AMoCv4:
         for token in sent:
 
             # ============================================================
-            #  COPULAR PROPERTIES (ADJ / VBN complements)
+            # PROPERTY RELATIONS (Copular + Passive)
             #
             # knight was unfamiliar
             # armor was scorched
             # princess was thankful
             # ============================================================
-            if token.dep_ in {"acomp", "attr"} and (
+
+            if token.dep_ in {"acomp", "attr", "ROOT"} and (
                 token.pos_ == "ADJ" or (token.pos_ == "VERB" and token.tag_ == "VBN")
             ):
+                subj = None
 
-                head = token.head
-                if head.lemma_ != "be":
-                    continue
+                # Case A: copular (be + acomp)
+                if token.head.lemma_ == "be":
+                    subj = next(
+                        (
+                            c
+                            for c in token.head.children
+                            if c.dep_ in {"nsubj", "nsubjpass"}
+                        ),
+                        None,
+                    )
 
-                subj = next(
-                    (c for c in head.children if c.dep_ in {"nsubj", "nsubjpass"}),
-                    None,
-                )
+                # Case B: passive root (auxpass + nsubjpass)
+                if token.dep_ == "ROOT":
+                    subj = next(
+                        (c for c in token.children if c.dep_ == "nsubjpass"),
+                        None,
+                    )
 
                 if subj:
                     subj_node = get_node(subj)
-                    prop_node = get_node(token)
-
-                    if subj_node and prop_node:
-                        self._add_edge(
-                            subj_node,
-                            prop_node,
-                            label="is",
-                            relation_class=RelationClass.ATTRIBUTIVE,
-                            justification=Justification.TEXTUAL,
-                            edge_forget=self.edge_visibility,
-                            created_at_sentence=self._current_sentence_index,
-                        )
-
-            # ============================================================
-            # ROOT COPULAR (ADJ or VBN as ROOT)
-            #
-            # armor was scorched
-            # knight was unfamiliar
-            # ============================================================
-            if token.dep_ == "ROOT" and (
-                token.pos_ == "ADJ" or (token.pos_ == "VERB" and token.tag_ == "VBN")
-            ):
-
-                cop = next((c for c in token.children if c.dep_ == "cop"), None)
-                subj = next(
-                    (c for c in token.children if c.dep_ in {"nsubj", "nsubjpass"}),
-                    None,
-                )
-
-                if cop and subj:
-                    subj_node = get_node(subj)
-                    prop_node = get_node(token)
+                    # preserves "scorched"
+                    prop_node = self.graph.add_or_get_node(
+                        [token.lemma_.lower()],  # identity = lemma
+                        token.text,  # display surface form (Scorched)
+                        NodeType.PROPERTY,
+                        NodeSource.TEXT_BASED,
+                        provenance=NodeProvenance.STORY_TEXT,
+                        origin_sentence=self._current_sentence_index,
+                    )
 
                     if subj_node and prop_node:
                         self._add_edge(
@@ -3304,7 +3394,8 @@ class AMoCv4:
             # beautiful princess
             # young knight
             # ============================================================
-            if token.dep_ == "amod":
+
+            if token.dep_ == "amod" and token.pos_ == "ADJ":
 
                 head_node = get_node(token.head)
                 prop_node = get_node(token)
@@ -3321,13 +3412,18 @@ class AMoCv4:
                     )
 
             # ============================================================
-            # EVENTIVE VERBS (ONLY VERBS ALLOWED AS RELATIONS)
+            # EVENTIVE VERBS (STRICT VERB-ONLY RELATIONS)
             #
             # knight fought dragon
-            # dragon kidnapped princess
+            # knight fought for life and death
+            # knight rode through forest
             # ============================================================
+
             if token.pos_ == "VERB" and token.lemma_ != "be":
 
+                # --------------------------------------------
+                # Subject (active or passive)
+                # --------------------------------------------
                 subj = next(
                     (c for c in token.children if c.dep_ in {"nsubj", "nsubjpass"}),
                     None,
@@ -3340,130 +3436,50 @@ class AMoCv4:
                 if not subj_node:
                     continue
 
-                # --------------------------------------------------------
-                # Direct objects (dobj / attr)
-                # --------------------------------------------------------
-                objects = [c for c in token.children if c.dep_ in {"dobj", "attr"}]
+                # --------------------------------------------
+                # Collect direct objects
+                # --------------------------------------------
+                objects = list(c for c in token.children if c.dep_ in {"dobj", "attr"})
 
-                # --------------------------------------------------------
-                # Handle coordination (life and death)
-                # --------------------------------------------------------
-                expanded_objects = []
-                for obj in objects:
-                    expanded_objects.append(obj)
-                    expanded_objects.extend(list(obj.conjuncts))
+                # --------------------------------------------
+                # Direct objects
+                # --------------------------------------------
+                for obj in (c for c in token.children if c.dep_ in {"dobj", "attr"}):
+                    obj_node = get_node(obj)
+                    if obj_node:
+                        self._add_edge(
+                            subj_node,
+                            obj_node,
+                            label=token.lemma_,
+                            relation_class=self._classify_relation(token.lemma_),
+                            justification=Justification.TEXTUAL,
+                            edge_forget=self.edge_visibility,
+                            created_at_sentence=self._current_sentence_index,
+                        )
 
-                for obj_token in expanded_objects:
+                # --------------------------------------------
+                # Verb + preposition (ride through forest)
+                # --------------------------------------------
+                for prep in (c for c in token.children if c.dep_ == "prep"):
+                    pobj = next((c for c in prep.children if c.dep_ == "pobj"), None)
+                    if not pobj:
+                        continue
 
-                    obj_node = get_node(obj_token)
+                    obj_node = get_node(pobj)
                     if not obj_node:
                         continue
+
+                    label = f"{token.lemma_} {prep.lemma_}"
 
                     self._add_edge(
                         subj_node,
                         obj_node,
-                        label=token.lemma_,  # ONLY VERB USED
+                        label=label,
                         relation_class=self._classify_relation(token.lemma_),
                         justification=Justification.TEXTUAL,
                         edge_forget=self.edge_visibility,
                         created_at_sentence=self._current_sentence_index,
                     )
-
-    def init_graph(self, sent: Span) -> None:
-        current_sentence_text_based_nodes, current_sentence_text_based_words = (
-            self.get_senteces_text_based_nodes([sent], create_unexistent_nodes=True)
-        )
-
-        # ==========================================================================
-        # PAPER-FAITHFUL EXTRACTION: Deterministic linguistic grounding
-        # Per AMoC paper Figures 4-6: Extract adjectives and prepositional objects
-        # BEFORE LLM enrichment. This ensures "young" and "forest" appear in Sentence 1.
-        # ==========================================================================
-        self._extract_deterministic_structure(
-            sent,
-            current_sentence_text_based_nodes,
-            current_sentence_text_based_words,
-        )
-
-        nodes_from_text = ""
-        for i, node in enumerate(current_sentence_text_based_nodes):
-            nodes_from_text += (
-                f" - ({current_sentence_text_based_words[i]}, {node.node_type})\n"
-            )
-
-        relationships = self.client.get_new_relationships_first_sentence(
-            nodes_from_text, sent.text, self.persona
-        )
-        # print(f"First sentence edges:\n{relationships}")
-
-        for relationship in relationships:
-            if len(relationship) != 3:
-                continue
-            if not relationship[0] or not relationship[2]:
-                continue
-            if relationship[0] == relationship[2]:
-                continue
-            if not isinstance(relationship[0], str) or not isinstance(
-                relationship[2], str
-            ):
-                continue
-            norm_subj = self._normalize_endpoint_text(relationship[0], is_subject=True)
-            norm_obj = self._normalize_endpoint_text(relationship[2], is_subject=False)
-            if norm_subj is None or norm_obj is None:
-                continue
-            if not self._passes_attachment_constraint(
-                norm_subj,
-                norm_obj,
-                current_sentence_text_based_words,
-                current_sentence_text_based_nodes,
-                list(self.graph.nodes),
-                self._get_nodes_with_active_edges(),
-            ):
-                continue
-            source_node = self.get_node_from_text(
-                norm_subj,
-                current_sentence_text_based_nodes,
-                current_sentence_text_based_words,
-                node_source=NodeSource.TEXT_BASED,
-                create_node=True,
-            )
-            dest_node = self.get_node_from_text(
-                norm_obj,
-                current_sentence_text_based_nodes,
-                current_sentence_text_based_words,
-                node_source=NodeSource.TEXT_BASED,
-                create_node=True,
-            )
-            edge_label = relationship[1].replace("(edge)", "").strip()
-            edge_label = self._normalize_edge_label(edge_label)
-            if not self._is_valid_relation_label(edge_label):
-                continue
-            if source_node is None or dest_node is None:
-                continue
-
-            # DIRECTION CANONICALIZATION: Normalize passive voice to active
-            canon_label, canon_src, canon_dst, was_swapped = (
-                self._canonicalize_edge_direction(
-                    edge_label,
-                    source_node.get_text_representer(),
-                    dest_node.get_text_representer(),
-                )
-            )
-            if was_swapped:
-                source_node, dest_node = dest_node, source_node
-                edge_label = canon_label
-
-            # AMoCv4 surface-relation format: direct edge between entities
-            # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
-            # Direction: source (subject/agent) → dest (object/patient)
-            self._add_edge(
-                source_node,
-                dest_node,
-                edge_label,
-                self.edge_visibility,
-                relation_class=self._classify_relation(edge_label),
-                justification=Justification.IMPLIED,  # Inferred relationships
-            )
 
     def add_inferred_relationships_to_graph_step_0(
         self,
