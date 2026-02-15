@@ -674,13 +674,10 @@ class Graph:
 
     def get_active_subgraph(
         self,
-        activation_threshold: int = 0,
     ) -> Tuple[Set[Node], Set[Edge]]:
 
         active_edges: Set[Edge] = {
-            e
-            for e in self.edges
-            if e.active and e.activation_score > activation_threshold
+            e for e in self.edges if e.active and e.visibility_score > 0
         }
 
         active_nodes: Set[Node] = {e.source_node for e in active_edges} | {
