@@ -149,6 +149,9 @@ class AMoCv4:
         self._fixed_hub = None
         # Per-sentence graph view (rebuilt each sentence for isolation)
         self._per_sentence_view: Optional[PerSentenceGraph] = None
+        self._ever_admitted_nodes: set[str] = set()
+        self._layout_depth = 3
+        self._persistent_is_edges: set[tuple[str, str, str]] = set()
 
     def _classify_relation(self, label: str) -> RelationClass:
         label = label.lower()
@@ -315,15 +318,31 @@ class AMoCv4:
         primary_lemma = lemma.lower()
         is_story_grounded = primary_lemma in self.story_lemmas
 
-        # Inference is allowed ONLY if the node can attach to an ACTIVE node
-        is_allowed_inference = provenance in {
-            "INFERRED_RELATION",
-            "INFERENCE_BASED",
-        } and self._has_active_attachment(lemma)
+        is_allowed_inference = (
+            provenance in {"INFERRED_RELATION", "INFERENCE_BASED"}
+            and primary_lemma in self.story_lemmas
+            and self._has_active_attachment(lemma)
+        )
 
-        # If neither story grounded nor allowed inference, reject
         if not is_story_grounded and not is_allowed_inference:
             return False
+
+        is_new = primary_lemma not in self._ever_admitted_nodes
+
+        self._ever_admitted_nodes.add(primary_lemma)
+
+        # --------------------------------------------------
+        # Adaptive layout depth update (monotonic)
+        # --------------------------------------------------
+        if is_new:
+            total_nodes = len(self._ever_admitted_nodes)
+
+            if total_nodes > 40:
+                self._layout_depth = max(getattr(self, "_layout_depth", 3), 6)
+            elif total_nodes > 25:
+                self._layout_depth = max(getattr(self, "_layout_depth", 3), 5)
+            elif total_nodes > 12:
+                self._layout_depth = max(getattr(self, "_layout_depth", 3), 4)
 
         return True
 
@@ -465,18 +484,35 @@ class AMoCv4:
             sentence_index=sentence_index,
         )
 
-        # ============================================================
-        # HARD INVARIANT:
-        # Explicit nodes must always appear in projection
-        # ============================================================
-        if (
-            self._per_sentence_view is not None
-            and self._per_sentence_view.is_empty
-            and explicit_nodes
-        ):
-            self._per_sentence_view.explicit_nodes = set(explicit_nodes)
-            self._per_sentence_view.carryover_nodes = set()
-            self._per_sentence_view.active_edges = set()
+        # ------------------------------------------------------------
+        # GUARANTEE: Explicit nodes must exist in core graph
+        # ------------------------------------------------------------
+        if explicit_nodes:
+            for node in explicit_nodes:
+                # If explicit_nodes contains Node objects
+                if hasattr(node, "get_text_representer"):
+                    lemma = node.get_text_representer().lower().strip()
+                else:
+                    lemma = str(node).lower().strip()
+
+                if lemma not in self.story_lemmas:
+                    continue
+
+                admitted = self._admit_node(
+                    lemma=lemma,
+                    node_type=NodeType.CONCEPT,
+                    provenance="STORY_EXPLICIT",
+                    sent=None,
+                )
+
+                if admitted:
+                    self.graph.add_or_get_node(
+                        [lemma],
+                        lemma,
+                        NodeType.CONCEPT,
+                        NodeSource.TEXT_BASED,
+                        provenance=NodeProvenance.STORY_TEXT,
+                    )
 
         return self._per_sentence_view
 
@@ -1001,6 +1037,11 @@ class AMoCv4:
                     self._record_edge_in_graphs(
                         existing_edge, self._current_sentence_index
                     )
+
+                    # Persist ontology-level attributive edges
+                    if label.strip().lower() == "is":
+                        self._persistent_is_edges.add(trip_id)
+
                     return existing_edge
                 else:
                     self.graph.remove_edge(existing_edge)
@@ -1046,6 +1087,16 @@ class AMoCv4:
                 )
 
             self._record_edge_in_graphs(edge, self._current_sentence_index)
+            # ------------------------------------------------------------
+            # INVARIANT: Persist all "is" edges (structural memory)
+            # ------------------------------------------------------------
+            if label.strip().lower() == "is":
+                trip_id = (
+                    edge.source_node.get_text_representer(),
+                    edge.label,
+                    edge.dest_node.get_text_representer(),
+                )
+                self._persistent_is_edges.add(trip_id)
 
         return edge
 
@@ -1999,6 +2050,7 @@ class AMoCv4:
                 # Triplets originate from _graph_edges_to_triplets() or triplets_override
                 active_triplets_for_overlay=active_triplets_for_overlay,
                 show_triplet_overlay=True,
+                layout_depth=self._layout_depth,
             )
             if triplets:
                 logging.info(
@@ -2720,6 +2772,8 @@ class AMoCv4:
                 # ------------------------------------------------------------
                 for edge in self.graph.edges:
                     # Do not decay edges created this sentence
+                    if edge.label.strip().lower() == "is":
+                        continue
                     if edge.created_at_sentence == self._current_sentence_index:
                         continue
 
@@ -2833,7 +2887,11 @@ class AMoCv4:
                     filter(
                         None,
                         {
-                            n.get_text_representer()
+                            (
+                                n.get_text_representer()
+                                if hasattr(n, "get_text_representer")
+                                else n
+                            )
                             for n in self._per_sentence_view.explicit_nodes
                         },
                     )

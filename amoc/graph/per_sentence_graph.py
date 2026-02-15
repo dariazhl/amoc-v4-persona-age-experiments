@@ -281,8 +281,9 @@ class PerSentenceGraphBuilder:
             # Property edges must only be active in their origin sentence
             # Per AMoC paper: properties attach via "is" edges in their sentence only
             if edge.is_property_edge():
-                if edge.violates_property_sentence_constraint(sentence_index):
-                    continue
+                if edge.label.strip().lower() != "is":
+                    if edge.violates_property_sentence_constraint(sentence_index):
+                        continue
                 # This property edge is valid - check if it connects to an active concept
                 src_is_property = edge.source_node.node_type == NodeType.PROPERTY
                 dst_is_property = edge.dest_node.node_type == NodeType.PROPERTY
@@ -294,8 +295,12 @@ class PerSentenceGraphBuilder:
                     active_edges.add(edge)
                     property_nodes_with_active_edges.add(property_end)
             else:
-                # Non-property edge: both endpoints must be active CONCEPT nodes
-                if (
+                # Structural "is" edges are globally persistent
+                if edge.label.strip().lower() == "is":
+                    active_edges.add(edge)
+
+                # All other non-property edges require both endpoints active
+                elif (
                     edge.source_node in concept_nodes
                     and edge.dest_node in concept_nodes
                 ):
