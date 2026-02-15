@@ -593,7 +593,7 @@ class AMoCv4:
             if dist >= max_distance:
                 continue
             for edge in node.edges:
-                if edge.visibility_score <= 0:
+                if edge.visibility_score <= 1:
                     continue
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node

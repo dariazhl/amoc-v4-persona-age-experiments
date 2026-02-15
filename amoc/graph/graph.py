@@ -470,6 +470,16 @@ class Graph:
                 ):
                     self.remove_edge(edge)
 
+        # Narrative collapse: kill supersedes fight relations
+        if "kill" in new_edge.label:
+            for edge in list(self.edges):
+                if (
+                    edge.source_node == new_edge.source_node
+                    and edge.dest_node == new_edge.dest_node
+                    and "fight" in edge.label
+                ):
+                    self.remove_edge(edge)
+
     def _would_maintain_connectivity(self, new_edge: Edge) -> bool:
         """
         Check if adding this edge would maintain graph connectivity.
@@ -607,6 +617,11 @@ class Graph:
                 visited_edges.add(edge)
 
                 # Do not reactivate edges that have fully faded from memory
+                # Temporal guard: prevent revival of very old edges
+                # if edge.created_at_sentence is not None:
+                #     if current_sentence - edge.created_at_sentence > 5:
+                #         continue
+                # Do not reactivate edges that have fully faded
                 if edge.visibility_score <= 0:
                     continue
 
@@ -660,8 +675,8 @@ class Graph:
                 reverse=True,
             )
             for edge in memory_edges:
-                if edge.relation_class != RelationClass.ATTRIBUTIVE:
-                    edge.mark_as_reactivated(reset_score=True)
+                if edge.visibility_score > 0:
+                    edge.mark_as_reactivated(reset_score=False)
                     reactivated.add(edge)
                     break
         else:
@@ -1259,7 +1274,8 @@ class Graph:
 
                 # Only promote if not already active
                 if not edge.active:
-                    edge.mark_as_reactivated(reset_score=True)
+                    edge.active = True
+                    # edge.mark_as_reactivated(reset_score=True)
                     promoted_connectors.add(edge)
 
             if __debug__:

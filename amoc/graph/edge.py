@@ -154,8 +154,10 @@ class Edge:
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = True
         self.activation_role = "reactivated"
+
         if reset_score:
-            self.activation_score = self.DEFAULT_ACTIVATION_SCORE
+            # Weak boost instead of full reset (paper-aligned)
+            self.activation_score = max(self.activation_score, 1)
 
     def set_relation_class(self, new_class: RelationClass) -> None:
         """
@@ -178,18 +180,15 @@ class Edge:
         return self.relation_class == RelationClass.ATTRIBUTIVE
 
     def reduce_visibility(self) -> None:
-        """
-        AMoC v4 STEP 7: Visibility gating mechanism.
-
-        Behavior:
-        - Decrement visibility_score by 1
-        - When visibility_score reaches 0, edge becomes INACTIVE (not deleted)
-        - Edge persists in memory and can be reactivated later
-        """
         self.visibility_score -= 1
+
+        # Activation decays with visibility
+        # if self.activation_score > 0:
+        #     self.activation_score -= 1
+
         if self.visibility_score <= 0:
             self.visibility_score = 0
-            self.active = False  # Hidden from active graph, NOT deleted
+            self.active = False
 
     def reset_for_sentence_start(self) -> None:
         """
