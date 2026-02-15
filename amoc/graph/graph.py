@@ -140,13 +140,6 @@ class Graph:
             return None
         primary_lemma = lemmas[0].lower()
 
-        # ------------------------------------------------------------------
-        # HARD EXCEPTION: Always allow "scorched" as PROPERTY
-        # ------------------------------------------------------------------
-        if primary_lemma == "scorched":
-            node_type = NodeType.PROPERTY
-            provenance = NodeProvenance.STORY_TEXT
-
         # BLOCK single-character junk
         if len(primary_lemma) <= 1:
             return None
@@ -260,6 +253,10 @@ class Graph:
                 node.mark_explicit_in_sentence(origin_sentence)
         else:
             node.add_actual_text(actual_text_l)
+            # Upgrade CONCEPT to PROPERTY if necessary
+            if node.node_type != node_type:
+                if node_type == NodeType.PROPERTY:
+                    node.node_type = NodeType.PROPERTY
             # Update role if node exists but had no role and we're providing one
             if node.node_role is None and node_role is not None:
                 node.node_role = node_role
@@ -609,12 +606,14 @@ class Graph:
                     continue
                 visited_edges.add(edge)
 
-                # STRICT RULE: ATTRIBUTIVE edges must NEVER be reactivated
-                # Property edges fade permanently if not reasserted in current sentence
+                # --------------------------------------------------
+                # 1. PROPERTY EDGES (ATTRIBUTIVE)
+                # --------------------------------------------------
+                # Allow property edges to be reconsidered for reactivation,
+                # but NEVER propagate traversal through PROPERTY nodes.
                 if edge.relation_class == RelationClass.ATTRIBUTIVE:
-                    continue
-
-                if edge.violates_property_sentence_constraint(current_sentence):
+                    if not edge.active:
+                        candidate_edges.append((dist, edge))
                     continue
 
                 # Skip edges that are already active (asserted this sentence)
@@ -698,8 +697,6 @@ class Graph:
                 # Property edges only active in their origin sentence
                 if current_sentence is None:
                     continue  # Can't validate - skip property edges
-                if edge.violates_property_sentence_constraint(current_sentence):
-                    continue  # Not in origin sentence - skip
                 # ATTRIBUTIVE edges must be anchored to an active CONCEPT
                 concept_end = (
                     edge.source_node

@@ -204,10 +204,7 @@ class PerSentenceGraphBuilder:
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
 
-                # CRITICAL: Skip PROPERTY nodes in BFS traversal
-                # Per paper: PROPERTY nodes don't propagate activation
-                if neighbor.node_type == NodeType.PROPERTY:
-                    continue
+                # Allow PROPERTY nodes to persist once introduced
 
                 if neighbor in distances:
                     continue
@@ -275,25 +272,28 @@ class PerSentenceGraphBuilder:
         property_nodes_with_active_edges: Set["Node"] = set()
 
         for edge in self.cumulative_graph.edges:
-            if not edge.active:
+            # PROPERTY edges are structural state — ignore active flag
+            if edge.relation_class != RelationClass.ATTRIBUTIVE and not edge.active:
                 continue
 
             # Property edges must only be active in their origin sentence
             # Per AMoC paper: properties attach via "is" edges in their sentence only
             if edge.is_property_edge():
-                if edge.label.strip().lower() != "is":
-                    if edge.violates_property_sentence_constraint(sentence_index):
-                        continue
-                # This property edge is valid - check if it connects to an active concept
-                src_is_property = edge.source_node.node_type == NodeType.PROPERTY
-                dst_is_property = edge.dest_node.node_type == NodeType.PROPERTY
-                concept_end = edge.dest_node if src_is_property else edge.source_node
-                property_end = edge.source_node if src_is_property else edge.dest_node
+                concept_end = (
+                    edge.source_node
+                    if edge.source_node.node_type != NodeType.PROPERTY
+                    else edge.dest_node
+                )
+                property_end = (
+                    edge.source_node
+                    if edge.source_node.node_type == NodeType.PROPERTY
+                    else edge.dest_node
+                )
 
-                # Only include if the CONCEPT end is in active nodes
                 if concept_end in concept_nodes:
                     active_edges.add(edge)
                     property_nodes_with_active_edges.add(property_end)
+
             else:
                 # Structural "is" edges are globally persistent
                 if edge.label.strip().lower() == "is":
@@ -321,6 +321,17 @@ class PerSentenceGraphBuilder:
         carryover_concepts = {
             n for n in self._carryover_nodes if n.node_type != NodeType.PROPERTY
         }
+
+        print("CONCEPT NODES:", concept_nodes)
+
+        for edge in self.cumulative_graph.edges:
+            if edge.is_property_edge():
+                print(
+                    "PROPERTY EDGE:",
+                    edge,
+                    "concept in active:",
+                    concept_end in concept_nodes,
+                )
 
         return PerSentenceGraph(
             sentence_index=sentence_index,
