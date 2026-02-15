@@ -675,45 +675,17 @@ class Graph:
     def get_active_subgraph(
         self,
         activation_threshold: int = 0,
-        current_sentence: Optional[int] = None,
     ) -> Tuple[Set[Node], Set[Edge]]:
-        active_edges: Set[Edge] = set()
-        active_nodes: Set[Node] = set()
-        concept_active_nodes: Set[Node] = set()
 
-        for edge in self.edges:
-            if edge.active and edge.activation_score > activation_threshold:
-                if edge.source_node.node_type != NodeType.PROPERTY:
-                    concept_active_nodes.add(edge.source_node)
-                if edge.dest_node.node_type != NodeType.PROPERTY:
-                    concept_active_nodes.add(edge.dest_node)
-        for edge in self.edges:
-            if not edge.active:
-                continue
+        active_edges: Set[Edge] = {
+            e
+            for e in self.edges
+            if e.active and e.activation_score > activation_threshold
+        }
 
-            # CRITICAL FIX: Include property edges when they're in their origin sentence
-            # Per AMoC paper (Figures 2-4): properties attach via "is" edges
-            if edge.relation_class == RelationClass.ATTRIBUTIVE:
-                # Property edges only active in their origin sentence
-                if current_sentence is None:
-                    continue  # Can't validate - skip property edges
-                # ATTRIBUTIVE edges must be anchored to an active CONCEPT
-                concept_end = (
-                    edge.source_node
-                    if edge.source_node.node_type == NodeType.CONCEPT
-                    else edge.dest_node
-                )
-                if (
-                    concept_end not in concept_active_nodes
-                    and not concept_end.is_explicit_in_sentence(current_sentence)
-                ):
-                    continue
-                # Property edge is valid - include it
-
-            if edge.activation_score > activation_threshold:
-                active_edges.add(edge)
-                active_nodes.add(edge.source_node)
-                active_nodes.add(edge.dest_node)
+        active_nodes: Set[Node] = {e.source_node for e in active_edges} | {
+            e.dest_node for e in active_edges
+        }
 
         return active_nodes, active_edges
 
@@ -1335,11 +1307,6 @@ class Graph:
 
     def __repr__(self) -> str:
         return self.__str__()
-
-    def enforce_property_sentence_constraints(self, current_sentence: int) -> None:
-        for edge in self.edges:
-            if edge.violates_property_sentence_constraint(current_sentence):
-                edge.deactivate()
 
     # ==========================================================================
     # AMoCv4 HARD CONSTRAINTS - Surface-relation format enforcement

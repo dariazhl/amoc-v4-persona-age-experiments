@@ -2771,9 +2771,6 @@ class AMoCv4:
                 #   4. Fade non-selected edges
                 # ------------------------------------------------------------
                 for edge in self.graph.edges:
-                    # Do not decay edges created this sentence
-                    if edge.label.strip().lower() == "is":
-                        continue
                     if edge.created_at_sentence == self._current_sentence_index:
                         continue
 

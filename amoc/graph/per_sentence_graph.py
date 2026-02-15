@@ -241,106 +241,109 @@ class PerSentenceGraphBuilder:
         attachable = self.get_attachable_nodes()
         return source in attachable or dest in attachable
 
-    def build(self, sentence_index: int) -> PerSentenceGraph:
+    def _attempt_llm_repair(
+        self,
+        components: List[Set[Node]],
+    ) -> Optional[Set[Edge]]:
         """
-        Build the immutable per-sentence graph.
-
-        This constructs the final view with all invariants enforced:
-        - Only active nodes (explicit + carry-over) are included
-        - Only edges with BOTH endpoints active are included
-        - Property edges only included in their origin sentence (per AMoC paper)
-        - PROPERTY nodes only included if they have an active property edge
-        - The result is guaranteed connected (or empty)
+        Attempt to connect disconnected components via LLM-generated edge.
+        Must validate ontology + grounding before accepting.
         """
-        self._sentence_index = sentence_index
+        # TODO: implement LLM repair logic
+        return None
 
-        # CRITICAL (Paper-Aligned):
-        # PROPERTY nodes are NOT included in active_nodes via carry-over.
-        # They are only included if they have an active property edge in this sentence.
-        # First, collect CONCEPT nodes (explicit + carry-over)
-        concept_nodes = {
-            n
-            for n in (
-                self._explicit_nodes | self._carryover_nodes | set(self.anchor_nodes)
-            )
-            if n.node_type != NodeType.PROPERTY
-        }
+    def _connected_components(
+        self,
+        nodes: Set[Node],
+        edges: Set[Edge],
+    ) -> List[Set[Node]]:
 
-        # Filter edges: only those where BOTH endpoints are active
-        # CRITICAL: Also enforce property edge sentence constraints
-        active_edges: Set["Edge"] = set()
-        property_nodes_with_active_edges: Set["Node"] = set()
+        adjacency = {n: set() for n in nodes}
 
-        for edge in self.cumulative_graph.edges:
-            # PROPERTY edges are structural state — ignore active flag
-            if edge.relation_class != RelationClass.ATTRIBUTIVE and not edge.active:
+        for e in edges:
+            adjacency[e.source_node].add(e.dest_node)
+            adjacency[e.dest_node].add(e.source_node)
+
+        visited = set()
+        components = []
+
+        for node in nodes:
+            if node in visited:
                 continue
 
-            # Property edges must only be active in their origin sentence
-            # Per AMoC paper: properties attach via "is" edges in their sentence only
-            if edge.is_property_edge():
-                concept_end = (
-                    edge.source_node
-                    if edge.source_node.node_type != NodeType.PROPERTY
-                    else edge.dest_node
-                )
-                property_end = (
-                    edge.source_node
-                    if edge.source_node.node_type == NodeType.PROPERTY
-                    else edge.dest_node
-                )
+            stack = [node]
+            comp = set()
 
-                if concept_end in concept_nodes:
+            while stack:
+                n = stack.pop()
+                if n in visited:
+                    continue
+                visited.add(n)
+                comp.add(n)
+                stack.extend(adjacency[n] - visited)
+
+            components.append(comp)
+
+        return components
+
+    def build(self, sentence_index: int) -> PerSentenceGraph:
+        """
+        Build immutable per-sentence graph.
+
+        Paper-faithful activation +
+        Explicit node guarantee +
+        Presentation-layer connectivity enforcement +
+        LLM repair fallback.
+        """
+
+        self._sentence_index = sentence_index
+
+        # ------------------------------------------------------------
+        # 1. Get paper-faithful active subgraph
+        # ------------------------------------------------------------
+        active_nodes, active_edges = self.cumulative_graph.get_active_subgraph()
+
+        # ------------------------------------------------------------
+        # 2. Guarantee explicit nodes are always plotted
+        # ------------------------------------------------------------
+        active_nodes |= self._explicit_nodes
+
+        # ------------------------------------------------------------
+        # 3. Connectivity enforcement (presentation only)
+        # ------------------------------------------------------------
+        components = self._connected_components(active_nodes, active_edges)
+
+        if len(components) > 1:
+            repaired_edges = self._attempt_llm_repair(components)
+
+            if repaired_edges:
+                for edge in repaired_edges:
                     active_edges.add(edge)
-                    property_nodes_with_active_edges.add(property_end)
-
+                    active_nodes.add(edge.source_node)
+                    active_nodes.add(edge.dest_node)
             else:
-                # Structural "is" edges are globally persistent
-                if edge.label.strip().lower() == "is":
-                    active_edges.add(edge)
+                # fallback to previous valid graph if available
+                if hasattr(self, "_last_valid_graph"):
+                    return self._last_valid_graph
 
-                # All other non-property edges require both endpoints active
-                elif (
-                    edge.source_node in concept_nodes
-                    and edge.dest_node in concept_nodes
-                ):
-                    active_edges.add(edge)
-
-        # CRITICAL: PROPERTY nodes are only visible if they have an active property edge
-        # This implements: "PROPERTY nodes are visible in the ACTIVE graph if and only if
-        # at least one PROPERTY edge involving that node is active in the current sentence"
-        active_nodes = concept_nodes | property_nodes_with_active_edges
-
-        # Also filter explicit_nodes and carryover_nodes for consistency
-        # (PROPERTY nodes should never be in carryover, but filter explicit too)
-        explicit_concepts = {
-            n
-            for n in self._explicit_nodes
-            if n.node_type != NodeType.PROPERTY or n in property_nodes_with_active_edges
-        }
-        carryover_concepts = {
-            n for n in self._carryover_nodes if n.node_type != NodeType.PROPERTY
-        }
-
-        print("CONCEPT NODES:", concept_nodes)
-
-        for edge in self.cumulative_graph.edges:
-            if edge.is_property_edge():
-                print(
-                    "PROPERTY EDGE:",
-                    edge,
-                    "concept in active:",
-                    concept_end in concept_nodes,
-                )
-
-        return PerSentenceGraph(
+        # ------------------------------------------------------------
+        # 4. Final graph construction
+        # ------------------------------------------------------------
+        result = PerSentenceGraph(
             sentence_index=sentence_index,
-            explicit_nodes=frozenset(explicit_concepts),
-            carryover_nodes=frozenset(carryover_concepts),
+            explicit_nodes=frozenset(self._explicit_nodes),
+            carryover_nodes=frozenset(self._carryover_nodes),
             active_nodes=frozenset(active_nodes),
             active_edges=frozenset(active_edges),
             anchor_nodes=self.anchor_nodes,
         )
+
+        # ------------------------------------------------------------
+        # 5. Store fallback snapshot
+        # ------------------------------------------------------------
+        self._last_valid_graph = result
+
+        return result
 
 
 def build_per_sentence_graph(

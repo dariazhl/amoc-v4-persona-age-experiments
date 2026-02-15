@@ -189,7 +189,6 @@ class Edge:
         Per AMoC v4 paper: all edges become inactive at sentence start,
         then selectively activated through assertion or reactivation.
         """
-        self.active = False
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = False
         self.activation_role = None
@@ -230,7 +229,7 @@ class Edge:
         # HARD GUARD: ATTRIBUTIVE edges can NEVER be connectors
         if self.relation_class == RelationClass.ATTRIBUTIVE:
             return  # Silently refuse - ATTRIBUTIVE edges don't maintain connectivity
-        self.active = True
+        self.activation_score = max(self.activation_score, 1)
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = False
         self.activation_role = "connector"
@@ -246,8 +245,11 @@ class Edge:
         """
         Activation decay disabled (replication mode uses visibility only).
         """
-        if not self.active and self.activation_score > 0:
+        if self.activation_score > 0:
             self.activation_score -= 1
+
+        # Synchronize active with activation_score
+        self.active = self.activation_score > 0
 
     def is_connector(self) -> bool:
         """Check if this edge is serving as a connector (for connectivity only)."""
@@ -396,9 +398,6 @@ class Edge:
 
     def __repr__(self) -> str:
         return self.__str__()
-
-    def violates_property_sentence_constraint(self, current_sentence: int) -> bool:
-        return False
 
 
 # =============================================================================
