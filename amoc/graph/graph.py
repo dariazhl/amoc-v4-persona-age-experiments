@@ -332,33 +332,33 @@ class Graph:
         if not label or not isinstance(label, str) or not label.strip():
             return None
 
-        # ==========================================================================
-        # EDGE BUDGET THROTTLING (Issue B - Node Coagulation Prevention)
-        # ==========================================================================
-        # Low-information edges ("has", "relates_to", "is", etc.) create hub clusters
-        # that reduce graph information density. Limit to 1 per (node, label) per sentence.
-        label_lower = label.lower().strip()
-        if label_lower in self.LOW_INFO_LABELS:
-            sentence_idx = self._current_sentence_idx
-            # Use source node's primary lemma as key (tuple for hashability)
-            source_key = tuple(source_node.lemmas)
+            # ==========================================================================
+            # EDGE BUDGET THROTTLING (Issue B - Node Coagulation Prevention)
+            # ==========================================================================
+            # Low-information edges ("has", "relates_to", "is", etc.) create hub clusters
+            # that reduce graph information density. Limit to 1 per (node, label) per sentence.
+            # label_lower = label.lower().strip()
+            # if label_lower in self.LOW_INFO_LABELS:
+            #     sentence_idx = self._current_sentence_idx
+            #     # Use source node's primary lemma as key (tuple for hashability)
+            #     source_key = tuple(source_node.lemmas)
 
-            # Initialize budget structure if needed
-            if sentence_idx not in self._edge_budget:
-                self._edge_budget[sentence_idx] = {}
-            if source_key not in self._edge_budget[sentence_idx]:
-                self._edge_budget[sentence_idx][source_key] = {}
+            #     # Initialize budget structure if needed
+            #     if sentence_idx not in self._edge_budget:
+            #         self._edge_budget[sentence_idx] = {}
+            #     if source_key not in self._edge_budget[sentence_idx]:
+            #         self._edge_budget[sentence_idx][source_key] = {}
 
-            # Check budget
-            current_count = self._edge_budget[sentence_idx][source_key].get(
-                label_lower, 0
-            )
-            if current_count >= 1:
-                logging.debug(
-                    f"EDGE BUDGET: Throttled '{label_lower}' edge from "
-                    f"'{source_node.get_text_representer()}' (count={current_count})"
-                )
-                return None  # Silently skip - budget exceeded
+            #     # Check budget
+            #     current_count = self._edge_budget[sentence_idx][source_key].get(
+            #         label_lower, 0
+            #     )
+            #     if current_count >= 1:
+            #         logging.debug(
+            #             f"EDGE BUDGET: Throttled '{label_lower}' edge from "
+            #             f"'{source_node.get_text_representer()}' (count={current_count})"
+            #         )
+            #         return None  # Silently skip - budget exceeded
 
             # Increment budget counter
             self._edge_budget[sentence_idx][source_key][label_lower] = current_count + 1
@@ -605,6 +605,10 @@ class Graph:
                 if edge in visited_edges:
                     continue
                 visited_edges.add(edge)
+
+                # Do not reactivate edges that have fully faded from memory
+                if edge.visibility_score <= 0:
+                    continue
 
                 # --------------------------------------------------
                 # 1. PROPERTY EDGES (ATTRIBUTIVE)
@@ -1255,7 +1259,7 @@ class Graph:
 
                 # Only promote if not already active
                 if not edge.active:
-                    edge.mark_as_connector()
+                    edge.mark_as_reactivated(reset_score=True)
                     promoted_connectors.add(edge)
 
             if __debug__:
@@ -1276,12 +1280,10 @@ class Graph:
         Returns dict with keys:
         - "asserted": edges asserted this sentence
         - "reactivated": edges reactivated from memory
-        - "connector": edges promoted for connectivity
         """
         result: dict[str, Set[Edge]] = {
             "asserted": set(),
             "reactivated": set(),
-            "connector": set(),
         }
 
         for edge in self.edges:
@@ -1291,8 +1293,6 @@ class Graph:
                 result["asserted"].add(edge)
             elif edge.is_reactivated():
                 result["reactivated"].add(edge)
-            elif edge.is_connector():
-                result["connector"].add(edge)
 
         return result
 

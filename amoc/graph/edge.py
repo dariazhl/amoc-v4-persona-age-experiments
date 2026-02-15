@@ -149,6 +149,14 @@ class Edge:
         # connect disconnected components.
         self.forced_connection: bool = False
 
+    def mark_as_reactivated(self, reset_score: bool = True) -> None:
+        self.active = True
+        self.asserted_this_sentence = False
+        self.reactivated_this_sentence = True
+        self.activation_role = "reactivated"
+        if reset_score:
+            self.activation_score = self.DEFAULT_ACTIVATION_SCORE
+
     def set_relation_class(self, new_class: RelationClass) -> None:
         """
         DISCOURAGED: relation_class should be immutable after edge creation.
@@ -212,29 +220,6 @@ class Edge:
         if reset_score:
             self.activation_score = self.DEFAULT_ACTIVATION_SCORE
 
-    def mark_as_reactivated(self, reset_score: bool = True) -> None:
-        # HARD GUARD: ATTRIBUTIVE edges can NEVER be reactivated
-        if self.relation_class == RelationClass.ATTRIBUTIVE:
-            return
-        if self.activation_role == "connector":
-            return
-        self.active = True
-        self.asserted_this_sentence = False
-        self.reactivated_this_sentence = True
-        self.activation_role = "reactivated"
-        if reset_score:
-            self.activation_score = self.DEFAULT_ACTIVATION_SCORE
-
-    def mark_as_connector(self) -> None:
-        # HARD GUARD: ATTRIBUTIVE edges can NEVER be connectors
-        if self.relation_class == RelationClass.ATTRIBUTIVE:
-            return  # Silently refuse - ATTRIBUTIVE edges don't maintain connectivity
-        self.activation_score = max(self.activation_score, 1)
-        self.asserted_this_sentence = False
-        self.reactivated_this_sentence = False
-        self.activation_role = "connector"
-        # Do NOT reset activation_score - connectors don't boost activation
-
     def activate(self, reset_score: bool = True) -> None:
         """Activate edge and optionally reset activation_score (legacy method)."""
         self.active = True
@@ -250,10 +235,6 @@ class Edge:
 
         # Synchronize active with activation_score
         self.active = self.activation_score > 0
-
-    def is_connector(self) -> bool:
-        """Check if this edge is serving as a connector (for connectivity only)."""
-        return self.activation_role == "connector"
 
     def mark_as_forced_connection(self) -> None:
         """
@@ -387,8 +368,6 @@ class Edge:
                 status = "asserted"
             elif self.reactivated_this_sentence:
                 status = "reactivated"
-            elif self.activation_role == "connector":
-                status = "connector"
             else:
                 status = "active"
         else:

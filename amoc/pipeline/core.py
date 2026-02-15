@@ -3295,7 +3295,7 @@ class AMoCv4:
                     continue
                 edge.mark_as_reactivated(reset_score=False)
                 edge.visibility_score = self.edge_visibility
-                if edge.is_asserted() or edge.is_reactivated() or edge.is_connector():
+                if edge.is_asserted() or edge.is_reactivated():
                     self._record_edge_in_graphs(edge, self._current_sentence_index)
 
             # Enforce connectivity even in non-strict mode
