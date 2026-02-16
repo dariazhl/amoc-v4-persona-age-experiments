@@ -478,7 +478,8 @@ class Graph:
                     and edge.dest_node == new_edge.dest_node
                     and "fight" in edge.label
                 ):
-                    self.remove_edge(edge)
+                    edge.visibility_score = 0
+                    edge.active = False
 
     def _would_maintain_connectivity(self, new_edge: Edge) -> bool:
         """
@@ -1271,6 +1272,7 @@ class Graph:
 
                 # Only promote if not already active
                 if not edge.active:
+                    edge.structural = True
                     edge.active = True
                     # edge.mark_as_reactivated(reset_score=True)
                     promoted_connectors.add(edge)

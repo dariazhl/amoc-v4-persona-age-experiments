@@ -942,21 +942,13 @@ class AMoCv4:
             return None
 
         attachable = self._get_attachable_nodes_for_sentence()
-
         if not bypass_attachment_constraint:
             if (
                 relation_class != RelationClass.ATTRIBUTIVE
                 and source_node not in attachable
                 and dest_node not in attachable
             ):
-                # Allow inference expansion if at least one endpoint
-                # is within activation distance of explicit nodes
-                distances = self._distances_from_sources_active_edges(
-                    self._explicit_nodes_current_sentence,
-                    self.max_distance_from_active_nodes,
-                )
-                if source_node not in distances and dest_node not in distances:
-                    return None
+                return None
 
         # FAIL FAST: Ontology must be explicitly specified
         if relation_class is None or justification is None:
@@ -1065,13 +1057,17 @@ class AMoCv4:
         )
 
         if edge:
+            if justification == Justification.CONNECTIVE:
+                edge.structural = True
+            else:
+                edge.structural = False
             enforce_ontology_invariants(edge)
 
-            # Slightly boost inferred edges to match paper persistence
-            if justification == Justification.IMPLIED:
-                edge.visibility_score = max(
-                    edge.visibility_score, self.edge_visibility + 1
-                )
+            # # Slightly boost inferred edges to match paper persistence
+            # if justification == Justification.IMPLIED:
+            #     edge.visibility_score = max(
+            #         edge.visibility_score, self.edge_visibility + 1
+            #     )
 
             if use_sentence == self._current_sentence_index:
                 edge.mark_as_asserted(reset_score=True)
@@ -1377,15 +1373,11 @@ class AMoCv4:
         #       • BOTH endpoints inside projection window
         # ------------------------------------------------------------
         for edge in self.graph.edges:
-
             if edge.visibility_score <= 0:
                 edge.active = False
                 continue
 
-            if edge.source_node in distances and edge.dest_node in distances:
-                edge.active = True
-            else:
-                edge.active = False
+            edge.active = edge.source_node in distances and edge.dest_node in distances
 
     def _get_nodes_with_active_edges(self) -> set[Node]:
         active_nodes: set[Node] = set()
@@ -2201,6 +2193,7 @@ class AMoCv4:
             self.active_graph = nx.MultiDiGraph()
             self._current_sentence_index = i + 1
             self.graph.set_current_sentence(self._current_sentence_index)
+            self.graph.deactivate_all_edges()
             import copy
 
             self._current_sentence_text = original_text
@@ -2771,16 +2764,20 @@ class AMoCv4:
                 #   4. Fade non-selected edges
                 # ------------------------------------------------------------
                 for edge in self.graph.edges:
+
                     if edge.created_at_sentence == self._current_sentence_index:
                         continue
 
-                    # Only decay edges not structurally active
-                    if not edge.is_asserted() and not edge.is_reactivated():
-                        if edge.visibility_score > 0:
-                            edge.visibility_score -= 1
+                    # Only edges not asserted this sentence decay
+                    if edge.structural:
+                        continue
 
-                        if edge.visibility_score <= 0:
-                            edge.active = False
+                    if (
+                        not edge.asserted_this_sentence
+                        and not edge.reactivated_this_sentence
+                    ):
+                        edge.reduce_visibility()
+
             if self.debug:
                 logging.info(
                     "Active graph after sentence %d:\n%s",
@@ -3302,8 +3299,9 @@ class AMoCv4:
             self._enforce_graph_connectivity()
             return
 
+        # PERSONA INFLUENCES SALIENCE -- X - WRONG
         raw_indices = self.client.get_relevant_edges(
-            edges_text, prev_sentences_text, self.persona
+            edges_text, prev_sentences_text, None
         )
 
         valid_indices: List[int] = []
@@ -3327,18 +3325,18 @@ class AMoCv4:
             for idx, edge in enumerate(edges, start=1):
                 if edge in newly_added_edges:
                     selected.add(idx)
-                elif edge.active:
-                    # Check both direct membership and lemma matching
-                    source_connected = (
-                        edge.source_node in connected_nodes
-                        or tuple(edge.source_node.lemmas) in connected_lemma_keys
-                    )
-                    dest_connected = (
-                        edge.dest_node in connected_nodes
-                        or tuple(edge.dest_node.lemmas) in connected_lemma_keys
-                    )
-                    if source_connected or dest_connected:
-                        selected.add(idx)
+                # elif edge.active:
+                #     # Check both direct membership and lemma matching
+                #     source_connected = (
+                #         edge.source_node in connected_nodes
+                #         or tuple(edge.source_node.lemmas) in connected_lemma_keys
+                #     )
+                #     dest_connected = (
+                #         edge.dest_node in connected_nodes
+                #         or tuple(edge.dest_node.lemmas) in connected_lemma_keys
+                #     )
+                #     if source_connected or dest_connected:
+                #         selected.add(idx)
         else:
             selected = set(valid_indices)
             for i in selected:
@@ -3366,6 +3364,8 @@ class AMoCv4:
         # - When visibility_score reaches 0, edge becomes inactive
 
         for idx, edge in enumerate(edges, start=1):
+            if edge.structural:
+                continue
             if idx in selected or edge in newly_added_edges:
                 if edge.is_property_edge():
                     continue  # PROPERTY edges never reactivate

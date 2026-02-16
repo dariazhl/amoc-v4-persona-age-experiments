@@ -76,6 +76,7 @@ class Edge:
 
     # Default activation score for new edges
     DEFAULT_ACTIVATION_SCORE: int = 2
+    DECAY_STEP = 1
 
     def __init__(
         self,
@@ -148,6 +149,7 @@ class Edge:
         # specifically to restore graph connectivity when no existing edges could
         # connect disconnected components.
         self.forced_connection: bool = False
+        self.structural: bool = False
 
     def mark_as_reactivated(self, reset_score: bool = True) -> None:
         self.active = True
@@ -180,7 +182,10 @@ class Edge:
         return self.relation_class == RelationClass.ATTRIBUTIVE
 
     def reduce_visibility(self) -> None:
-        self.visibility_score -= 1
+        if self.visibility_score <= 0:
+            return
+
+        self.visibility_score -= self.DECAY_STEP
 
         # Activation decays with visibility
         # if self.activation_score > 0:
@@ -199,6 +204,7 @@ class Edge:
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = False
         self.activation_role = None
+        self.active = False
 
     def deactivate(self) -> None:
         """Deactivate edge (sentence-local reset)."""
