@@ -942,6 +942,7 @@ class AMoCv4:
             return None
 
         attachable = self._get_attachable_nodes_for_sentence()
+
         if not bypass_attachment_constraint:
             if (
                 relation_class != RelationClass.ATTRIBUTIVE
