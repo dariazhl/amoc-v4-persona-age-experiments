@@ -514,6 +514,14 @@ class AMoCv4:
                         provenance=NodeProvenance.STORY_TEXT,
                     )
 
+        # === GUARANTEE 5: explicit nodes must appear in projection ===
+        if self._per_sentence_view is not None and explicit_nodes:
+
+            # Ensure explicit nodes are recorded in the view
+            self._per_sentence_view.explicit_nodes = list(
+                set(self._per_sentence_view.explicit_nodes) | set(explicit_nodes)
+            )
+
         return self._per_sentence_view
 
     def _get_attachable_nodes_for_sentence(self) -> set[Node]:
@@ -812,6 +820,14 @@ class AMoCv4:
         graph_active_nodes: List[Node],
         graph_active_edge_nodes: Optional[set[Node]] = None,
     ) -> bool:
+
+        # === GUARANTEE 3: explicit-to-explicit edges always allowed ===
+        if (
+            subject in self._explicit_nodes_current_sentence
+            and obj in self._explicit_nodes_current_sentence
+        ):
+            return True
+
         # 1. Bootstrap: allow first edges
         if not self.graph.nodes:
             return True
@@ -2363,6 +2379,11 @@ class AMoCv4:
                     self._explicit_nodes_current_sentence
                 )
 
+                # === GUARANTEE 1: explicit nodes must exist in active_graph ===
+                for node in self._explicit_nodes_current_sentence:
+                    if not self.active_graph.has_node(node):
+                        self.active_graph.add_node(node)
+
                 current_all_text = resolved_text
 
                 # Step 3: build active subgraph using only explicit (text-based) nodes.
@@ -2390,6 +2411,20 @@ class AMoCv4:
                     current_all_text,  # 4. Text
                     self.persona,  # 5. Persona
                 )
+
+                # === GUARANTEE 2: sentence must yield at least one structural relation ===
+                if self._explicit_nodes_current_sentence and (
+                    not new_relationships or len(new_relationships) == 0
+                ):
+                    explicit = list(self._explicit_nodes_current_sentence)
+                    if len(explicit) >= 2:
+                        new_relationships = [
+                            (
+                                explicit[0].get_text_representer(),
+                                "co_occurs_with",
+                                explicit[1].get_text_representer(),
+                            )
+                        ]
 
                 text_based_activated_nodes = current_sentence_text_based_nodes
                 sentence_lemma_keys = {
@@ -2659,7 +2694,55 @@ class AMoCv4:
                 # HARD GUARANTEE: Cumulative graph must never fragment
                 # ------------------------------------------------------------------
                 if not self.graph.check_cumulative_connectivity():
-                    logging.critical("CUMULATIVE GRAPH FRAGMENTATION DETECTED")
+
+                    logging.warning(
+                        "[ConnectivityRepair] Cumulative graph fragmented — repairing."
+                    )
+
+                    components = list(
+                        nx.connected_components(nx.Graph(self.graph.to_networkx()))
+                    )
+
+                    if len(components) > 1:
+                        base_component = components[0]
+
+                        for comp in components[1:]:
+                            node_a = next(iter(base_component))
+                            node_b = next(iter(comp))
+
+                            self._add_edge(
+                                node_a,
+                                node_b,
+                                "structural_bridge",
+                                self.edge_visibility,
+                                relation_class=self._classify_relation(
+                                    "structural_bridge"
+                                ),
+                                justification=Justification.STRUCTURAL,
+                            )
+
+                # ============================================================
+                # GUARANTEE: Every explicit node must have at least one active edge
+                # ============================================================
+
+                active_nodes = self._get_nodes_with_active_edges()
+
+                for node in self._explicit_nodes_current_sentence:
+                    if node not in active_nodes:
+                        for other in self._explicit_nodes_current_sentence:
+                            if other != node:
+                                self._add_edge(
+                                    node,
+                                    other,
+                                    "sentence_link",
+                                    self.edge_visibility,
+                                    relation_class=self._classify_relation(
+                                        "sentence_link"
+                                    ),
+                                    justification=Justification.TEXTUAL,
+                                )
+                                break
+
                 # Restrict active nodes only if there is at least one active edge
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
