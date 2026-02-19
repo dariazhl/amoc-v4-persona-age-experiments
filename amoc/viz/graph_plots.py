@@ -53,6 +53,8 @@ TRIVIAL_NODE_TEXTS = {
     "while",
     "as",
 }
+_FROZEN_POSITIONS = {}
+_LAYOUT_INITIALIZED = False
 
 
 def _pretty_text(text: str) -> str:
@@ -159,6 +161,7 @@ def _enforce_minimum_spacing(
     ax,
     pos: Dict[str, Tuple[float, float]],
     hub: Optional[str],
+    fixed_nodes,
     *,
     node_size: float = 3800,
     pad_px: float = 8.0,
@@ -176,8 +179,8 @@ def _enforce_minimum_spacing(
             return
         # Radial scale (keep angles) until node circles no longer overlap.
         for node, (x, y) in list(pos.items()):
-            if hub is not None and node == hub:
-                continue
+            if node in fixed_nodes:
+                continue  # NEVER move frozen nodes
             pos[node] = (x * scale_step, y * scale_step)
 
 
@@ -837,6 +840,12 @@ def plot_amoc_triplets(
         if layout_from_active_only and not involves_inactive and is_edge_active:
             G_active.add_edge(src, dst, key=edge_key)
 
+    # Ensure explicit nodes always exist in graph (even without edges)
+    if explicit_nodes:
+        for node in explicit_nodes:
+            if node not in G:
+                G.add_node(node)
+
     # If after injection the graph is still empty, return
     if G.number_of_nodes() == 0:
         fig, ax = plt.subplots(figsize=(22, 18))
@@ -870,12 +879,27 @@ def plot_amoc_triplets(
 
     plotted_nodes = set(G.nodes())
 
+    nodes = list(G.nodes())
+
+    position_cache = positions if positions is not None else {}
+    is_first_layout = len(position_cache) == 0
+
+    fixed_pos: Dict[str, Tuple[float, float]] = {
+        node: position_cache[node] for node in nodes if node in position_cache
+    }
+    hub: Optional[str] = None
     # Freeze policy: once positions exist, always use full graph
-    if positions:
+    if not is_first_layout:
         layout_graph = G
     else:
         if layout_from_active_only and G_active.number_of_nodes() > 0:
-            layout_graph = G_active
+            layout_graph = G_active.copy()
+
+            # === GUARANTEE: explicit nodes must be plotted ===
+            if explicit_nodes:
+                for node in explicit_nodes:
+                    if node not in layout_graph:
+                        layout_graph.add_node(node)
         else:
             layout_graph = G
 
@@ -890,15 +914,20 @@ def plot_amoc_triplets(
     salient_node_set = set(salient_nodes) if salient_nodes else set()
 
     pos: Dict[str, Tuple[float, float]] = {}
-    nodes = list(G.nodes())
-    layout_nodes = list(layout_graph.nodes())  # Nodes for layout computation
-    position_cache = positions or {}
 
-    fixed_pos: Dict[str, Tuple[float, float]] = {
-        node: position_cache[node] for node in nodes if node in position_cache
-    }
-    fixed_nodes = set(fixed_pos.keys())
-    hub: Optional[str] = None
+    # Freeze all previously known nodes
+    fixed_nodes = set(position_cache.keys())
+
+    # Seed pos with frozen coordinates
+    for node in nodes:
+        if node in position_cache:
+            pos[node] = position_cache[node]
+
+    layout_nodes = list(layout_graph.nodes())  # Nodes for layout computation
+
+    # SAFETY: ensure hub exists in layout graph
+    if hub is not None and hub not in layout_nodes:
+        layout_nodes.append(hub)
 
     max_label_len = max((len(_pretty_text(n)) for n in nodes), default=0)
     target_min_dist = 7.0 + max(0, max_label_len - 10) * 0.12
@@ -941,10 +970,6 @@ def plot_amoc_triplets(
             levels = {}
             max_level = 0
 
-        freeze_nodes = set(fixed_nodes)
-        if hub is not None:
-            freeze_nodes.add(hub)
-
         # ------------------------------------------------------------------
         # RADIAL DEPTH CAP
         # Prevent infinite ring growth while preserving cumulative memory
@@ -970,7 +995,8 @@ def plot_amoc_triplets(
         # place newly appearing nodes.
         # LAYOUT POLICY: Only new nodes may be adjusted (frozen nodes stay fixed)
         if fixed_pos:
-            pos = dict(fixed_pos)
+            for node, coords in fixed_pos.items():
+                pos[node] = coords
             if hub not in pos:
                 pos[hub] = (0.0, 0.0)
             movable_nodes = [n for n in nodes if n not in pos]
@@ -1172,7 +1198,7 @@ def plot_amoc_triplets(
                 if current_max_r >= max_allowed_radius:
                     break  # Don't exceed bounded growth
                 for node, (x, y) in list(pos.items()):
-                    if node == hub:
+                    if node in fixed_nodes:
                         continue
                     new_x, new_y = x * 1.08, y * 1.08
                     # Respect bounded growth
@@ -1189,7 +1215,7 @@ def plot_amoc_triplets(
                     RADIUS_GROWTH_MAX / RADIUS_GROWTH_MIN,
                 )
                 for node, (x, y) in list(pos.items()):
-                    if node == hub:
+                    if node in fixed_nodes:
                         continue
                     new_x, new_y = x * factor, y * factor
                     # Respect bounded growth
@@ -1199,25 +1225,16 @@ def plot_amoc_triplets(
     if pos and hub is None:
         hub = next(iter(pos.keys()))
 
+    # --------------------------------------------------
+    # SAFETY: Never allow empty layout (prevents blank plot)
+    # --------------------------------------------------
+    if not pos:
+        pos = nx.spring_layout(G, seed=42)
+
     # ---------------------------------------------------------------------
     # Light spring relaxation (paper-faithful organic refinement)
     # Keeps hub fixed while allowing peripheral nodes to settle naturally.
     # ---------------------------------------------------------------------
-    try:
-        spring_pos = nx.spring_layout(
-            G,
-            pos=pos,
-            fixed=[hub] if hub else None,
-            iterations=8,
-            k=0.35,
-            seed=42,
-        )
-        # SAFE FREEZE: Do not update frozen node positions
-        for n, coords in spring_pos.items():
-            if n not in freeze_nodes:
-                pos[n] = coords
-    except Exception:
-        pass
 
     min_edge_len = max(5.0, target_min_dist * 0.75)
     _enforce_min_edge_length(
@@ -1230,6 +1247,7 @@ def plot_amoc_triplets(
         ax,
         pos,
         hub,
+        fixed_nodes,
         node_size=3800,
         pad_px=8.0,
         scale_step=1.06,
@@ -1261,7 +1279,7 @@ def plot_amoc_triplets(
 
         for i, n1 in enumerate(nodes_list):
 
-            if n1 == hub or n1 in fixed_nodes:
+            if n1 in fixed_nodes:
                 continue
 
             x1, y1 = pos[n1]
@@ -1270,7 +1288,7 @@ def plot_amoc_triplets(
 
             for n2 in nodes_list[i + 1 :]:
 
-                if n2 == hub or n2 in fixed_nodes:
+                if n2 in fixed_nodes:
                     continue
 
                 x2, y2 = pos[n2]
@@ -1326,6 +1344,29 @@ def plot_amoc_triplets(
             break
 
     # Draw inactive nodes first (underneath) with faded appearance
+    # --------------------------------------------------
+    # ==========================================================
+    # HARD INVARIANT: Every graph node must have a position
+    # ==========================================================
+    missing_nodes = [n for n in G.nodes() if n not in pos]
+
+    if missing_nodes:
+        # Compute safe outer radius
+        if pos:
+            max_radius = max(math.hypot(x, y) for x, y in pos.values())
+        else:
+            max_radius = target_min_dist * 2.0
+
+        fallback_radius = max_radius + target_min_dist * 2.0
+        angle_step = 2.0 * math.pi / max(1, len(missing_nodes))
+
+        for i, node in enumerate(missing_nodes):
+            angle = i * angle_step
+            pos[node] = (
+                fallback_radius * math.cos(angle),
+                fallback_radius * math.sin(angle),
+            )
+
     inactive_in_graph = [n for n in G.nodes() if n in inactive_node_set]
     active_in_graph = [n for n in G.nodes() if n not in inactive_node_set]
 
@@ -1827,8 +1868,8 @@ def plot_amoc_triplets(
     plt.close(fig)
 
     if positions is not None:
-        # Keep existing coordinates for nodes not present in this snapshot so
-        # layout stays stable as nodes disappear/reappear across sentences.
-        positions.update(pos)
+        for node, coords in pos.items():
+            if node not in positions:
+                positions[node] = coords
 
     return save_path

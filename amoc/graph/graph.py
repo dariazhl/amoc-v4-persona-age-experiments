@@ -437,9 +437,11 @@ class Graph:
         # ==========================================================================
         # For edges that require connectivity (non-EVENTIVE, non-anchor relations),
         # check that at least one endpoint is grounded in existing structure.
-        if relation_class not in {RelationClass.EVENTIVE, RelationClass.CONNECTIVE}:
+        if relation_class not in {
+            RelationClass.EVENTIVE,
+            RelationClass.CONNECTIVE,
+        }:
             if not self._would_maintain_connectivity(edge):
-                # Record violation but still add the edge
                 edge.metadata.setdefault("ontology_violations", []).append(
                     "Connectivity: edge creates isolated component"
                 )
@@ -559,8 +561,7 @@ class Graph:
                 and not other_edge.inferred
                 and (is_concept_property_pair or edge.label == other_edge.label)
             ):
-
-                # SOFT REINFORCEMENT (instead of reset)
+                # SOFT REINFORCEMENT (works for both inferred and non-inferred)
                 other_edge.visibility_score = min(
                     edge_visibility, other_edge.visibility_score + 1
                 )
@@ -686,7 +687,6 @@ class Graph:
         reactivated: Set[Edge] = set()
 
         if not candidate_edges:
-            # fallback: reactivate most recently created edge in memory
             memory_edges = sorted(
                 self.edges,
                 key=lambda e: e.created_at_sentence or 0,
@@ -697,10 +697,10 @@ class Graph:
                     edge.mark_as_reactivated(reset_score=False)
                     reactivated.add(edge)
                     break
-        else:
-            for dist, edge in candidate_edges[: self.MAX_REACTIVATION_COUNT]:
-                edge.mark_as_reactivated(reset_score=True)
-                reactivated.add(edge)
+
+        for dist, edge in candidate_edges[: self.MAX_REACTIVATION_COUNT]:
+            edge.mark_as_reactivated(reset_score=False)
+            reactivated.add(edge)
 
         return reactivated
 
