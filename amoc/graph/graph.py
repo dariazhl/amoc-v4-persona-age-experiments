@@ -424,7 +424,7 @@ class Graph:
             )
 
         if self.check_if_similar_edge_exists(edge, edge_visibility):
-            return None
+            return self.get_edge(edge)
 
         # ==========================================================================
         # CONNECTIVITY CHECK (non-blocking - records violation but allows edge)
@@ -471,15 +471,15 @@ class Graph:
                     self.remove_edge(edge)
 
         # Narrative collapse: kill supersedes fight relations
-        if "kill" in new_edge.label:
-            for edge in list(self.edges):
-                if (
-                    edge.source_node == new_edge.source_node
-                    and edge.dest_node == new_edge.dest_node
-                    and "fight" in edge.label
-                ):
-                    edge.visibility_score = 0
-                    edge.active = False
+        # if "kill" in new_edge.label:
+        # for edge in list(self.edges):
+        #     if (
+        #         edge.source_node == new_edge.source_node
+        #         and edge.dest_node == new_edge.dest_node
+        #         and "fight" in edge.label
+        #     ):
+        #         edge.visibility_score = 0
+        #         edge.active = False
 
     def _would_maintain_connectivity(self, new_edge: Edge) -> bool:
         """
@@ -525,31 +525,45 @@ class Graph:
         return nx.is_connected(G)
 
     def check_if_similar_edge_exists(self, edge: Edge, edge_visibility: int) -> bool:
-        if edge in self.edges:
-            existing_edge = self.get_edge(edge)
-            existing_edge.visibility_score = edge_visibility
-            # Mark as ASSERTED (re-assertion of existing edge)
-            existing_edge.mark_as_asserted(reset_score=True)
-            return True
+        """
+        If an equivalent edge exists, softly reinforce it.
+        DO NOT hard reset visibility (prevents immortal edges).
+        """
+
         for other_edge in self.edges:
+
             same_nodes = (
                 edge.source_node == other_edge.source_node
                 and edge.dest_node == other_edge.dest_node
             )
-            if same_nodes:
-                # Merge concept↔property or label-similar edges between same nodes
-                is_concept_property_pair = (
-                    edge.source_node.node_type == NodeType.CONCEPT
-                    and edge.dest_node.node_type == NodeType.PROPERTY
-                ) or (
-                    edge.dest_node.node_type == NodeType.CONCEPT
-                    and edge.source_node.node_type == NodeType.PROPERTY
+
+            if not same_nodes:
+                continue
+
+            is_concept_property_pair = (
+                edge.source_node.node_type == NodeType.CONCEPT
+                and edge.dest_node.node_type == NodeType.PROPERTY
+            ) or (
+                edge.dest_node.node_type == NodeType.CONCEPT
+                and edge.source_node.node_type == NodeType.PROPERTY
+            )
+
+            if (
+                not edge.inferred
+                and not other_edge.inferred
+                and (is_concept_property_pair or edge.label == other_edge.label)
+            ):
+
+                # SOFT REINFORCEMENT (instead of reset)
+                other_edge.visibility_score = min(
+                    edge_visibility, other_edge.visibility_score + 1
                 )
-                if is_concept_property_pair or edge.is_similar(other_edge):
-                    other_edge.visibility_score = edge_visibility
-                    # Mark as ASSERTED (re-assertion of existing edge)
-                    other_edge.mark_as_asserted(reset_score=True)
-                    return True
+
+                other_edge.active = True
+                other_edge.mark_as_asserted(reset_score=False)
+
+                return True
+
         return False
 
     def deactivate_all_edges(self) -> None:

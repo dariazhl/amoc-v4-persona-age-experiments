@@ -1329,72 +1329,35 @@ class AMoCv4:
                 queue.append(neighbor)
         return distances
 
+    def _is_node_grounded(self, node: Node) -> bool:
+        for edge in node.edges:
+            if (
+                edge.active
+                and edge.visibility_score > 0
+                and edge.relation_class != RelationClass.ATTRIBUTIVE
+            ):
+                return True
+        return False
+
     # purely structural projection method with explicit-node guarantee
-    def _restrict_active_to_current_explicit(
-        self,
-        explicit_nodes: List[Node],
-    ) -> None:
+    def _restrict_active_to_current_explicit(self, explicit_nodes):
+        return
 
-        # ------------------------------------------------------------
-        # 1️⃣ Assert edges created in current sentence
-        # ------------------------------------------------------------
-        for edge in self.graph.edges:
-            if edge.created_at_sentence == self._current_sentence_index:
-                edge.mark_as_asserted(reset_score=True)
+        # keep_nodes = set()
 
-        # ------------------------------------------------------------
-        # 2️⃣ Hard reset node projection state
-        # ------------------------------------------------------------
-        for node in self.graph.nodes:
-            node.score = 100  # 100 = outside projection window
+        # # Keep all nodes that participate in active edges
+        # for edge in self.graph.edges:
+        #     if edge.active:
+        #         keep_nodes.add(edge.source_node)
+        #         keep_nodes.add(edge.dest_node)
 
-        # ------------------------------------------------------------
-        # 3️⃣ If no explicit nodes → no projection
-        # ------------------------------------------------------------
-        if not explicit_nodes:
-            for edge in self.graph.edges:
-                edge.active = False
-            return
+        # # Always keep explicit nodes
+        # keep_nodes.update(explicit_nodes)
 
-        # ------------------------------------------------------------
-        # 4️⃣ Projection seeds = EXPLICIT NODES ONLY
-        #     (no structural carryover injection)
-        # ------------------------------------------------------------
-        projection_seeds = set(explicit_nodes)
-
-        # ------------------------------------------------------------
-        # 5️⃣ BFS window
-        # ------------------------------------------------------------
-        distances = self._distances_from_projection_sources(
-            projection_seeds,
-            self.max_distance_from_active_nodes,
-        )
-
-        # Invariant: explicit nodes always inside window
-        for node in explicit_nodes:
-            distances.setdefault(node, 0)
-
-        # ------------------------------------------------------------
-        # 6️⃣ Update node projection membership
-        # ------------------------------------------------------------
-        for node in self.graph.nodes:
-            if node in distances:
-                node.score = distances[node]
-            else:
-                node.score = 100
-
-        # ------------------------------------------------------------
-        # 7️⃣ Activate edges
-        #     Edge active iff:
-        #       • visibility_score > 0
-        #       • BOTH endpoints inside projection window
-        # ------------------------------------------------------------
-        for edge in self.graph.edges:
-            if edge.visibility_score <= 0:
-                edge.active = False
-                continue
-
-            edge.active = edge.source_node in distances and edge.dest_node in distances
+        # # Deactivate nodes not in keep set
+        # for node in self.graph.nodes:
+        #     if node not in keep_nodes:
+        #         node.active = False
 
     def _get_nodes_with_active_edges(self) -> set[Node]:
         active_nodes: set[Node] = set()
@@ -2725,23 +2688,71 @@ class AMoCv4:
                 # GUARANTEE: Every explicit node must have at least one active edge
                 # ============================================================
 
+                # ============================================================
+                # GUARANTEE: Every explicit node must have at least one active edge
+                # If not, invoke LLM to complete missing relation
+                # ============================================================
+
                 active_nodes = self._get_nodes_with_active_edges()
 
                 for node in self._explicit_nodes_current_sentence:
+
                     if node not in active_nodes:
-                        for other in self._explicit_nodes_current_sentence:
-                            if other != node:
-                                self._add_edge(
-                                    node,
-                                    other,
-                                    "sentence_link",
-                                    self.edge_visibility,
-                                    relation_class=self._classify_relation(
-                                        "sentence_link"
-                                    ),
-                                    justification=Justification.TEXTUAL,
+
+                        logging.debug(
+                            "[ExplicitRepair] Node '%s' has no active edge — invoking LLM repair.",
+                            node.get_text_representer(),
+                        )
+
+                        # Use only current sentence context
+                        repair_relationships = self.client.get_new_relationships(
+                            node.get_text_representer(),  # focus node
+                            self.graph.get_nodes_str(self.graph.nodes),
+                            self.graph.get_edges_str(self.graph.nodes)[0],
+                            self._current_sentence_text,
+                            self.persona,
+                        )
+
+                        for relationship in repair_relationships:
+
+                            if (
+                                isinstance(relationship, (list, tuple))
+                                and len(relationship) == 3
+                            ):
+                                subj, rel, obj = relationship
+
+                                source_node = self.get_node_from_new_relationship(
+                                    subj,
+                                    self.graph.nodes,
+                                    [],
+                                    [],
+                                    node_source=NodeSource.TEXT_BASED,
+                                    create_node=False,
                                 )
-                                break
+
+                                dest_node = self.get_node_from_new_relationship(
+                                    obj,
+                                    self.graph.nodes,
+                                    [],
+                                    [],
+                                    node_source=NodeSource.TEXT_BASED,
+                                    create_node=False,
+                                )
+
+                                if source_node and dest_node:
+
+                                    edge = self._add_edge(
+                                        source_node,
+                                        dest_node,
+                                        rel,
+                                        self.edge_visibility,
+                                        relation_class=self._classify_relation(rel),
+                                        justification=Justification.TEXTUAL,
+                                    )
+
+                                    if edge:
+                                        edge.mark_as_asserted(reset_score=True)
+                                        break
 
                 # Restrict active nodes only if there is at least one active edge
                 self._restrict_active_to_current_explicit(
@@ -3461,6 +3472,7 @@ class AMoCv4:
         self._enforce_graph_connectivity()
 
     # creates edges
+    # creates edges
     def _extract_deterministic_structure(
         self,
         sent: Span,
@@ -3475,10 +3487,6 @@ class AMoCv4:
 
             # ============================================================
             # PROPERTY RELATIONS (Copular + Passive)
-            #
-            # knight was unfamiliar
-            # armor was scorched
-            # princess was thankful
             # ============================================================
 
             if token.dep_ in {"acomp", "attr", "ROOT"} and (
@@ -3486,7 +3494,6 @@ class AMoCv4:
             ):
                 subj = None
 
-                # Case A: copular (be + acomp)
                 if token.head.lemma_ == "be":
                     subj = next(
                         (
@@ -3497,7 +3504,6 @@ class AMoCv4:
                         None,
                     )
 
-                # Case B: passive root (auxpass + nsubjpass)
                 if token.dep_ == "ROOT":
                     subj = next(
                         (c for c in token.children if c.dep_ == "nsubjpass"),
@@ -3506,10 +3512,10 @@ class AMoCv4:
 
                 if subj:
                     subj_node = get_node(subj)
-                    # preserves "scorched"
+
                     prop_node = self.graph.add_or_get_node(
-                        [token.lemma_.lower()],  # identity = lemma
-                        token.text,  # display surface form (Scorched)
+                        [token.lemma_.lower()],
+                        token.text,
                         NodeType.PROPERTY,
                         NodeSource.TEXT_BASED,
                         provenance=NodeProvenance.STORY_TEXT,
@@ -3517,7 +3523,7 @@ class AMoCv4:
                     )
 
                     if subj_node and prop_node:
-                        self._add_edge(
+                        edge = self._add_edge(
                             subj_node,
                             prop_node,
                             label="is",
@@ -3526,12 +3532,11 @@ class AMoCv4:
                             edge_forget=self.edge_visibility,
                             created_at_sentence=self._current_sentence_index,
                         )
+                        if edge:
+                            edge.mark_as_asserted(reset_score=True)
 
             # ============================================================
             # ATTRIBUTIVE MODIFIERS
-            #
-            # beautiful princess
-            # young knight
             # ============================================================
 
             if token.dep_ == "amod" and token.pos_ == "ADJ":
@@ -3540,7 +3545,7 @@ class AMoCv4:
                 prop_node = get_node(token)
 
                 if head_node and prop_node:
-                    self._add_edge(
+                    edge = self._add_edge(
                         head_node,
                         prop_node,
                         label="is",
@@ -3549,20 +3554,15 @@ class AMoCv4:
                         edge_forget=self.edge_visibility,
                         created_at_sentence=self._current_sentence_index,
                     )
+                    if edge:
+                        edge.mark_as_asserted(reset_score=True)
 
             # ============================================================
-            # EVENTIVE VERBS (STRICT VERB-ONLY RELATIONS)
-            #
-            # knight fought dragon
-            # knight fought for life and death
-            # knight rode through forest
+            # EVENTIVE VERBS
             # ============================================================
 
             if token.pos_ == "VERB" and token.lemma_ != "be":
 
-                # --------------------------------------------
-                # Subject (active or passive)
-                # --------------------------------------------
                 subj = next(
                     (c for c in token.children if c.dep_ in {"nsubj", "nsubjpass"}),
                     None,
@@ -3575,18 +3575,15 @@ class AMoCv4:
                 if not subj_node:
                     continue
 
-                # --------------------------------------------
-                # Collect direct objects
-                # --------------------------------------------
-                objects = list(c for c in token.children if c.dep_ in {"dobj", "attr"})
+                # --------------------------------------------------------
+                # DIRECT OBJECTS (with coordination expansion)
+                # --------------------------------------------------------
 
-                # --------------------------------------------
-                # Direct objects
-                # --------------------------------------------
                 for obj in (c for c in token.children if c.dep_ in {"dobj", "attr"}):
                     obj_node = get_node(obj)
+
                     if obj_node:
-                        self._add_edge(
+                        edge = self._add_edge(
                             subj_node,
                             obj_node,
                             label=token.lemma_,
@@ -3595,10 +3592,29 @@ class AMoCv4:
                             edge_forget=self.edge_visibility,
                             created_at_sentence=self._current_sentence_index,
                         )
+                        if edge:
+                            edge.mark_as_asserted(reset_score=True)
 
-                # --------------------------------------------
-                # Verb + preposition (ride through forest)
-                # --------------------------------------------
+                    # ---- COORDINATED OBJECTS (life and death) ----
+                    for conj in (c for c in obj.children if c.dep_ == "conj"):
+                        conj_node = get_node(conj)
+                        if conj_node:
+                            edge2 = self._add_edge(
+                                subj_node,
+                                conj_node,
+                                label=token.lemma_,
+                                relation_class=self._classify_relation(token.lemma_),
+                                justification=Justification.TEXTUAL,
+                                edge_forget=self.edge_visibility,
+                                created_at_sentence=self._current_sentence_index,
+                            )
+                            if edge2:
+                                edge2.mark_as_asserted(reset_score=True)
+
+                # --------------------------------------------------------
+                # VERB + PREPOSITION (ride through forest, fight for life)
+                # --------------------------------------------------------
+
                 for prep in (c for c in token.children if c.dep_ == "prep"):
                     pobj = next((c for c in prep.children if c.dep_ == "pobj"), None)
                     if not pobj:
@@ -3610,7 +3626,7 @@ class AMoCv4:
 
                     label = f"{token.lemma_} {prep.lemma_}"
 
-                    self._add_edge(
+                    edge = self._add_edge(
                         subj_node,
                         obj_node,
                         label=label,
@@ -3619,6 +3635,24 @@ class AMoCv4:
                         edge_forget=self.edge_visibility,
                         created_at_sentence=self._current_sentence_index,
                     )
+                    if edge:
+                        edge.mark_as_asserted(reset_score=True)
+
+                    # ---- COORDINATED PREPOSITIONAL OBJECTS ----
+                    for conj in (c for c in pobj.children if c.dep_ == "conj"):
+                        conj_node = get_node(conj)
+                        if conj_node:
+                            edge2 = self._add_edge(
+                                subj_node,
+                                conj_node,
+                                label=label,
+                                relation_class=self._classify_relation(token.lemma_),
+                                justification=Justification.TEXTUAL,
+                                edge_forget=self.edge_visibility,
+                                created_at_sentence=self._current_sentence_index,
+                            )
+                            if edge2:
+                                edge2.mark_as_asserted(reset_score=True)
 
     def add_inferred_relationships_to_graph_step_0(
         self,
@@ -3882,6 +3916,12 @@ class AMoCv4:
             # AMoCv4 surface-relation format: direct edge between entities
             # ⟨entity, verb, entity⟩ - NO intermediate RELATION nodes
             # Direction: source (subject/agent) → dest (object/patient)
+            # Prevent inference from re-targeting decaying nodes
+            if not (
+                self._is_node_grounded(source_node) or self._is_node_grounded(dest_node)
+            ):
+                continue
+
             potential_edge = self._add_edge(
                 source_node,
                 dest_node,
