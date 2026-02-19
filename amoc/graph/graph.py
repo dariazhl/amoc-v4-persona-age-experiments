@@ -331,6 +331,12 @@ class Graph:
         # Safety net: reject edges with empty/whitespace-only labels
         if not label or not isinstance(label, str) or not label.strip():
             return None
+        # ------------------------------------------------------------
+        # Prevent inference from resurrecting decaying nodes
+        # ------------------------------------------------------------
+        if inferred:
+            if source_node.visibility_score <= 0 or dest_node.visibility_score <= 0:
+                return None
 
             # ==========================================================================
             # EDGE BUDGET THROTTLING (Issue B - Node Coagulation Prevention)

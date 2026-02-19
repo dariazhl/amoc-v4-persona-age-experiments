@@ -870,12 +870,14 @@ def plot_amoc_triplets(
 
     plotted_nodes = set(G.nodes())
 
-    # Layout is computed from active structure only
-    # Rendering always uses full G
-    if layout_from_active_only and G_active.number_of_nodes() > 0:
-        layout_graph = G_active
-    else:
+    # Freeze policy: once positions exist, always use full graph
+    if positions:
         layout_graph = G
+    else:
+        if layout_from_active_only and G_active.number_of_nodes() > 0:
+            layout_graph = G_active
+        else:
+            layout_graph = G
 
     # largest_component_only is now only for backward compatibility
     # With strict invariants, the graph should always be connected
@@ -1210,7 +1212,10 @@ def plot_amoc_triplets(
             k=0.35,
             seed=42,
         )
-        pos.update(spring_pos)
+        # SAFE FREEZE: Do not update frozen node positions
+        for n, coords in spring_pos.items():
+            if n not in freeze_nodes:
+                pos[n] = coords
     except Exception:
         pass
 
