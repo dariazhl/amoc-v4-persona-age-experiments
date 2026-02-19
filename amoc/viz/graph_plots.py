@@ -64,6 +64,55 @@ def _pretty_text(text: str) -> str:
     return text
 
 
+def _enforce_node_edge_separation(G, pos, fixed_nodes, min_dist=1.5, iterations=4):
+    """
+    Push nodes away from edges they are not incident to.
+    Prevents edge lines crossing node centers.
+    """
+
+    import math
+
+    def point_segment_distance(px, py, x1, y1, x2, y2):
+        # Projection-based distance
+        dx = x2 - x1
+        dy = y2 - y1
+        if dx == dy == 0:
+            return math.hypot(px - x1, py - y1)
+
+        t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)
+        t = max(0, min(1, t))
+        proj_x = x1 + t * dx
+        proj_y = y1 + t * dy
+        return math.hypot(px - proj_x, py - proj_y), proj_x, proj_y
+
+    for _ in range(iterations):
+        for node in G.nodes():
+            if node in fixed_nodes:
+                continue
+
+            px, py = pos[node]
+
+            for u, v in G.edges():
+                if node in (u, v):
+                    continue
+
+                x1, y1 = pos[u]
+                x2, y2 = pos[v]
+
+                dist, proj_x, proj_y = point_segment_distance(px, py, x1, y1, x2, y2)
+
+                if dist < min_dist:
+                    # Push node away from edge
+                    dx = px - proj_x
+                    dy = py - proj_y
+                    length = math.hypot(dx, dy) + 1e-6
+                    shift = (min_dist - dist) * 0.6
+                    pos[node] = (
+                        px + shift * dx / length,
+                        py + shift * dy / length,
+                    )
+
+
 def _is_trivial_node_text(text: str) -> bool:
     return _pretty_text(text).lower() in TRIVIAL_NODE_TEXTS
 
@@ -1253,6 +1302,15 @@ def plot_amoc_triplets(
         scale_step=1.06,
         max_iter=140,
     )
+
+    _enforce_node_edge_separation(
+        G,
+        pos,
+        fixed_nodes,
+        min_dist=target_min_dist * 0.45,
+        iterations=4,
+    )
+
     if avoid_edge_overlap:
         _push_nodes_off_edges(fig, ax, pos, list(G.edges()))
 

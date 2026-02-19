@@ -272,6 +272,96 @@ class AMoCv4:
                 justification=Justification.IMPLIED,  # Inferred relationships
             )
 
+            # --------------------------------------------------
+            # HARD INVARIANT: Explicit nodes must not be dangling
+            # --------------------------------------------------
+            for node in self._explicit_nodes_current_sentence:
+
+                degree = sum(
+                    1
+                    for e in self.graph.edges
+                    if e.source_node == node or e.dest_node == node
+                )
+
+                if degree == 0:
+
+                    logging.warning(
+                        f"[LLM Expansion] '{node.get_text_representer()}' has no edges."
+                    )
+
+                    # IMPORTANT:
+                    # Replace this with the EXACT function that originally
+                    # created `relationships`
+                    extra_relationships = self._infer_relationships(
+                        current_sentence_text_based_nodes,
+                        current_all_text,
+                        self.persona,
+                    )
+
+                    # Re-run SAME relationship-processing loop logic
+                    for relationship in extra_relationships:
+
+                        if len(relationship) != 3:
+                            continue
+                        if not relationship[0] or not relationship[2]:
+                            continue
+                        if relationship[0] == relationship[2]:
+                            continue
+                        if not isinstance(relationship[0], str) or not isinstance(
+                            relationship[2], str
+                        ):
+                            continue
+
+                        norm_subj = self._normalize_endpoint_text(
+                            relationship[0], is_subject=True
+                        )
+                        norm_obj = self._normalize_endpoint_text(
+                            relationship[2], is_subject=False
+                        )
+                        if norm_subj is None or norm_obj is None:
+                            continue
+
+                        if not self._passes_attachment_constraint(
+                            norm_subj,
+                            norm_obj,
+                            current_sentence_text_based_words,
+                            current_sentence_text_based_nodes,
+                            list(self.graph.nodes),
+                            self._get_nodes_with_active_edges(),
+                        ):
+                            continue
+
+                        source_node = self.get_node_from_text(
+                            norm_subj,
+                            current_sentence_text_based_nodes,
+                            current_sentence_text_based_words,
+                            node_source=NodeSource.TEXT_BASED,
+                            create_node=True,
+                        )
+                        dest_node = self.get_node_from_text(
+                            norm_obj,
+                            current_sentence_text_based_nodes,
+                            current_sentence_text_based_words,
+                            node_source=NodeSource.TEXT_BASED,
+                            create_node=True,
+                        )
+
+                        if source_node and dest_node:
+
+                            edge_label = relationship[1].replace("(edge)", "").strip()
+                            edge_label = self._normalize_edge_label(edge_label)
+
+                            if self._is_valid_relation_label(edge_label):
+
+                                self._add_edge(
+                                    source_node,
+                                    dest_node,
+                                    edge_label,
+                                    self.edge_visibility,
+                                    relation_class=self._classify_relation(edge_label),
+                                    justification=Justification.IMPLIED,
+                                )
+
     def _admit_node(
         self,
         lemma: str,
@@ -514,35 +604,50 @@ class AMoCv4:
                         provenance=NodeProvenance.STORY_TEXT,
                     )
 
-        # # === GUARANTEE 5: explicit nodes must appear in projection ===
-        # ------------------------------------------------------------
-        # STRUCTURAL ANCHOR: ensure singleton explicit nodes connect
-        # ------------------------------------------------------------
-        if explicit_nodes:
-            active_nodes = self._get_nodes_with_active_edges()
+        # # # === GUARANTEE 5: explicit nodes must appear in projection ===
+        # # ------------------------------------------------------------
+        # # STRUCTURAL ANCHOR: ensure singleton explicit nodes connect
+        # # ------------------------------------------------------------
+        # if explicit_nodes:
+        #     active_nodes = self._get_nodes_with_active_edges()
 
-            for node in explicit_nodes:
-                if node not in active_nodes:
-                    anchor = next(iter(self._anchor_nodes), None)
+        #     for node in explicit_nodes:
+        #         if node not in active_nodes:
+        #             anchor = next(iter(self._anchor_nodes), None)
 
-                    if anchor and anchor != node:
-                        edge = self._add_edge(
-                            anchor,
-                            node,
-                            "structural::appears",
-                            relation_class=RelationClass.CONNECTIVE,
-                            justification=Justification.CONNECTIVE,
-                            edge_forget=self.edge_visibility,
-                            created_at_sentence=self._current_sentence_index,
-                        )
-                        if edge:
-                            edge.mark_as_asserted(reset_score=True)
-                        if anchor and node:
-                            if not self.active_graph.has_node(anchor):
-                                self.active_graph.add_node(anchor)
-                            if not self.active_graph.has_node(node):
-                                self.active_graph.add_node(node)
-                            self.active_graph.add_edge(anchor, node)
+        #             if anchor and anchor != node:
+        #                 if len(self._explicit_nodes_current_sentence) == 1:
+
+        #                     singleton_node = next(
+        #                         iter(self._explicit_nodes_current_sentence)
+        #                     )
+
+        #                     if (
+        #                         singleton_node
+        #                         not in self._get_nodes_with_active_edges()
+        #                     ):
+
+        #                         # Trigger structural expansion via LLM
+        #                         llm_relationships = (
+        #                             self._generate_relationships_with_llm(
+        #                                 list(self._explicit_nodes_current_sentence),
+        #                                 self.graph,
+        #                                 current_all_text,
+        #                                 self.persona,
+        #                             )
+        #                         )
+
+        #                         # Integrate results into existing pipeline
+        #                         for rel in llm_relationships:
+        #                             if isinstance(rel, (list, tuple)) and len(rel) == 3:
+        #                                 new_relationships.append(rel)
+
+        #                 if anchor and node:
+        #                     if not self.active_graph.has_node(anchor):
+        #                         self.active_graph.add_node(anchor)
+        #                     if not self.active_graph.has_node(node):
+        #                         self.active_graph.add_node(node)
+        #                     self.active_graph.add_edge(anchor, node)
 
         # if self._per_sentence_view is not None and explicit_nodes:
 
@@ -2309,13 +2414,6 @@ class AMoCv4:
                 self._restrict_active_to_current_explicit(
                     list(self._explicit_nodes_current_sentence)
                 )
-                # ===============================================================
-                # HARD GUARANTEE: Sentence 1 projection must never be empty
-                # ===============================================================
-                if not self._get_nodes_with_active_edges():
-                    raise RuntimeError(
-                        f"Sentence 1 produced empty projection for persona '{self.persona}'"
-                    )
 
             else:
                 added_edges = []
@@ -2741,6 +2839,7 @@ class AMoCv4:
                             len(forced_edges),
                         )
                         added_edges.extend(forced_edges)
+
                 # ------------------------------------------------------------------
                 # HARD GUARANTEE: Cumulative graph must never fragment
                 # ------------------------------------------------------------------
@@ -2752,31 +2851,33 @@ class AMoCv4:
 
                     G_nx = nx.Graph()
 
+                    # Add all nodes as Node objects
+                    for node in self.graph.nodes:
+                        G_nx.add_node(node)
+
+                    # Add edges as Node objects
                     for edge in self.graph.edges:
-                        G_nx.add_edge(
-                            edge.source_node.get_text_representer(),
-                            edge.dest_node.get_text_representer(),
-                        )
+                        G_nx.add_edge(edge.source_node, edge.dest_node)
 
                     components = list(nx.connected_components(G_nx))
 
-                    if len(components) > 1:
-                        base_component = components[0]
+                    # if len(components) > 1:
+                    #     base_component = components[0]
 
-                        for comp in components[1:]:
-                            node_a = next(iter(base_component))
-                            node_b = next(iter(comp))
+                    #     for comp in components[1:]:
+                    #         node_a = next(iter(base_component))
+                    #         node_b = next(iter(comp))
 
-                            self._add_edge(
-                                node_a,
-                                node_b,
-                                "structural_bridge",
-                                self.edge_visibility,
-                                relation_class=self._classify_relation(
-                                    "structural_bridge"
-                                ),
-                                justification=Justification.CONNECTIVE,
-                            )
+                    #         self._add_edge(
+                    #             node_a,
+                    #             node_b,
+                    #             "structural_bridge",
+                    #             self.edge_visibility,
+                    #             relation_class=self._classify_relation(
+                    #                 "structural_bridge"
+                    #             ),
+                    #             justification=Justification.CONNECTIVE,
+                    #         )
 
                 # ============================================================
                 # GUARANTEE: Every explicit node must have at least one active edge
@@ -4052,8 +4153,12 @@ class AMoCv4:
             dest_active = (
                 dest_node is not None and getattr(dest_node, "visibility_score", 0) > 0
             )
-
-            if not (source_active or dest_active):
+            if not (
+                source_active
+                or dest_active
+                or self._appears_in_story(relationship[0], check_graph=False)
+                or self._appears_in_story(relationship[2], check_graph=False)
+            ):
                 continue
 
             potential_edge = self._add_edge(

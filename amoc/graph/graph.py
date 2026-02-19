@@ -699,7 +699,7 @@ class Graph:
                     break
 
         for dist, edge in candidate_edges[: self.MAX_REACTIVATION_COUNT]:
-            edge.mark_as_reactivated(reset_score=False)
+            edge.mark_as_reactivated(reset_score=True)
             reactivated.add(edge)
 
         return reactivated
