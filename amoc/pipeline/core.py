@@ -33,6 +33,8 @@ from amoc.nlp.spacy_utils import (
 )
 from collections import deque
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
+from amoc.prompts.amoc_prompts import FORCED_CONNECTIVITY_EDGE_PROMPT
+import json
 
 
 def _sanitize_filename_component(component: str, max_len: int = 80) -> str:
@@ -362,6 +364,79 @@ class AMoCv4:
                                     justification=Justification.IMPLIED,
                                 )
 
+    def repair_connectivity_callback(
+        self,
+        components,
+        active_nodes,
+        active_edges,
+        sentence_index,
+        temperature: float = 0.3,
+    ):
+        """
+        Repair disconnected components using FORCED_CONNECTIVITY_EDGE_PROMPT.
+        Connect smaller components to the largest component.
+        """
+
+        if not components or len(components) <= 1:
+            return None
+
+        # ------------------------------------------------------------
+        # 1. Sort components by size (largest first)
+        # ------------------------------------------------------------
+        sorted_components = sorted(components, key=len, reverse=True)
+        main_component = sorted_components[0]
+
+        edges_created = set()
+
+        # ------------------------------------------------------------
+        # 2. Connect every other component to main component
+        # ------------------------------------------------------------
+        for comp in sorted_components[1:]:
+
+            representative = next(iter(comp))
+            anchor_node = next(iter(main_component))
+
+            prompt_text = FORCED_CONNECTIVITY_EDGE_PROMPT.format(
+                node_a=representative.get_text_representer(),
+                node_b=anchor_node.get_text_representer(),
+                story_context=self.story_text[:1500],
+                current_sentence=self._current_sentence_text,
+            )
+
+            messages = [{"role": "user", "content": prompt_text}]
+
+            try:
+                response = self.client.generate(
+                    messages,
+                    temperature=temperature,
+                )
+                data = json.loads(response)
+                label = data.get("label")
+            except Exception as e:
+                logging.warning(
+                    "[ConnectivityRepair] Failed to parse LLM response: %s",
+                    str(e),
+                )
+                continue
+
+            if not label:
+                continue
+
+            edge = self.graph.add_edge(
+                source_node=representative,
+                dest_node=anchor_node,
+                label=label.strip(),
+                edge_visibility=self.edge_visibility,
+                created_at_sentence=sentence_index,
+                relation_class=RelationClass.CONNECTIVE,
+                inferred=True,
+            )
+
+            if edge:
+                edges_created.add(edge)
+
+        return edges_created if edges_created else None
+
     def _admit_node(
         self,
         lemma: str,
@@ -572,6 +647,7 @@ class AMoCv4:
             max_distance=self.max_distance_from_active_nodes,
             anchor_nodes=self._anchor_nodes,
             sentence_index=sentence_index,
+            repair_callback=self.repair_connectivity_callback,
         )
 
         # ------------------------------------------------------------

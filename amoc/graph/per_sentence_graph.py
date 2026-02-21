@@ -12,10 +12,11 @@ directly into the construction rules.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, Set, List, Dict, Optional, Tuple, FrozenSet
+from typing import TYPE_CHECKING, Set, List, Dict, Optional, Tuple, FrozenSet, Callable
 from collections import deque
 from dataclasses import dataclass, field
 import networkx as nx
+import logging
 
 if TYPE_CHECKING:
     from amoc.graph.node import Node
@@ -135,15 +136,15 @@ class PerSentenceGraphBuilder:
         cumulative_graph: "Graph",
         max_distance: int,
         anchor_nodes: Set["Node"],
+        repair_callback=None,
     ):
         self.cumulative_graph = cumulative_graph
         self.max_distance = max_distance
         self.anchor_nodes = frozenset(anchor_nodes)
+        self.repair_callback = repair_callback
 
-        # State accumulated during construction
         self._explicit_nodes: Set["Node"] = set()
         self._carryover_nodes: Set["Node"] = set()
-        self._pending_edges: List["Edge"] = []
         self._sentence_index: Optional[int] = None
 
     def set_explicit_nodes(self, nodes: List["Node"]) -> "PerSentenceGraphBuilder":
@@ -247,13 +248,50 @@ class PerSentenceGraphBuilder:
 
     def _attempt_llm_repair(
         self,
-        components: List[Set[Node]],
-    ) -> Optional[Set[Edge]]:
-        """
-        Attempt to connect disconnected components via LLM-generated edge.
-        Must validate ontology + grounding before accepting.
-        """
-        # TODO: implement LLM repair logic
+        components: List[Set["Node"]],
+        active_nodes: Set["Node"],
+        active_edges: Set["Edge"],
+        temperature: float = 0.3,
+    ) -> Optional[Set["Edge"]]:
+
+        if self.repair_callback is None:
+            logging.warning("[PerSentenceGraph] No repair callback provided.")
+            return None
+
+        try:
+            candidate_edges = self.repair_callback(
+                components=components,
+                active_nodes=active_nodes,
+                active_edges=active_edges,
+                sentence_index=self._sentence_index,
+                temperature=temperature,
+            )
+        except Exception as e:
+            logging.warning(
+                "[PerSentenceGraph] Repair callback exception: %s",
+                str(e),
+            )
+            return None
+
+        if not candidate_edges:
+            return None
+
+        valid_edges = {
+            e
+            for e in candidate_edges
+            if e.source_node in active_nodes and e.dest_node in active_nodes
+        }
+
+        # --------------------------------------------------
+        # Prevent duplicate-edge retry loops
+        # --------------------------------------------------
+        if valid_edges:
+            new_edges = valid_edges - active_edges
+            if not new_edges:
+                # All proposed edges already exist
+                return None
+            return new_edges
+
         return None
 
     def _connected_components(
@@ -291,58 +329,87 @@ class PerSentenceGraphBuilder:
         return components
 
     def build(self, sentence_index: int) -> PerSentenceGraph:
-        """
-        Build immutable per-sentence graph.
-
-        Paper-faithful activation +
-        Explicit node guarantee +
-        Presentation-layer connectivity enforcement +
-        LLM repair fallback.
-        """
-
         self._sentence_index = sentence_index
 
         # ------------------------------------------------------------
         # 1. Get paper-faithful active subgraph
         # ------------------------------------------------------------
         active_nodes, active_edges = self.cumulative_graph.get_active_subgraph()
+        active_nodes = set(active_nodes)
+        active_edges = set(active_edges)
 
-        # -----------------------------------------------------------
         # ------------------------------------------------------------
-        # 2. Guarantee explicit nodes only if they have active edges
+        # 2. Guarantee explicit + carryover visibility
+        # ------------------------------------------------------------
         active_nodes |= {
             n
-            for n in self._explicit_nodes
-            if any(
-                e.active
-                and e.visibility_score > 0
-                and (e.source_node == n or e.dest_node == n)
-                for e in active_edges
-            )
+            for n in (self._explicit_nodes | self._carryover_nodes)
+            if any(e.source_node == n or e.dest_node == n for e in active_edges)
         }
 
         # ------------------------------------------------------------
-        # 3. Connectivity enforcement (presentation only)
+        # 3. Attempt LLM repair first
         # ------------------------------------------------------------
-        components = self._connected_components(active_nodes, active_edges)
+        # ------------------------------------------------------------
+        # Guaranteed LLM connectivity repair (bounded)
+        # ------------------------------------------------------------
+        MAX_LLM_REPAIR_ATTEMPTS = 5
+        attempt = 0
 
-        if len(components) > 1:
-            repaired_edges = self._attempt_llm_repair(components)
+        while True:
+            components = self._connected_components(active_nodes, active_edges)
 
-            if repaired_edges:
-                for edge in repaired_edges:
-                    active_edges.add(edge)
-                    active_nodes.add(edge.source_node)
-                    active_nodes.add(edge.dest_node)
-            else:
-                # fallback to previous valid graph if available
-                if hasattr(self, "_last_valid_graph"):
-                    return self._last_valid_graph
+            if len(components) <= 1:
+                break  # Connected — success
+
+            if attempt >= MAX_LLM_REPAIR_ATTEMPTS:
+                logging.warning(
+                    "[PerSentenceGraph] LLM failed to connect graph after %d attempts. "
+                    "Component sizes: %s",
+                    MAX_LLM_REPAIR_ATTEMPTS,
+                    [len(c) for c in components],
+                )
+                break
+
+            repaired_edges = self._attempt_llm_repair(
+                components,
+                active_nodes,
+                active_edges,
+                temperature=0.3 if attempt < MAX_LLM_REPAIR_ATTEMPTS else 0.8,
+            )
+
+            if not repaired_edges:
+                attempt += 1
+                continue
+
+            for edge in repaired_edges:
+                active_edges.add(edge)
+                active_nodes.add(edge.source_node)
+                active_nodes.add(edge.dest_node)
+
+            attempt += 1
 
         # ------------------------------------------------------------
-        # 4. Final graph construction
+        # 5. Final safety check (guaranteed connected)
         # ------------------------------------------------------------
-        result = PerSentenceGraph(
+        final_components = self._connected_components(active_nodes, active_edges)
+        if len(final_components) > 1:
+            logging.warning(
+                "[PerSentenceGraph] Returning largest connected component only."
+            )
+
+            largest = max(final_components, key=len)
+
+            active_nodes = set(largest)
+            active_edges = {
+                e
+                for e in active_edges
+                if e.source_node in largest and e.dest_node in largest
+            }
+        # ------------------------------------------------------------
+        # 6. Construct immutable graph
+        # ------------------------------------------------------------
+        return PerSentenceGraph(
             sentence_index=sentence_index,
             explicit_nodes=frozenset(self._explicit_nodes),
             carryover_nodes=frozenset(self._carryover_nodes),
@@ -351,13 +418,6 @@ class PerSentenceGraphBuilder:
             anchor_nodes=self.anchor_nodes,
         )
 
-        # ------------------------------------------------------------
-        # 5. Store fallback snapshot
-        # ------------------------------------------------------------
-        self._last_valid_graph = result
-
-        return result
-
 
 def build_per_sentence_graph(
     cumulative_graph: "Graph",
@@ -365,24 +425,19 @@ def build_per_sentence_graph(
     max_distance: int,
     anchor_nodes: Set["Node"],
     sentence_index: int,
+    repair_callback: Optional[
+        Callable[
+            [List[Set["Node"]], Set["Node"], Set["Edge"], int],
+            Optional[Set["Edge"]],
+        ]
+    ] = None,
 ) -> PerSentenceGraph:
-    """
-    Convenience function to build a per-sentence graph in one call.
 
-    Args:
-        cumulative_graph: The full cumulative graph with all nodes/edges
-        explicit_nodes: Nodes extracted from the current sentence text
-        max_distance: Maximum BFS distance for carry-over nodes
-        anchor_nodes: Nodes that are always attachable (connectivity anchors)
-        sentence_index: The 1-based sentence index
-
-    Returns:
-        A PerSentenceGraph with all invariants enforced
-    """
     builder = PerSentenceGraphBuilder(
         cumulative_graph=cumulative_graph,
         max_distance=max_distance,
         anchor_nodes=anchor_nodes,
+        repair_callback=repair_callback,
     )
 
     return (

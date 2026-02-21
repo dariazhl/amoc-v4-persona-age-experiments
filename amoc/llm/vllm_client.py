@@ -57,7 +57,9 @@ class VLLMClient:
                 f"Requested tensor parallel size {tp_size}, but only {num_gpus} GPUs are available."
             )
 
-    def generate(self, messages: List[Dict[str, str]]) -> str:
+    def generate(
+        self, messages: List[Dict[str, str]], temperature: float = None
+    ) -> str:
         if self.llm is None:
             logging.error("VLLM not initialized.")
             return "[]"
@@ -75,7 +77,15 @@ class VLLMClient:
         prompt += "<|start_header_id|>assistant<|end_header_id|>\n\nfinal\n"
 
         try:
-            outputs = self.llm.generate([prompt], self.sampling_params, use_tqdm=False)
+            # Clone sampling params so you don’t mutate global config
+            sampling_params = self.sampling_params
+
+            if temperature is not None:
+                from copy import deepcopy
+
+                sampling_params = deepcopy(self.sampling_params)
+                sampling_params.temperature = temperature
+            outputs = self.llm.generate([prompt], sampling_params, use_tqdm=False)
             raw_text = outputs[0].outputs[0].text
 
             # Keep output as-is; downstream parsing helpers extract the first

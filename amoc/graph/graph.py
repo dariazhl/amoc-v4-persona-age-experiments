@@ -335,7 +335,13 @@ class Graph:
         # Prevent inference from resurrecting decaying nodes
         # ------------------------------------------------------------
         if inferred:
-            if source_node.visibility_score <= 0 or dest_node.visibility_score <= 0:
+            if (
+                hasattr(source_node, "visibility_score")
+                and source_node.visibility_score <= 0
+            ) or (
+                hasattr(dest_node, "visibility_score")
+                and dest_node.visibility_score <= 0
+            ):
                 return None
 
             # ==========================================================================
@@ -365,9 +371,17 @@ class Graph:
             #             f"'{source_node.get_text_representer()}' (count={current_count})"
             #         )
             #         return None  # Silently skip - budget exceeded
-
-            # Increment budget counter
-            self._edge_budget[sentence_idx][source_key][label_lower] = current_count + 1
+            label_lower = label.lower().strip()
+            source_key = tuple(source_node.lemmas)
+            current_count = (
+                self._edge_budget.setdefault(created_at_sentence, {})
+                .setdefault(source_key, {})
+                .get(label_lower, 0)
+            )
+            if created_at_sentence is not None:
+                self._edge_budget[created_at_sentence][source_key][label_lower] = (
+                    current_count + 1
+                )
 
         # PROPERTY constraint check (soft - records violation but allows edge)
         property_node = None
@@ -525,7 +539,10 @@ class Graph:
         dest_connected = new_edge.dest_node in G.nodes()
 
         # Dependent relations require at least one endpoint to be grounded
+        # Allow inferred edges to introduce at most one new node
         if not source_connected and not dest_connected:
+            if getattr(new_edge, "inferred", False):
+                return True
             return False
 
         # simulate addition and test connectivity
@@ -559,7 +576,7 @@ class Graph:
             if (
                 not edge.inferred
                 and not other_edge.inferred
-                and (is_concept_property_pair or edge.label == other_edge.label)
+                and edge.label.strip().lower() == other_edge.label.strip().lower()
             ):
                 # SOFT REINFORCEMENT (works for both inferred and non-inferred)
                 other_edge.visibility_score = min(
