@@ -486,13 +486,6 @@ class Graph:
         # ==========================================================================
         # CONNECTIVITY CHECK (non-blocking - records violation but allows edge)
         # ==========================================================================
-        # For edges that require connectivity (non-EVENTIVE, non-anchor relations),
-        # check that at least one endpoint is grounded in existing structure.
-        if relation_class != RelationClass.EVENTIVE:
-            if not self._would_maintain_connectivity(edge):
-                edge.metadata.setdefault("ontology_violations", []).append(
-                    "Connectivity: edge creates isolated component"
-                )
 
         self.edges.add(edge)
         self._apply_structural_event_supersession(edge)

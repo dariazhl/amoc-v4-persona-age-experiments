@@ -903,29 +903,6 @@ def plot_amoc_triplets(
         plt.close(fig)
         return save_path
 
-    # INVARIANT 2: Graph should ideally be connected
-    # If disconnected, log warning and keep only the largest component
-    if G.number_of_nodes() > 1:
-        undirected_G = G.to_undirected()
-        if not nx.is_connected(undirected_G):
-            components = list(nx.connected_components(undirected_G))
-            component_sizes = [len(c) for c in components]
-            # Log warning instead of raising error
-            import logging
-
-            logging.warning(
-                f"Disconnected graph passed to plot_amoc_triplets. "
-                f"Found {len(components)} components with sizes {component_sizes}. "
-                f"Keeping only the largest component for plotting."
-            )
-            # Keep only largest component
-            # largest_component = max(components, key=len)
-            # nodes_to_remove = set(G.nodes()) - largest_component
-            # G.remove_nodes_from(nodes_to_remove)
-            # # Also remove corresponding edge labels/status
-            # edge_labels = {k: v for k, v in edge_labels.items() if k[0] in largest_component and k[1] in largest_component}
-            # edge_status = {k: v for k, v in edge_status.items() if k[0] in largest_component and k[1] in largest_component}
-
     plotted_nodes = set(G.nodes())
 
     nodes = list(G.nodes())
