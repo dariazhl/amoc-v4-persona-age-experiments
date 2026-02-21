@@ -371,17 +371,30 @@ class AMoCv4:
         active_edges,
         sentence_index,
         temperature: float = 0.3,
+        forced_pair=None,
     ):
         """
         Repair disconnected components using FORCED_CONNECTIVITY_EDGE_PROMPT.
         Connect smaller components to the largest component.
+        Only connects EXISTING active nodes.
+        Never creates new STORY_TEXT nodes.
         """
+
+        import re
+        import json
+
+        # ------------------------------------------------------------
+        # Forced pair override (isolated-node repair)
+        # ------------------------------------------------------------
+        if forced_pair is not None:
+            representative, anchor_node = forced_pair
+            components = [{representative}, {anchor_node}]
 
         if not components or len(components) <= 1:
             return None
 
         # ------------------------------------------------------------
-        # 1. Sort components by size (largest first)
+        # Sort components (largest first)
         # ------------------------------------------------------------
         sorted_components = sorted(components, key=len, reverse=True)
         main_component = sorted_components[0]
@@ -389,12 +402,18 @@ class AMoCv4:
         edges_created = set()
 
         # ------------------------------------------------------------
-        # 2. Connect every other component to main component
+        # Attempt repair
         # ------------------------------------------------------------
         for comp in sorted_components[1:]:
 
             representative = next(iter(comp))
             anchor_node = next(iter(main_component))
+
+            # SAFETY: both nodes must already be active
+            if representative not in active_nodes:
+                continue
+            if anchor_node not in active_nodes:
+                continue
 
             prompt_text = FORCED_CONNECTIVITY_EDGE_PROMPT.format(
                 node_a=representative.get_text_representer(),
@@ -410,11 +429,20 @@ class AMoCv4:
                     messages,
                     temperature=temperature,
                 )
-                data = json.loads(response)
+
+                # --------------------------------------------------------
+                # Robust JSON extraction (fixes "Extra data" error)
+                # --------------------------------------------------------
+                match = re.search(r"\{.*?\}", response, re.DOTALL)
+                if not match:
+                    continue
+
+                data = json.loads(match.group(0))
                 label = data.get("label")
+
             except Exception as e:
                 logging.warning(
-                    "[ConnectivityRepair] Failed to parse LLM response: %s",
+                    "[ConnectivityRepair] JSON extraction failed: %s",
                     str(e),
                 )
                 continue
@@ -422,10 +450,13 @@ class AMoCv4:
             if not label:
                 continue
 
+            # ------------------------------------------------------------
+            # Add inferred connective edge (no new node creation)
+            # ------------------------------------------------------------
             edge = self.graph.add_edge(
                 source_node=representative,
                 dest_node=anchor_node,
-                label=label.strip(),
+                label=label.strip().lower(),
                 edge_visibility=self.edge_visibility,
                 created_at_sentence=sentence_index,
                 relation_class=RelationClass.CONNECTIVE,
@@ -451,6 +482,8 @@ class AMoCv4:
         - Inferred nodes must attach to at least one ACTIVE node
         - No floating abstraction nodes allowed
         """
+        if provenance == "STORY_EXPLICIT" and lemma not in self.story_lemmas:
+            return None
         lemma = lemma.lower().strip()
 
         # Provenance guard (hard gate)
@@ -635,102 +668,60 @@ class AMoCv4:
         return False
 
     def _build_per_sentence_view(
-        self, explicit_nodes: List[Node], sentence_index: int
+        self,
+        explicit_nodes: List[Node],
+        sentence_index: int,
     ) -> Optional[PerSentenceGraph]:
+
         if not self.strict_attachament_constraint:
             self._per_sentence_view = None
             return None
 
+        # ------------------------------------------------------------
+        #  GUARANTEE: explicit nodes are admitted into cumulative graph
+        # ------------------------------------------------------------
+        admitted_nodes = []
+
+        for node in explicit_nodes:
+            if not hasattr(node, "get_text_representer"):
+                continue
+
+            lemma = node.get_text_representer().lower().strip()
+
+            if lemma not in self.story_lemmas:
+                continue
+
+            admitted = self._admit_node(
+                lemma=lemma,
+                node_type=NodeType.CONCEPT,
+                provenance="STORY_EXPLICIT",
+                sent=None,
+            )
+
+            if admitted:
+                node_obj = self.graph.add_or_get_node(
+                    [lemma],
+                    lemma,
+                    NodeType.CONCEPT,
+                    NodeSource.TEXT_BASED,
+                    provenance=NodeProvenance.STORY_TEXT,
+                    origin_sentence=sentence_index,
+                )
+
+                if node_obj:
+                    admitted_nodes.append(node_obj)
+
+        # ------------------------------------------------------------
+        # Build per-sentence graph FROM cumulative memory
+        # ------------------------------------------------------------
         self._per_sentence_view = build_per_sentence_graph(
             cumulative_graph=self.graph,
-            explicit_nodes=explicit_nodes,
+            explicit_nodes=admitted_nodes,
             max_distance=self.max_distance_from_active_nodes,
             anchor_nodes=self._anchor_nodes,
             sentence_index=sentence_index,
             repair_callback=self.repair_connectivity_callback,
         )
-
-        # ------------------------------------------------------------
-        # GUARANTEE: Explicit nodes must exist in core graph
-        # ------------------------------------------------------------
-        if explicit_nodes:
-            for node in explicit_nodes:
-                # If explicit_nodes contains Node objects
-                if hasattr(node, "get_text_representer"):
-                    lemma = node.get_text_representer().lower().strip()
-                else:
-                    lemma = str(node).lower().strip()
-
-                if lemma not in self.story_lemmas:
-                    continue
-
-                admitted = self._admit_node(
-                    lemma=lemma,
-                    node_type=NodeType.CONCEPT,
-                    provenance="STORY_EXPLICIT",
-                    sent=None,
-                )
-
-                if admitted:
-                    self.graph.add_or_get_node(
-                        [lemma],
-                        lemma,
-                        NodeType.CONCEPT,
-                        NodeSource.TEXT_BASED,
-                        provenance=NodeProvenance.STORY_TEXT,
-                    )
-
-        # # # === GUARANTEE 5: explicit nodes must appear in projection ===
-        # # ------------------------------------------------------------
-        # # STRUCTURAL ANCHOR: ensure singleton explicit nodes connect
-        # # ------------------------------------------------------------
-        # if explicit_nodes:
-        #     active_nodes = self._get_nodes_with_active_edges()
-
-        #     for node in explicit_nodes:
-        #         if node not in active_nodes:
-        #             anchor = next(iter(self._anchor_nodes), None)
-
-        #             if anchor and anchor != node:
-        #                 if len(self._explicit_nodes_current_sentence) == 1:
-
-        #                     singleton_node = next(
-        #                         iter(self._explicit_nodes_current_sentence)
-        #                     )
-
-        #                     if (
-        #                         singleton_node
-        #                         not in self._get_nodes_with_active_edges()
-        #                     ):
-
-        #                         # Trigger structural expansion via LLM
-        #                         llm_relationships = (
-        #                             self._generate_relationships_with_llm(
-        #                                 list(self._explicit_nodes_current_sentence),
-        #                                 self.graph,
-        #                                 current_all_text,
-        #                                 self.persona,
-        #                             )
-        #                         )
-
-        #                         # Integrate results into existing pipeline
-        #                         for rel in llm_relationships:
-        #                             if isinstance(rel, (list, tuple)) and len(rel) == 3:
-        #                                 new_relationships.append(rel)
-
-        #                 if anchor and node:
-        #                     if not self.active_graph.has_node(anchor):
-        #                         self.active_graph.add_node(anchor)
-        #                     if not self.active_graph.has_node(node):
-        #                         self.active_graph.add_node(node)
-        #                     self.active_graph.add_edge(anchor, node)
-
-        # if self._per_sentence_view is not None and explicit_nodes:
-
-        #     # Ensure explicit nodes are recorded in the view
-        #     self._per_sentence_view.explicit_nodes = list(
-        #         set(self._per_sentence_view.explicit_nodes) | set(explicit_nodes)
-        #     )
 
         return self._per_sentence_view
 
@@ -2060,6 +2051,32 @@ class AMoCv4:
             return canon, None
         return canon, self._classify_canonical_node_text(canon)
 
+    def _enforce_cumulative_connectivity(self):
+        G = nx.Graph()
+
+        for edge in self.graph.edges:
+            G.add_edge(edge.source_node, edge.dest_node)
+
+        if len(G.nodes) == 0:
+            return
+
+        components = list(nx.connected_components(G))
+
+        if len(components) > 1:
+            largest = max(components, key=len)
+
+            self.graph.nodes = {n for n in self.graph.nodes if n in largest}
+
+            self.graph.edges = {
+                e
+                for e in self.graph.edges
+                if e.source_node in largest and e.dest_node in largest
+            }
+
+            logging.warning(
+                "[Connectivity] Cumulative graph collapsed to largest component."
+            )
+
     def _plot_graph_snapshot(
         self,
         sentence_index: int,
@@ -2202,6 +2219,8 @@ class AMoCv4:
                     if node.ever_explicit and node.get_text_representer()
                 }
             )
+
+            self._enforce_cumulative_connectivity()
 
             saved_path = plot_amoc_triplets(
                 triplets=triplets,
@@ -2383,6 +2402,12 @@ class AMoCv4:
             self.active_graph = nx.MultiDiGraph()
             self._current_sentence_index = i + 1
             self.graph.set_current_sentence(self._current_sentence_index)
+            # Compute lemma set from dependency parse or tokenizer
+            current_sentence_lemmas = {
+                w.lower() for w in re.findall(r"[a-zA-Z]+", original_text)
+            }
+
+            self.graph.set_current_sentence_lemmas(current_sentence_lemmas)
             self.graph.deactivate_all_edges()
             import copy
 
@@ -3223,14 +3248,7 @@ class AMoCv4:
                     sentence_id,
                     self.persona,
                 )
-            # Legacy active_graph check (for backwards compatibility)
-            if self.active_graph.number_of_nodes() > 1 and not nx.is_connected(
-                nx.Graph(self.active_graph)
-            ):
-                logging.error(
-                    "Legacy active_graph disconnected at sentence %s (per-sentence view governs correctness)",
-                    sentence_id,
-                )
+
             if i == 0:
                 recently_deactivated_nodes: set[Node] = set()
             else:

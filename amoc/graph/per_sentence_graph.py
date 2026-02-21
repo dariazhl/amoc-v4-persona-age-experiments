@@ -276,11 +276,11 @@ class PerSentenceGraphBuilder:
         if not candidate_edges:
             return None
 
-        valid_edges = {
-            e
-            for e in candidate_edges
-            if e.source_node in active_nodes and e.dest_node in active_nodes
-        }
+        valid_edges = set()
+
+        for e in candidate_edges:
+            if e.source_node in active_nodes or e.dest_node in active_nodes:
+                valid_edges.add(e)
 
         # --------------------------------------------------
         # Prevent duplicate-edge retry loops
@@ -332,82 +332,131 @@ class PerSentenceGraphBuilder:
         self._sentence_index = sentence_index
 
         # ------------------------------------------------------------
-        # 1. Get paper-faithful active subgraph
+        # 1. Get active subgraph from cumulative memory
         # ------------------------------------------------------------
         active_nodes, active_edges = self.cumulative_graph.get_active_subgraph()
         active_nodes = set(active_nodes)
         active_edges = set(active_edges)
 
         # ------------------------------------------------------------
-        # 2. Guarantee explicit + carryover visibility
+        # 2. Guarantee explicit + carryover nodes are present
+        active_nodes |= set(self._explicit_nodes)
         # ------------------------------------------------------------
-        active_nodes |= {
-            n
-            for n in (self._explicit_nodes | self._carryover_nodes)
-            if any(e.source_node == n or e.dest_node == n for e in active_edges)
-        }
-
-        # ------------------------------------------------------------
-        # 3. Attempt LLM repair first
-        # ------------------------------------------------------------
-        # ------------------------------------------------------------
-        # Guaranteed LLM connectivity repair (bounded)
+        # 3. Component-level LLM repair (bounded)
         # ------------------------------------------------------------
         MAX_LLM_REPAIR_ATTEMPTS = 5
         attempt = 0
 
-        while True:
+        while attempt < MAX_LLM_REPAIR_ATTEMPTS:
+
             components = self._connected_components(active_nodes, active_edges)
 
             if len(components) <= 1:
-                break  # Connected — success
-
-            if attempt >= MAX_LLM_REPAIR_ATTEMPTS:
-                logging.warning(
-                    "[PerSentenceGraph] LLM failed to connect graph after %d attempts. "
-                    "Component sizes: %s",
-                    MAX_LLM_REPAIR_ATTEMPTS,
-                    [len(c) for c in components],
-                )
-                break
+                break  # Graph connected
 
             repaired_edges = self._attempt_llm_repair(
                 components,
                 active_nodes,
                 active_edges,
-                temperature=0.3 if attempt < MAX_LLM_REPAIR_ATTEMPTS else 0.8,
+                temperature=0.3 if attempt < 3 else 0.7,
             )
 
-            if not repaired_edges:
-                attempt += 1
-                continue
-
-            for edge in repaired_edges:
-                active_edges.add(edge)
-                active_nodes.add(edge.source_node)
-                active_nodes.add(edge.dest_node)
+            if repaired_edges:
+                for edge in repaired_edges:
+                    active_edges.add(edge)
+                    active_nodes.add(edge.source_node)
+                    active_nodes.add(edge.dest_node)
 
             attempt += 1
 
         # ------------------------------------------------------------
-        # 5. Final safety check (guaranteed connected)
+        # 4. Enforce no isolated nodes (LLM-only, bounded)
         # ------------------------------------------------------------
-        final_components = self._connected_components(active_nodes, active_edges)
-        if len(final_components) > 1:
-            logging.warning(
-                "[PerSentenceGraph] Returning largest connected component only."
+        MAX_ISOLATED_REPAIR = 5
+        attempt_iso = 0
+
+        def degree(node):
+            return sum(
+                1 for e in active_edges if e.source_node == node or e.dest_node == node
             )
 
-            largest = max(final_components, key=len)
+        isolated_nodes = {n for n in active_nodes if degree(n) == 0}
 
-            active_nodes = set(largest)
-            active_edges = {
-                e
-                for e in active_edges
-                if e.source_node in largest and e.dest_node in largest
-            }
+        while isolated_nodes and attempt_iso < MAX_ISOLATED_REPAIR:
+
+            for node in list(isolated_nodes):
+
+                # Choose highest-degree anchor
+                anchor_node = max(active_nodes, key=degree)
+
+                if anchor_node == node:
+                    continue
+
+                repaired = self.repair_callback(
+                    components=None,
+                    active_nodes=active_nodes,
+                    active_edges=active_edges,
+                    sentence_index=self._sentence_index,
+                    temperature=0.6,
+                    forced_pair=(node, anchor_node),
+                )
+
+                if repaired:
+                    for edge in repaired:
+                        active_edges.add(edge)
+                        active_nodes.add(edge.source_node)
+                        active_nodes.add(edge.dest_node)
+
+            isolated_nodes = {n for n in active_nodes if degree(n) == 0}
+
+            attempt_iso += 1
+
         # ------------------------------------------------------------
-        # 6. Construct immutable graph
+        # 5. Final check (never raise)
+        # ------------------------------------------------------------
+        # ------------------------------------------------------------
+        # HARD CONNECTIVITY GUARANTEE
+        # ------------------------------------------------------------
+        final_components = self._connected_components(active_nodes, active_edges)
+
+        if len(final_components) > 1:
+            logging.warning(
+                "[PerSentenceGraph] Final repair attempt: forcing full connectivity."
+            )
+
+            # deterministically chain components
+            sorted_components = sorted(final_components, key=len, reverse=True)
+
+            main_component = sorted_components[0]
+
+            for comp in sorted_components[1:]:
+                representative = next(iter(comp))
+                anchor = next(iter(main_component))
+
+                forced_edges = self.repair_callback(
+                    components=[{representative}, {anchor}],
+                    active_nodes=active_nodes,
+                    active_edges=active_edges,
+                    sentence_index=self._sentence_index,
+                    temperature=0.2,  # deterministic
+                )
+
+                if forced_edges:
+                    for e in forced_edges:
+                        active_edges.add(e)
+                        active_nodes.add(e.source_node)
+                        active_nodes.add(e.dest_node)
+
+            # re-check
+            final_components = self._connected_components(active_nodes, active_edges)
+
+            if len(final_components) > 1:
+                logging.error(
+                    "[PerSentenceGraph] HARD FAILURE: graph still disconnected after final repair."
+                )
+
+        # ------------------------------------------------------------
+        # 6. Construct immutable per-sentence graph
         # ------------------------------------------------------------
         return PerSentenceGraph(
             sentence_index=sentence_index,

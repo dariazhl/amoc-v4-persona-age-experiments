@@ -45,6 +45,9 @@ class Graph:
         "label",
         "target",
         "source",
+        "pronoun",
+        "noun",
+        "user",
     }
 
     # Nodes that are NEVER allowed, even if explicit
@@ -77,6 +80,15 @@ class Graph:
         # Structure: {sentence_idx: {node_lemma_tuple: {label: count}}}
         self._edge_budget: Dict[int, Dict[tuple, Dict[str, int]]] = {}
         self._current_sentence_idx: int = 0
+        # Sentence-scoped lemma gate (for explicit node enforcement)
+        self._current_sentence_lemmas: Optional[Set[str]] = None
+
+    def set_current_sentence_lemmas(self, lemmas: Set[str]) -> None:
+        """
+        Set the lemma set for the current sentence.
+        Used to enforce that explicit nodes must originate from this sentence.
+        """
+        self._current_sentence_lemmas = {l.lower() for l in lemmas}
 
     def set_provenance_gate(
         self,
@@ -174,10 +186,8 @@ class Graph:
         # ==========================================================================
         # PHASE 1: FORBIDDEN LEMMA BLOCKLIST (Hard Block Persona & Meta Nodes)
         # ==========================================================================
-        if provenance != NodeProvenance.STORY_TEXT:
-            if any(lemma in self.FORBIDDEN_NODE_LEMMAS for lemma in lemmas):
-                logging.debug(f"FORBIDDEN LEMMA: Blocked '{lemmas[0]}'")
-                return None
+        if any(lemma in self.FORBIDDEN_NODE_LEMMAS for lemma in lemmas):
+            return None
 
         if any(lemma in self.NARRATION_ARTIFACT_LEMMAS for lemma in lemmas):
             logging.debug(f"NARRATION ARTIFACT BLOCKED: {lemmas}")
@@ -270,6 +280,13 @@ class Graph:
             #
             # INVARIANT: Carry-over nodes remain carry-over unless re-mentioned.
             if mark_explicit and origin_sentence is not None:
+                # Enforce sentence-scoped explicit-node invariant
+                if (
+                    self._current_sentence_lemmas is not None
+                    and primary_lemma not in self._current_sentence_lemmas
+                ):
+                    return None  # Reject explicit node not present in current sentence
+
                 node.mark_explicit_in_sentence(origin_sentence)
 
         return node
@@ -371,17 +388,37 @@ class Graph:
             #             f"'{source_node.get_text_representer()}' (count={current_count})"
             #         )
             #         return None  # Silently skip - budget exceeded
-            label_lower = label.lower().strip()
-            source_key = tuple(source_node.lemmas)
-            current_count = (
-                self._edge_budget.setdefault(created_at_sentence, {})
-                .setdefault(source_key, {})
-                .get(label_lower, 0)
-            )
             if created_at_sentence is not None:
-                self._edge_budget[created_at_sentence][source_key][label_lower] = (
-                    current_count + 1
-                )
+                label_lower = label.lower().strip()
+                source_key = tuple(source_node.lemmas)
+
+                sentence_budget = self._edge_budget.setdefault(created_at_sentence, {})
+                node_budget = sentence_budget.setdefault(source_key, {})
+
+                current_count = node_budget.get(label_lower, 0)
+
+                MAX_PER_LABEL = 3
+
+                # ---------------------------------
+                # SAFE grounding detection
+                # ---------------------------------
+                def _node_degree(node):
+                    return sum(
+                        1
+                        for e in self.edges
+                        if (e.source_node == node or e.dest_node == node)
+                        and e.visibility_score > 0
+                    )
+
+                source_degree = _node_degree(source_node)
+                dest_degree = _node_degree(dest_node)
+
+                grounding_edge = source_degree == 0 or dest_degree == 0
+
+                if not grounding_edge and current_count >= MAX_PER_LABEL:
+                    return None
+
+                node_budget[label_lower] = current_count + 1
 
         # PROPERTY constraint check (soft - records violation but allows edge)
         property_node = None
@@ -451,10 +488,7 @@ class Graph:
         # ==========================================================================
         # For edges that require connectivity (non-EVENTIVE, non-anchor relations),
         # check that at least one endpoint is grounded in existing structure.
-        if relation_class not in {
-            RelationClass.EVENTIVE,
-            RelationClass.CONNECTIVE,
-        }:
+        if relation_class != RelationClass.EVENTIVE:
             if not self._would_maintain_connectivity(edge):
                 edge.metadata.setdefault("ontology_violations", []).append(
                     "Connectivity: edge creates isolated component"
@@ -530,20 +564,26 @@ class Graph:
                 continue
             G.add_edge(edge.source_node, edge.dest_node)
 
-        # If no non-attributive edges exist, allow the new edge
-        if G.number_of_edges() == 0:
-            return True
-
         # Check if at least one endpoint already exists in cumulative memory
         source_connected = new_edge.source_node in G.nodes()
         dest_connected = new_edge.dest_node in G.nodes()
 
         # Dependent relations require at least one endpoint to be grounded
         # Allow inferred edges to introduce at most one new node
+        # If graph is empty, first edge is allowed
+        if G.number_of_nodes() == 0:
+            return True
+
+        # If both endpoints are new and graph already exists,
+        # block creation of isolated component
         if not source_connected and not dest_connected:
-            if getattr(new_edge, "inferred", False):
-                return True
             return False
+
+        if new_edge.inferred:
+            return True
+
+        if getattr(new_edge, "inferred", False):
+            return True
 
         # simulate addition and test connectivity
         G.add_edge(new_edge.source_node, new_edge.dest_node)
@@ -574,9 +614,8 @@ class Graph:
             )
 
             if (
-                not edge.inferred
-                and not other_edge.inferred
-                and edge.label.strip().lower() == other_edge.label.strip().lower()
+                edge.label.strip().lower() == other_edge.label.strip().lower()
+                and not edge.inferred
             ):
                 # SOFT REINFORCEMENT (works for both inferred and non-inferred)
                 other_edge.visibility_score = min(
