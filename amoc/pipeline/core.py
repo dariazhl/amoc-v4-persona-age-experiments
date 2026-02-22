@@ -6,6 +6,7 @@ import pandas as pd
 from spacy.tokens import Span, Token
 import networkx as nx
 import warnings
+import copy
 
 from amoc.graph.node import NodeType
 from amoc.graph import Graph, Node, Edge, NodeType, NodeSource
@@ -1453,6 +1454,7 @@ class AMoCv4:
                 "[Connectivity] Graph STILL disconnected after creating %d forced edges",
                 len(forced_edges),
             )
+            return []  # Force caller to detect failure
 
         return forced_edges
 
@@ -2440,9 +2442,15 @@ class AMoCv4:
             }
 
             self.graph.set_current_sentence_lemmas(current_sentence_lemmas)
-            self.graph.deactivate_all_edges()
-            import copy
 
+            # ============================================================
+            # SENTENCE TRANSACTION SNAPSHOT (BEFORE MUTATION)
+            # ============================================================
+            _previous_graph_state = copy.deepcopy(self.graph)
+            _previous_anchor_nodes = set(self._anchor_nodes)
+
+            # Now mutate
+            self.graph.deactivate_all_edges()
             self._current_sentence_text = original_text
             # ------------------------------------------------------------------
             # HARD RESET: Explicit sentence scoping
@@ -2564,9 +2572,6 @@ class AMoCv4:
 
             else:
                 added_edges = []
-
-                # SNAPSHOT
-                import copy
 
                 _graph_snapshot = copy.deepcopy(self.graph)
                 _anchor_snapshot = copy.deepcopy(self._anchor_nodes)
@@ -3348,6 +3353,75 @@ class AMoCv4:
             else:
                 self._recently_deactivated_nodes_for_inference = set()
             self._prev_active_nodes_for_plot = current_active_nodes
+
+            # ============================================================
+            # HARD STRUCTURAL POST-CONDITIONS (MUST HOLD OR ROLLBACK)
+            # ============================================================
+            def _sentence_state_valid() -> bool:
+                """
+                Validate per-sentence projection invariants.
+
+                Invariants:
+                1. Projection must exist.
+                2. Projection must be connected.
+                3. All explicit nodes must be visible.
+                4. All explicit nodes must have degree >= 1.
+                5. If explicit nodes exist, projection must contain at least one edge.
+                """
+
+                # Projection must exist
+                if not hasattr(self, "_per_sentence_view"):
+                    return False
+
+                view = self._per_sentence_view
+                if view is None:
+                    return False
+
+                explicit_set = set(self._explicit_nodes_current_sentence)
+
+                # 1. Projection must be connected
+                if not view.is_connected:
+                    return False
+
+                # 2. Explicit nodes must be visible
+                for node in explicit_set:
+                    if node not in view.active_nodes:
+                        return False
+
+                # 3. Explicit nodes must have degree >= 1
+                for node in explicit_set:
+                    degree = sum(
+                        1
+                        for e in view.active_edges
+                        if e.source_node == node or e.dest_node == node
+                    )
+                    if degree == 0:
+                        return False
+
+                # 4. No empty projection when explicit nodes exist
+                if explicit_set and len(view.active_edges) == 0:
+                    return False
+
+                return True
+
+            rollback_needed = not _sentence_state_valid()
+
+            # Projection must also remain connected
+            if (
+                not rollback_needed
+                and hasattr(self, "_per_sentence_view")
+                and self._per_sentence_view is not None
+                and not self._per_sentence_view.is_connected
+            ):
+                rollback_needed = True
+
+            if rollback_needed:
+                logging.error(
+                    "[ROLLBACK] Sentence invalid — reverting to previous state."
+                )
+                self.graph = _previous_graph_state
+                self._anchor_nodes = _previous_anchor_nodes
+                continue
 
             if plot_after_each_sentence:
                 # Active (salience) view - use per-sentence view for clean isolation
