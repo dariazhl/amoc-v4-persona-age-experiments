@@ -328,20 +328,6 @@ class Graph:
         persona_influenced: bool = False,
         inferred: bool = False,
     ) -> Optional[Edge]:
-        """
-        Add an edge with ontology-invariant metadata.
-
-        Args:
-            source_node: Source node
-            dest_node: Destination node
-            label: Edge label (persona may influence this)
-            edge_visibility: Visibility score
-            created_at_sentence: Sentence index
-            relation_class: Structural ontology class (INVARIANT to persona)
-            justification: How edge was derived (INVARIANT to persona)
-            persona_influenced: Whether label was influenced by persona
-            inferred: Whether edge was inferred (not explicit in text)
-        """
         # Basic sanity checks (these don't block - just return None)
         if source_node == dest_node:
             return None
@@ -361,33 +347,6 @@ class Graph:
             ):
                 return None
 
-            # ==========================================================================
-            # EDGE BUDGET THROTTLING (Issue B - Node Coagulation Prevention)
-            # ==========================================================================
-            # Low-information edges ("has", "relates_to", "is", etc.) create hub clusters
-            # that reduce graph information density. Limit to 1 per (node, label) per sentence.
-            # label_lower = label.lower().strip()
-            # if label_lower in self.LOW_INFO_LABELS:
-            #     sentence_idx = self._current_sentence_idx
-            #     # Use source node's primary lemma as key (tuple for hashability)
-            #     source_key = tuple(source_node.lemmas)
-
-            #     # Initialize budget structure if needed
-            #     if sentence_idx not in self._edge_budget:
-            #         self._edge_budget[sentence_idx] = {}
-            #     if source_key not in self._edge_budget[sentence_idx]:
-            #         self._edge_budget[sentence_idx][source_key] = {}
-
-            #     # Check budget
-            #     current_count = self._edge_budget[sentence_idx][source_key].get(
-            #         label_lower, 0
-            #     )
-            #     if current_count >= 1:
-            #         logging.debug(
-            #             f"EDGE BUDGET: Throttled '{label_lower}' edge from "
-            #             f"'{source_node.get_text_representer()}' (count={current_count})"
-            #         )
-            #         return None  # Silently skip - budget exceeded
             if created_at_sentence is not None:
                 label_lower = label.lower().strip()
                 source_key = tuple(source_node.lemmas)

@@ -7,6 +7,7 @@ from spacy.tokens import Span, Token
 import networkx as nx
 import warnings
 import copy
+import random
 
 from amoc.graph.node import NodeType
 from amoc.graph import Graph, Node, Edge, NodeType, NodeSource
@@ -1313,9 +1314,128 @@ class AMoCv4:
 
         return edge
 
+    def _llm_generate_relation(
+        self,
+        node_a: Node,
+        node_b: Node,
+        story_context: str = "",
+        current_sentence: str = "",
+    ) -> Optional[str]:
+
+        try:
+            result = self.client.get_forced_connectivity_edge_label(
+                node_a=node_a.get_text_representer(),
+                node_b=node_b.get_text_representer(),
+                story_context=story_context,
+                current_sentence=current_sentence,
+                persona=self.persona,
+            )
+
+            if isinstance(result, dict):
+                label = result.get("label")
+            else:
+                label = result
+
+            return label if isinstance(label, str) and label.strip() else None
+
+        except Exception:
+            return None
+
     def reset_graph(self) -> None:
         self.graph = Graph()
         self._anchor_nodes = set()
+
+    # ==========================================================================
+    # TASK 2: FORCED CONNECTIVITY EDGE CREATION
+    # ==========================================================================
+    def _create_forced_connectivity_edges(
+        self,
+        story_context=None,
+        current_sentence=None,
+        mode="active",
+    ):
+
+        if mode == "active":
+            relevant_edges = [e for e in self.graph.edges if e.active]
+        else:
+            relevant_edges = list(self.graph.edges)
+
+        G = nx.Graph()
+        for e in relevant_edges:
+            G.add_edge(e.source_node, e.dest_node)
+
+        if G.number_of_nodes() <= 1:
+            return []
+
+        components = list(nx.connected_components(G))
+        if len(components) <= 1:
+            return []
+
+        components = sorted(components, key=len, reverse=True)
+        backbone = set(components[0])
+        forced_edges = []
+
+        for comp in components[1:]:
+
+            node_a = next(iter(backbone))
+            node_b = next(iter(comp))
+
+            success = False
+
+            for _ in range(2):
+
+                result = self.client.get_forced_connectivity_edge_label(
+                    node_a=node_a.get_text_representer(),
+                    node_b=node_b.get_text_representer(),
+                    story_context=story_context,
+                    current_sentence=current_sentence,
+                    persona=self.persona,
+                )
+
+                relation = result.get("label") if isinstance(result, dict) else result
+                if not relation:
+                    continue
+
+                relation = self._normalize_edge_label(relation) or "relates_to"
+
+                edge = self.graph.add_edge(
+                    node_a,
+                    node_b,
+                    relation,
+                    self.edge_visibility,
+                    relation_class=RelationClass.CONNECTIVE,
+                    justification=Justification.CONNECTIVE,
+                    inferred=True,
+                )
+
+                if edge:
+                    edge.active = True
+                    forced_edges.append(edge)
+                    backbone.update(comp)
+                    success = True
+                    break
+
+            # Deterministic fallback
+            if not success:
+                edge = self.graph.add_edge(
+                    node_a,
+                    node_b,
+                    "relates_to",
+                    self.edge_visibility,
+                    relation_class=RelationClass.CONNECTIVE,
+                    justification=Justification.CONNECTIVE,
+                    inferred=True,
+                )
+                if edge:
+                    edge.active = True
+                    forced_edges.append(edge)
+                    backbone.update(comp)
+                    success = True
+
+            if not success:
+                return []
+
+        return forced_edges
 
     def _enforce_graph_connectivity(self) -> None:
         # No-op: do not prune edges after addition; connectivity is enforced at add time.
@@ -1334,6 +1454,7 @@ class AMoCv4:
         forced_edges = self._create_forced_connectivity_edges(
             story_context=story_context,
             current_sentence=current_sentence,
+            mode="active",
         )
 
         if not forced_edges:
@@ -1351,112 +1472,6 @@ class AMoCv4:
                 f"at sentence {self._current_sentence_index}.",
                 RuntimeWarning,
             )
-
-    # ==========================================================================
-    # TASK 2: FORCED CONNECTIVITY EDGE CREATION
-    # ==========================================================================
-    def _create_forced_connectivity_edges(
-        self, story_context: str = None, current_sentence: str = None
-    ) -> List[Edge]:
-        # Step 1: Check if graph is still disconnected
-        if self.graph.check_active_connectivity():
-            return []  # Already connected, no forced edges needed
-
-        # Step 2: Get pairs that need connecting
-        pairs = self.graph.get_nodes_needing_connection(
-            focus_nodes=self._explicit_nodes_current_sentence
-        )
-
-        if not pairs:
-            logging.warning(
-                "[Connectivity] Graph disconnected but no pairs identified for connection"
-            )
-            return []
-
-        logging.info(
-            "[Connectivity] SECONDARY LLM CALL: Creating %d forced connectivity edges",
-            len(pairs),
-        )
-
-        forced_edges: List[Edge] = []
-
-        for isolated_node, focus_node in pairs:
-            # Step 3: Call LLM to generate edge label
-            node_a_text = isolated_node.get_text_representer()
-            node_b_text = focus_node.get_text_representer()
-
-            result = self.client.get_forced_connectivity_edge_label(
-                node_a=node_a_text,
-                node_b=node_b_text,
-                story_context=story_context,
-                current_sentence=current_sentence,
-                persona=self.persona,
-            )
-
-            edge_label = result.get("label", "relates to")
-            explanation = result.get("explanation", "")
-
-            logging.debug(
-                "[Connectivity] Creating forced edge: %s --%s--> %s (reason: %s)",
-                node_a_text,
-                edge_label,
-                node_b_text,
-                explanation,
-            )
-
-            # Step 4: Normalize and create the edge through centralized path
-            edge_label = self._normalize_edge_label(edge_label)
-            if not edge_label:
-                logging.warning(
-                    "[Connectivity] Edge label rejected after normalization: %s --%s--> %s",
-                    node_a_text,
-                    result.get("label", "relates to"),
-                    node_b_text,
-                )
-                continue
-
-            # Forced connectivity edges must be created with correct ontology
-            edge = self._add_edge(
-                isolated_node,
-                focus_node,
-                edge_label,
-                self.edge_visibility,
-                created_at_sentence=self._current_sentence_index,
-                relation_class=RelationClass.CONNECTIVE,
-                justification=Justification.CONNECTIVE,
-                bypass_attachment_constraint=True,
-            )
-            if edge is not None:
-                # Mark as forced connectivity edge (guards will pass now)
-                edge.mark_as_forced_connection()
-                forced_edges.append(edge)
-
-                # Record in graphs for auditing
-                self._record_edge_in_graphs(edge, self._current_sentence_index)
-
-                logging.info(
-                    "[Connectivity] Created forced edge: %s --%s--> %s",
-                    node_a_text,
-                    edge_label,
-                    node_b_text,
-                )
-            else:
-                logging.warning(
-                    "[Connectivity] Failed to create forced edge: %s --%s--> %s",
-                    node_a_text,
-                    edge_label,
-                    node_b_text,
-                )
-
-        # Verify connectivity after creating forced edges
-        if not self.graph.check_active_connectivity():
-            logging.error(
-                "[Connectivity] Graph STILL disconnected after creating %d forced edges",
-                len(forced_edges),
-            )
-            return []  # Force caller to detect failure
-
-        return forced_edges
 
     def resolve_pronouns(self, text: str) -> str:
         resolved = self.client.resolve_pronouns(text, self.persona)
@@ -2448,10 +2463,21 @@ class AMoCv4:
             # ============================================================
             _previous_graph_state = copy.deepcopy(self.graph)
             _previous_anchor_nodes = set(self._anchor_nodes)
+            _previous_triplet_intro = copy.deepcopy(self._triplet_intro)
+            _previous_per_sentence_view = copy.deepcopy(
+                getattr(self, "_per_sentence_view", None)
+            )
+            _previous_recently_deactivated = copy.deepcopy(
+                getattr(self, "_recently_deactivated_nodes_for_inference", None)
+            )
+            _previous_prev_active_nodes = copy.deepcopy(
+                getattr(self, "_prev_active_nodes_for_plot", None)
+            )
 
             # Now mutate
             self.graph.deactivate_all_edges()
             self._current_sentence_text = original_text
+
             # ------------------------------------------------------------------
             # HARD RESET: Explicit sentence scoping
             # Explicitness must reflect ONLY the current dependency parse
@@ -2757,6 +2783,13 @@ class AMoCv4:
                         )
                         continue
 
+                    if (
+                        isinstance(relationship, (list, tuple))
+                        and len(relationship) == 4
+                    ):
+                        subj, rel, _, obj = relationship
+                        relationship = (subj, rel, obj)
+
                     # Must have exactly 3 elements
                     if len(relationship) != 3:
                         logging.error(
@@ -2947,6 +2980,7 @@ class AMoCv4:
                             else ""
                         ),
                         current_sentence=resolved_text,
+                        mode="active",
                     )
 
                     if forced_edges:
@@ -3023,6 +3057,7 @@ class AMoCv4:
                             else ""
                         ),
                         current_sentence=resolved_text,
+                        mode="active",
                     )
                     if forced_edges:
                         logging.info(
@@ -3355,72 +3390,346 @@ class AMoCv4:
             self._prev_active_nodes_for_plot = current_active_nodes
 
             # ============================================================
-            # HARD STRUCTURAL POST-CONDITIONS (MUST HOLD OR ROLLBACK)
+            # HARD POST-CONDITIONS (ACTIVE + STRUCTURAL)
             # ============================================================
-            def _sentence_state_valid() -> bool:
-                """
-                Validate per-sentence projection invariants.
+            def _is_active_connected():
+                active_edges = [e for e in self.graph.edges if e.active]
+                if not active_edges:
+                    return True
 
-                Invariants:
-                1. Projection must exist.
-                2. Projection must be connected.
-                3. All explicit nodes must be visible.
-                4. All explicit nodes must have degree >= 1.
-                5. If explicit nodes exist, projection must contain at least one edge.
-                """
+                G = nx.Graph()
+                for e in active_edges:
+                    G.add_edge(e.source_node, e.dest_node)
 
-                # Projection must exist
-                if not hasattr(self, "_per_sentence_view"):
+                return nx.is_connected(G)
+
+            def _is_cumulative_connected():
+                if not self.graph.edges:
+                    return True
+
+                G = nx.Graph()
+                for e in self.graph.edges:
+                    G.add_edge(e.source_node, e.dest_node)
+
+                return nx.is_connected(G)
+
+            def _sentence_state_valid():
+
+                if not _is_active_connected():
                     return False
 
-                view = self._per_sentence_view
-                if view is None:
+                if not _is_cumulative_connected():
                     return False
 
-                explicit_set = set(self._explicit_nodes_current_sentence)
-
-                # 1. Projection must be connected
-                if not view.is_connected:
+                # Explicit nodes must appear
+                view = getattr(self, "_per_sentence_view", None)
+                if not view:
                     return False
 
-                # 2. Explicit nodes must be visible
-                for node in explicit_set:
+                for node in self._explicit_nodes_current_sentence:
                     if node not in view.active_nodes:
                         return False
 
-                # 3. Explicit nodes must have degree >= 1
-                for node in explicit_set:
-                    degree = sum(
-                        1
-                        for e in view.active_edges
-                        if e.source_node == node or e.dest_node == node
-                    )
-                    if degree == 0:
-                        return False
-
-                # 4. No empty projection when explicit nodes exist
-                if explicit_set and len(view.active_edges) == 0:
-                    return False
-
                 return True
 
-            rollback_needed = not _sentence_state_valid()
+            # ============================================================
+            # PRE-VALIDATION CONNECTIVITY ENFORCEMENT
+            # ============================================================
+            rollback_needed = False
 
-            # Projection must also remain connected
-            if (
-                not rollback_needed
-                and hasattr(self, "_per_sentence_view")
-                and self._per_sentence_view is not None
-                and not self._per_sentence_view.is_connected
-            ):
-                rollback_needed = True
+            # ---------- ACTIVE ----------
+            if not _is_active_connected():
+
+                repair_success = False
+
+                # LLM attempts (2)
+                for _ in range(2):
+                    self._create_forced_connectivity_edges(
+                        story_context=(
+                            " ".join(prev_sentences[:-1])
+                            if len(prev_sentences) > 1
+                            else ""
+                        ),
+                        current_sentence=self._current_sentence_text,
+                        mode="active",
+                    )
+                    if _is_active_connected():
+                        repair_success = True
+                        break
+
+                # Deterministic fallback
+                if not repair_success:
+
+                    G = nx.Graph()
+
+                    # IMPORTANT: include active nodes even if degree 0
+                    active_nodes = self._get_nodes_with_active_edges()
+                    for node in active_nodes:
+                        G.add_node(node)
+
+                    for e in self.graph.edges:
+                        if e.active:
+                            G.add_edge(e.source_node, e.dest_node)
+
+                    components = list(nx.connected_components(G))
+
+                    if len(components) > 1:
+
+                        components = sorted(components, key=len, reverse=True)
+                        backbone = set(components[0])
+
+                        for comp in components[1:]:
+
+                            node_a = next(iter(backbone))
+                            node_b = next(iter(comp))
+
+                            edge = self.graph.add_edge(
+                                node_a,
+                                node_b,
+                                "relates_to",
+                                self.edge_visibility,
+                                relation_class=RelationClass.CONNECTIVE,
+                                justification=Justification.CONNECTIVE,
+                                persona_influenced=False,
+                                inferred=False,
+                            )
+
+                            if edge:
+                                edge.active = True
+                                backbone.update(comp)
+
+                    repair_success = _is_active_connected()
+
+                if not repair_success:
+                    rollback_needed = True
+
+            # ---------- CUMULATIVE ----------
+            if not rollback_needed and not _is_cumulative_connected():
+
+                repair_success = False
+
+                # LLM attempts (2)
+                for _ in range(2):
+                    self._create_forced_connectivity_edges(
+                        story_context=(
+                            " ".join(prev_sentences[:-1])
+                            if len(prev_sentences) > 1
+                            else ""
+                        ),
+                        current_sentence=self._current_sentence_text,
+                        mode="cumulative",
+                    )
+                    if _is_cumulative_connected():
+                        repair_success = True
+                        break
+
+                # Deterministic fallback
+                if not repair_success:
+
+                    logging.info(
+                        "[Connectivity] Applying deterministic cumulative bridge."
+                    )
+
+                    G_full = nx.Graph()
+
+                    # Include ALL nodes
+                    for node in self.graph.nodes:
+                        G_full.add_node(node)
+
+                    for e in self.graph.edges:
+                        G_full.add_edge(e.source_node, e.dest_node)
+
+                    components = list(nx.connected_components(G_full))
+
+                    if len(components) > 1:
+
+                        components = sorted(components, key=len, reverse=True)
+                        backbone = set(components[0])
+
+                        for comp in components[1:]:
+
+                            node_a = next(iter(backbone))
+                            node_b = next(iter(comp))
+
+                            edge = self.graph.add_edge(
+                                node_a,
+                                node_b,
+                                "relates_to",
+                                self.edge_visibility,
+                                relation_class=RelationClass.CONNECTIVE,
+                                justification=Justification.CONNECTIVE,
+                            )
+
+                            if edge:
+                                edge.active = True
+                                backbone.update(comp)
+
+                    repair_success = _is_cumulative_connected()
+
+                if not repair_success:
+                    rollback_needed = True
+
+            # ============================================================
+            # PATCH 5 — ENFORCE NON-DANGLING ACTIVE NODES
+            # ============================================================
+
+            if not rollback_needed:
+
+                view = getattr(self, "_per_sentence_view", None)
+
+                if view is not None:
+
+                    active_nodes = set(view.explicit_nodes) | set(view.carryover_nodes)
+
+                    dangling_nodes = []
+
+                    for node in active_nodes:
+                        has_edge = any(
+                            e.source_node == node or e.dest_node == node
+                            for e in view.active_edges
+                        )
+                        if not has_edge:
+                            dangling_nodes.append(node)
+
+                    for node in dangling_nodes:
+
+                        repair_success = False
+
+                        # Choose anchor with highest degree
+                        degree_sorted = sorted(
+                            view.active_nodes,
+                            key=lambda n: sum(
+                                1
+                                for e in view.active_edges
+                                if e.source_node == n or e.dest_node == n
+                            ),
+                            reverse=True,
+                        )
+
+                        anchor = None
+                        for candidate in degree_sorted:
+                            if candidate != node:
+                                anchor = candidate
+                                break
+
+                        if anchor is None:
+                            rollback_needed = True
+                            break
+
+                        # LLM attempts (2)
+                        for _ in range(2):
+
+                            result = self.client.get_forced_connectivity_edge_label(
+                                node_a=node.get_text_representer(),
+                                node_b=anchor.get_text_representer(),
+                                story_context=(
+                                    " ".join(prev_sentences[:-1])
+                                    if len(prev_sentences) > 1
+                                    else ""
+                                ),
+                                current_sentence=self._current_sentence_text,
+                                persona=self.persona,
+                            )
+
+                            relation = (
+                                result.get("label")
+                                if isinstance(result, dict)
+                                else result
+                            )
+                            if not relation:
+                                continue
+
+                            relation = (
+                                self._normalize_edge_label(relation) or "relates_to"
+                            )
+
+                            edge = self.graph.add_edge(
+                                node,
+                                anchor,
+                                relation,
+                                self.edge_visibility,
+                                relation_class=RelationClass.CONNECTIVE,
+                                justification=Justification.CONNECTIVE,
+                                inferred=True,
+                            )
+
+                            if edge:
+                                edge.active = True
+                                repair_success = True
+                                break
+
+                        # Deterministic fallback
+                        if not repair_success:
+
+                            edge = self.graph.add_edge(
+                                node,
+                                anchor,
+                                "relates_to",
+                                self.edge_visibility,
+                                relation_class=RelationClass.CONNECTIVE,
+                                justification=Justification.CONNECTIVE,
+                                inferred=True,
+                            )
+
+                            if edge:
+                                edge.active = True
+                                repair_success = True
+
+                        if not repair_success:
+                            rollback_needed = True
+                            break
+
+            # ---------- FINAL VALIDATION ----------
+            if not rollback_needed:
+                rollback_needed = not _sentence_state_valid()
 
             if rollback_needed:
                 logging.error(
                     "[ROLLBACK] Sentence invalid — reverting to previous state."
                 )
+
+                # ------------------------------------------------------------
+                # PATCH 7 — SAVE PREVIOUS PLOT STATE BEFORE ROLLBACK
+                # ------------------------------------------------------------
+                if plot_after_each_sentence and hasattr(
+                    self, "_previous_active_triplets"
+                ):
+
+                    try:
+                        self._plot_graph_snapshot(
+                            sentence_index=i,
+                            sentence_text=original_text,
+                            output_dir=graphs_output_dir,
+                            highlight_nodes=highlight_nodes,
+                            inactive_nodes=inactive_nodes_for_plot,
+                            explicit_nodes=[
+                                n.get_text_representer()
+                                for n in self._explicit_nodes_current_sentence
+                            ],
+                            salient_nodes=[],
+                            only_active=True,
+                            largest_component_only=largest_component_only,
+                            mode="sentence_active",
+                            triplets_override=self._previous_active_triplets,
+                            active_edges=set(),
+                            active_triplets_for_overlay=self._previous_active_triplets,
+                            property_nodes=[],
+                        )
+                    except Exception as e:
+                        logging.warning(
+                            f"[RollbackPlot] Failed to save previous plot: {e}"
+                        )
+
                 self.graph = _previous_graph_state
                 self._anchor_nodes = _previous_anchor_nodes
+                self._triplet_intro = _previous_triplet_intro
+                self._per_sentence_view = _previous_per_sentence_view
+                self._recently_deactivated_nodes_for_inference = (
+                    _previous_recently_deactivated
+                )
+                self._prev_active_nodes_for_plot = _previous_prev_active_nodes
+                if plot_after_each_sentence and _previous_per_sentence_view is not None:
+                    self._per_sentence_view = _previous_per_sentence_view
                 continue
 
             if plot_after_each_sentence:
