@@ -681,43 +681,37 @@ class AMoCv4:
             self._per_sentence_view = None
             return None
 
-        # ------------------------------------------------------------
-        #  GUARANTEE: explicit nodes are admitted into cumulative graph
-        # ------------------------------------------------------------
         admitted_nodes = []
 
         for node in explicit_nodes:
-            if not hasattr(node, "get_text_representer"):
+            if node is None:
                 continue
 
-            lemma = node.get_text_representer().lower().strip()
+            label = node.get_text_representer()
+            if not label:
+                continue
+
+            lemma = label.lower().strip()
 
             if lemma not in self.story_lemmas:
                 continue
 
-            admitted = self._admit_node(
-                lemma=lemma,
-                node_type=NodeType.CONCEPT,
-                provenance="STORY_EXPLICIT",
-                sent=None,
-            )
+            # Canonical lookup using original node type
+            canonical_node = self.graph.get_node(node.lemmas)
 
-            if admitted:
-                node_obj = self.graph.add_or_get_node(
-                    [lemma],
-                    lemma,
-                    NodeType.CONCEPT,
-                    NodeSource.TEXT_BASED,
-                    provenance=NodeProvenance.STORY_TEXT,
+            if canonical_node is None:
+                canonical_node = self.graph.add_or_get_node(
+                    node.lemmas,
+                    label,
+                    node.node_type,  # preserve type
+                    node.source,
+                    provenance=node.provenance,
                     origin_sentence=sentence_index,
                 )
 
-                if node_obj:
-                    admitted_nodes.append(node_obj)
+            if canonical_node:
+                admitted_nodes.append(canonical_node)
 
-        # ------------------------------------------------------------
-        # Build per-sentence graph FROM cumulative memory
-        # ------------------------------------------------------------
         self._per_sentence_view = build_per_sentence_graph(
             cumulative_graph=self.graph,
             explicit_nodes=admitted_nodes,
@@ -1361,11 +1355,7 @@ class AMoCv4:
     # TASK 2: FORCED CONNECTIVITY EDGE CREATION
     # ==========================================================================
     def _create_forced_connectivity_edges(
-        self,
-        story_context: str = None,
-        current_sentence: str = None,
-        explicit_nodes=None,
-        components=None,
+        self, story_context: str = None, current_sentence: str = None
     ) -> List[Edge]:
         # Step 1: Check if graph is still disconnected
         if self.graph.check_active_connectivity():
@@ -2502,9 +2492,13 @@ class AMoCv4:
                 # STRICT EXPLICIT REBUILD (authoritative for this sentence)
                 # ------------------------------------------------------------------
                 self._explicit_nodes_current_sentence = {
-                    node
-                    for node in current_sentence_text_based_nodes
-                    if node.is_explicit_in_sentence(self._current_sentence_index)
+                    n
+                    for n in current_sentence_text_based_nodes
+                    if (
+                        n.node_type in {NodeType.CONCEPT, NodeType.PROPERTY}
+                        and n.is_explicit_in_sentence(self._current_sentence_index)
+                        and any(lemma in current_sentence_lemmas for lemma in n.lemmas)
+                    )
                 }
 
                 # RULE 1: explicit nodes must exist
@@ -2612,14 +2606,18 @@ class AMoCv4:
                 # ------------------------------------------------------------------
                 self._explicit_nodes_current_sentence = {
                     n
-                    for n in self._explicit_nodes_current_sentence
-                    if any(lemma in current_sentence_lemmas for lemma in n.lemmas)
+                    for n in current_sentence_text_based_nodes
+                    if (
+                        n.node_type in {NodeType.CONCEPT, NodeType.PROPERTY}
+                        and n.is_explicit_in_sentence(self._current_sentence_index)
+                        and any(lemma in current_sentence_lemmas for lemma in n.lemmas)
+                    )
                 }
 
-                # RULE 1: explicit nodes must exist
-                for node in self._explicit_nodes_current_sentence:
-                    if node not in self.graph.nodes:
-                        self.graph.nodes.add(node)
+                # # RULE 1: explicit nodes must exist
+                # for node in self._explicit_nodes_current_sentence:
+                #     if node not in self.graph.nodes:
+                #         self.graph.nodes.add(node)
 
                 # META_LEMMAS = {"subject", "object", "entity", "concept", "property"}
 
@@ -2930,6 +2928,28 @@ class AMoCv4:
                     " ".join(prev_sentences),
                     added_edges,
                 )
+                # ============================================================
+                # HARD CONNECTIVITY ENFORCEMENT (GRAPH-LEVEL, NOT PLOT-LEVEL)
+                # Must run BEFORE projection, view building, and plotting
+                # ============================================================
+
+                if not self.graph.check_active_connectivity():
+
+                    forced_edges = self._create_forced_connectivity_edges(
+                        story_context=(
+                            " ".join(prev_sentences[:-1])
+                            if len(prev_sentences) > 1
+                            else ""
+                        ),
+                        current_sentence=resolved_text,
+                    )
+
+                    if forced_edges:
+                        logging.info(
+                            "[Connectivity] Created %d forced connectivity edges (structural repair).",
+                            len(forced_edges),
+                        )
+                        added_edges.extend(forced_edges)
 
                 # Update anchor nodes to include current explicit nodes and
                 # nodes with active edges to maintain connectivity across sentences
@@ -3006,155 +3026,6 @@ class AMoCv4:
                         )
                         added_edges.extend(forced_edges)
 
-                # ============================================================
-                # SEMANTIC DENSITY ENFORCEMENT
-                # Every explicit node must appear in ≥1 edge introduced THIS sentence
-                # ============================================================
-
-                explicit_nodes = set(self._explicit_nodes_current_sentence)
-
-                active_edges_this_sentence = [
-                    e
-                    for e in self.graph.edges
-                    if getattr(e, "introduced_at", None) == self._current_sentence_index
-                ]
-
-                covered_nodes = set()
-                for e in active_edges_this_sentence:
-                    covered_nodes.add(e.source_node)
-                    covered_nodes.add(e.dest_node)
-
-                uncovered = explicit_nodes - covered_nodes
-
-                if uncovered:
-                    logging.info(
-                        "[SemanticDensity] %d explicit nodes uncovered — triggering LLM expansion",
-                        len(uncovered),
-                    )
-
-                    forced_edges = self._create_forced_connectivity_edges(
-                        explicit_nodes=uncovered,
-                        components=[set(self.graph.nodes)],
-                    )
-
-                    added_edges.extend(forced_edges)
-
-                # ============================================================
-                # CONNECTIVITY ENFORCEMENT (LLM-ONLY, NO STRUCTURAL BRIDGES)
-                # ============================================================
-                # ============================================================
-                # CONNECTIVITY ENFORCEMENT (LLM ONLY)
-                # ============================================================
-
-                # Ensure explicit nodes exist
-                for node in self._explicit_nodes_current_sentence:
-                    if node not in self.graph.nodes:
-                        self.graph.nodes.add(node)
-
-                # Build graph
-                G_nx = nx.Graph()
-                for edge in self.graph.edges:
-                    G_nx.add_edge(edge.source_node, edge.dest_node)
-
-                explicit_nodes = set(self._explicit_nodes_current_sentence)
-
-                # 1️⃣ Component-level enforcement
-                components = list(nx.connected_components(G_nx))
-
-                explicit_components = [
-                    comp
-                    for comp in components
-                    if any(node in comp for node in explicit_nodes)
-                ]
-
-                if len(explicit_components) > 1:
-                    logging.info(
-                        "[Connectivity] Explicit components disconnected — LLM repair"
-                    )
-
-                    self._create_forced_connectivity_edges(
-                        explicit_nodes=explicit_nodes,
-                        components=components,
-                    )
-
-                    # rebuild
-                    G_nx = nx.Graph()
-                    for edge in self.graph.edges:
-                        G_nx.add_edge(edge.source_node, edge.dest_node)
-
-                # 2️⃣ Degree-zero enforcement (ZERO tolerance)
-                isolated_explicit = [
-                    node
-                    for node in explicit_nodes
-                    if node not in G_nx.nodes or G_nx.degree(node) == 0
-                ]
-
-                if isolated_explicit:
-                    logging.info("[Connectivity] Isolated explicit nodes — LLM repair")
-
-                    self._create_forced_connectivity_edges(
-                        explicit_nodes=set(isolated_explicit),
-                        components=list(nx.connected_components(G_nx)),
-                    )
-
-                # Build connectivity graph
-                # ============================================================
-                # ZERO TOLERANCE: Explicit nodes must have degree > 0
-                # ============================================================
-
-                # Rebuild graph (ensure latest state)
-                G_nx = nx.Graph()
-                for edge in self.graph.edges:
-                    G_nx.add_edge(edge.source_node, edge.dest_node)
-
-                isolated_explicit = [
-                    node
-                    for node in self._explicit_nodes_current_sentence
-                    if node not in G_nx.nodes or G_nx.degree(node) == 0
-                ]
-
-                if isolated_explicit:
-                    logging.info(
-                        "[Connectivity] %d isolated explicit nodes — forcing LLM repair",
-                        len(isolated_explicit),
-                    )
-
-                    self._create_forced_connectivity_edges(
-                        explicit_nodes=set(isolated_explicit),
-                        components=list(nx.connected_components(G_nx)),
-                    )
-
-                    # Final rebuild after repair
-                    G_nx = nx.Graph()
-                    for edge in self.graph.edges:
-                        G_nx.add_edge(edge.source_node, edge.dest_node)
-
-                components = list(nx.connected_components(G_nx))
-
-                explicit_nodes = set(self._explicit_nodes_current_sentence)
-
-                # Identify components that contain explicit nodes
-                explicit_components = [
-                    comp
-                    for comp in components
-                    if any(node in comp for node in explicit_nodes)
-                ]
-
-                # If explicit nodes span multiple components → force LLM edge
-                if len(explicit_components) > 1:
-                    logging.info(
-                        "[Connectivity] Explicit components disconnected — triggering LLM repair"
-                    )
-
-                    self._create_forced_connectivity_edges(
-                        explicit_nodes=explicit_nodes,
-                        components=components,
-                    )
-
-                    # Rebuild graph after LLM repair
-                    G_nx = nx.Graph()
-                    for edge in self.graph.edges:
-                        G_nx.add_edge(edge.source_node, edge.dest_node)
                 # ============================================================
                 # GUARANTEE: Every explicit node must have at least one active edge
                 # If not, invoke LLM to complete missing relation
@@ -3481,12 +3352,13 @@ class AMoCv4:
             if plot_after_each_sentence:
                 # Active (salience) view - use per-sentence view for clean isolation
                 # This guarantees only edges with BOTH endpoints active are shown
-                active_nodes = (
-                    set(self._per_sentence_view.explicit_nodes)
-                    | set(self._per_sentence_view.carryover_nodes)
-                    if self._per_sentence_view is not None
-                    else None
-                )
+                if self._per_sentence_view is not None:
+                    active_nodes = set(self._per_sentence_view.explicit_nodes) | set(
+                        self._per_sentence_view.carryover_nodes
+                    )
+
+                else:
+                    active_nodes = None
 
                 explicit_nodes_for_plot = [
                     node.get_text_representer()
@@ -3494,20 +3366,19 @@ class AMoCv4:
                     if node.get_text_representer()
                 ]
 
-                active_triplets = self._reconstruct_semantic_triplets(
-                    only_active=True,
-                    restrict_nodes=active_nodes,
-                )
-
-                # ------------------------------------------------------------
-                # HARD GUARANTEE: Explicit PROPERTY nodes must always plot
-                # ------------------------------------------------------------
-                for node in self._explicit_nodes_current_sentence:
-                    if node.node_type == NodeType.PROPERTY:
-                        label = node.get_text_representer()
-                        if label and all(label not in t for t in active_triplets):
-                            # inject isolated property node
-                            active_triplets.append(("", "", label))
+                if self._per_sentence_view is not None:
+                    active_triplets = [
+                        (
+                            e.source_node.get_text_representer(),
+                            e.label,
+                            e.dest_node.get_text_representer(),
+                        )
+                        for e in self._per_sentence_view.active_edges
+                    ]
+                else:
+                    active_triplets = self._reconstruct_semantic_triplets(
+                        only_active=True,
+                    )
 
                 # ============================================================
                 # PROJECTION CONTINUITY + EXPLICIT FALLBACK
@@ -3541,15 +3412,23 @@ class AMoCv4:
 
                 # AMoCv4 surface-relation format: edges ARE the semantic triplets
                 # Just collect active edge pairs directly
-                snapshot_edges = [e for e in self.graph.edges if e.active]
-
-                active_edge_pairs = {
-                    (
-                        edge.source_node.get_text_representer(),
-                        edge.dest_node.get_text_representer(),
-                    )
-                    for edge in snapshot_edges
-                }
+                if self._per_sentence_view is not None:
+                    active_edge_pairs = {
+                        (
+                            e.source_node.get_text_representer(),
+                            e.dest_node.get_text_representer(),
+                        )
+                        for e in self._per_sentence_view.active_edges
+                    }
+                else:
+                    snapshot_edges = [e for e in self.graph.edges if e.active]
+                    active_edge_pairs = {
+                        (
+                            edge.source_node.get_text_representer(),
+                            edge.dest_node.get_text_representer(),
+                        )
+                        for edge in snapshot_edges
+                    }
 
                 # ==========================================================================
                 # BUG FIX: Use original_text for plot titles, NOT sent.text
@@ -4181,15 +4060,34 @@ class AMoCv4:
                 and getattr(obj_node_existing, "visibility_score", 0) > 0
             )
 
-            if not self._passes_attachment_constraint(
+            active_nodes_set = set(self._get_nodes_with_active_edges())
+
+            attachment_ok = self._passes_attachment_constraint(
                 relationship[0],
                 relationship[2],
                 current_sentence_text_based_words,
                 current_sentence_text_based_nodes,
                 list(self.graph.nodes),
                 self._get_nodes_with_active_edges(),
-            ):
-                continue
+            )
+
+            # SAFE RELAXATION:
+            # Allow inference if at least one endpoint is already active
+            if not attachment_ok:
+
+                existing_source = self.graph.get_node(
+                    get_concept_lemmas(self.spacy_nlp, relationship[0])
+                )
+                existing_dest = self.graph.get_node(
+                    get_concept_lemmas(self.spacy_nlp, relationship[2])
+                )
+
+                source_active = existing_source in active_nodes_set
+                dest_active = existing_dest in active_nodes_set
+
+                if not (source_active or dest_active):
+                    continue
+
             subj, subj_type = self._canonicalize_and_classify_node_text(relationship[0])
             obj, obj_type = self._canonicalize_and_classify_node_text(relationship[2])
             if subj_type is None or obj_type is None:
@@ -4239,12 +4137,17 @@ class AMoCv4:
                 )
 
             if dest_node is None:
-                # PROVENANCE GATE: Validate LLM-inferred nodes against story text
-                # BOOTSTRAP: allow if source_node already exists (one endpoint grounded)
+                allow_bootstrap = source_node is not None and (
+                    source_node in self._explicit_nodes_current_sentence
+                    or source_node in self._get_nodes_with_active_edges()
+                )
+
                 if not self._validate_node_provenance(
-                    obj, allow_bootstrap=(source_node is not None)
+                    obj,
+                    allow_bootstrap=allow_bootstrap,
                 ):
                     continue
+
                 dest_node = self.graph.add_or_get_node(
                     get_concept_lemmas(self.spacy_nlp, obj),
                     obj,
