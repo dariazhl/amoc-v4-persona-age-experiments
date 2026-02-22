@@ -2077,8 +2077,7 @@ class AMoCv4:
             return None
         token = next((t for t in doc if getattr(t, "is_alpha", False)), None) or doc[0]
         lemma = (getattr(token, "lemma_", "") or "").lower()
-        if lemma in self.spacy_nlp.Defaults.stop_words:
-            return None
+
         if token.pos_ in {"NOUN", "PROPN"}:
             return NodeType.CONCEPT
         if token.pos_ == "ADJ":
@@ -2528,11 +2527,7 @@ class AMoCv4:
                 self._explicit_nodes_current_sentence = {
                     n
                     for n in current_sentence_text_based_nodes
-                    if (
-                        n.node_type in {NodeType.CONCEPT, NodeType.PROPERTY}
-                        and n.is_explicit_in_sentence(self._current_sentence_index)
-                        and any(lemma in current_sentence_lemmas for lemma in n.lemmas)
-                    )
+                    if n.node_type in {NodeType.CONCEPT, NodeType.PROPERTY}
                 }
 
                 # RULE 1: explicit nodes must exist
@@ -2638,11 +2633,7 @@ class AMoCv4:
                 self._explicit_nodes_current_sentence = {
                     n
                     for n in current_sentence_text_based_nodes
-                    if (
-                        n.node_type in {NodeType.CONCEPT, NodeType.PROPERTY}
-                        and n.is_explicit_in_sentence(self._current_sentence_index)
-                        and any(lemma in current_sentence_lemmas for lemma in n.lemmas)
-                    )
+                    if n.node_type in {NodeType.CONCEPT, NodeType.PROPERTY}
                 }
 
                 # # RULE 1: explicit nodes must exist
@@ -2966,29 +2957,29 @@ class AMoCv4:
                     " ".join(prev_sentences),
                     added_edges,
                 )
-                # ============================================================
-                # HARD CONNECTIVITY ENFORCEMENT (GRAPH-LEVEL, NOT PLOT-LEVEL)
-                # Must run BEFORE projection, view building, and plotting
-                # ============================================================
+                # # ============================================================
+                # # HARD CONNECTIVITY ENFORCEMENT (GRAPH-LEVEL, NOT PLOT-LEVEL)
+                # # Must run BEFORE projection, view building, and plotting
+                # # ============================================================
 
-                if not self.graph.check_active_connectivity():
+                # if not self.graph.check_active_connectivity():
 
-                    forced_edges = self._create_forced_connectivity_edges(
-                        story_context=(
-                            " ".join(prev_sentences[:-1])
-                            if len(prev_sentences) > 1
-                            else ""
-                        ),
-                        current_sentence=resolved_text,
-                        mode="active",
-                    )
+                #     forced_edges = self._create_forced_connectivity_edges(
+                #         story_context=(
+                #             " ".join(prev_sentences[:-1])
+                #             if len(prev_sentences) > 1
+                #             else ""
+                #         ),
+                #         current_sentence=resolved_text,
+                #         mode="active",
+                #     )
 
-                    if forced_edges:
-                        logging.info(
-                            "[Connectivity] Created %d forced connectivity edges (structural repair).",
-                            len(forced_edges),
-                        )
-                        added_edges.extend(forced_edges)
+                #     if forced_edges:
+                #         logging.info(
+                #             "[Connectivity] Created %d forced connectivity edges (structural repair).",
+                #             len(forced_edges),
+                #         )
+                #         added_edges.extend(forced_edges)
 
                 # Update anchor nodes to include current explicit nodes and
                 # nodes with active edges to maintain connectivity across sentences
@@ -3049,22 +3040,22 @@ class AMoCv4:
                 # If ensure_active_connectivity() couldn't fully connect the graph
                 # (no existing edges could bridge components), trigger secondary LLM call
                 # to create minimal forced connectivity edges.
-                if not self.graph.check_active_connectivity():
-                    forced_edges = self._create_forced_connectivity_edges(
-                        story_context=(
-                            " ".join(prev_sentences[:-1])
-                            if len(prev_sentences) > 1
-                            else ""
-                        ),
-                        current_sentence=resolved_text,
-                        mode="active",
-                    )
-                    if forced_edges:
-                        logging.info(
-                            "[Connectivity] Created %d forced connectivity edges via secondary LLM call",
-                            len(forced_edges),
-                        )
-                        added_edges.extend(forced_edges)
+                # if not self.graph.check_active_connectivity():
+                #     forced_edges = self._create_forced_connectivity_edges(
+                #         story_context=(
+                #             " ".join(prev_sentences[:-1])
+                #             if len(prev_sentences) > 1
+                #             else ""
+                #         ),
+                #         current_sentence=resolved_text,
+                #         mode="active",
+                #     )
+                #     if forced_edges:
+                #         logging.info(
+                #             "[Connectivity] Created %d forced connectivity edges via secondary LLM call",
+                #             len(forced_edges),
+                #         )
+                #         added_edges.extend(forced_edges)
 
                 # ============================================================
                 # GUARANTEE: Every explicit node must have at least one active edge
@@ -3394,22 +3385,42 @@ class AMoCv4:
             # ============================================================
             def _is_active_connected():
                 active_edges = [e for e in self.graph.edges if e.active]
-                if not active_edges:
-                    return True
 
                 G = nx.Graph()
+
+                # Nodes with active edges
+                active_nodes = self._get_nodes_with_active_edges()
+                for node in active_nodes:
+                    G.add_node(node)
+
+                # CRITICAL FIX:
+                # Also include explicit nodes even if they have zero active degree
+                for node in getattr(self, "_explicit_nodes_current_sentence", []):
+                    G.add_node(node)
+
                 for e in active_edges:
                     G.add_edge(e.source_node, e.dest_node)
+
+                if G.number_of_nodes() <= 1:
+                    return True
 
                 return nx.is_connected(G)
 
             def _is_cumulative_connected():
-                if not self.graph.edges:
+                if not self.graph.nodes:
                     return True
 
                 G = nx.Graph()
+
+                # IMPORTANT: include all nodes, even isolated ones
+                for node in self.graph.nodes:
+                    G.add_node(node)
+
                 for e in self.graph.edges:
                     G.add_edge(e.source_node, e.dest_node)
+
+                if G.number_of_nodes() <= 1:
+                    return True
 
                 return nx.is_connected(G)
 
@@ -3500,6 +3511,41 @@ class AMoCv4:
 
                     repair_success = _is_active_connected()
 
+                # ------------------------------------------------------------
+                # GUARANTEE: Explicit nodes belong to active backbone
+                # ------------------------------------------------------------
+                if repair_success:
+
+                    active_edges = [e for e in self.graph.edges if e.active]
+
+                    G_active = nx.Graph()
+                    for e in active_edges:
+                        G_active.add_edge(e.source_node, e.dest_node)
+
+                    if G_active.number_of_nodes() > 0:
+
+                        components = list(nx.connected_components(G_active))
+                        backbone = max(components, key=len)
+
+                        for node in self._explicit_nodes_current_sentence:
+
+                            if node not in backbone:
+
+                                anchor = next(iter(backbone))
+
+                                edge = self.graph.add_edge(
+                                    anchor,
+                                    node,
+                                    "relates_to",
+                                    self.edge_visibility,
+                                    relation_class=RelationClass.CONNECTIVE,
+                                    justification=Justification.CONNECTIVE,
+                                )
+
+                                if edge:
+                                    edge.active = True
+                                    backbone.add(node)
+
                 if not repair_success:
                     rollback_needed = True
 
@@ -3561,7 +3607,8 @@ class AMoCv4:
                             )
 
                             if edge:
-                                edge.active = True
+                                # Do NOT activate cumulative structural bridges
+                                edge.structural = True
                                 backbone.update(comp)
 
                     repair_success = _is_cumulative_connected()
@@ -4876,9 +4923,6 @@ class AMoCv4:
                 lemma = word.lemma_.lower().strip()
 
                 if not lemma:
-                    continue
-
-                if lemma in self.spacy_nlp.Defaults.stop_words:
                     continue
 
                 # ------------------------------------------

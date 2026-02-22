@@ -416,6 +416,10 @@ class Graph:
         # ==========================================================================
         # Create edge regardless of ontology violations.
         # Violations are recorded as metadata, NOT used to block creation.
+        if relation_class == RelationClass.CONNECTIVE:
+            inferred = True
+            persona_influenced = False
+            skip_budget = True
 
         edge = Edge(
             source_node,
