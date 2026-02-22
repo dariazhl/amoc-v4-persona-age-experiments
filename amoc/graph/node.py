@@ -116,6 +116,9 @@ class Node:
         if self.node_type == NodeType.PROPERTY and self.node_role is None:
             self.node_role = NodeRole.PROPERTY
 
+        self.activation_score: int = 0
+        self.active: bool = False
+
     def __eq__(self, other: "Node") -> bool:
         return self.lemmas == other.lemmas
 

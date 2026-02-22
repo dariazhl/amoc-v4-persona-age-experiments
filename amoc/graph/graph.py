@@ -1306,6 +1306,8 @@ class Graph:
                 if not edge.active:
                     edge.structural = True
                     edge.active = True
+                    edge.asserted_this_sentence = False
+                    edge.reactivated_this_sentence = False
                     # edge.mark_as_reactivated(reset_score=True)
                     promoted_connectors.add(edge)
 
@@ -1444,13 +1446,13 @@ class Graph:
                 # SOFT CHECK: Node lemma not found in story
                 # (This might be OK for inferred nodes, but worth flagging)
                 elif lemma_lower not in story_lemmas:
-                    if node.provenance != NodeProvenance.INFERRED_FROM_STORY:
-                        warnings.append(
-                            f"PROVENANCE WARNING: Node '{node.get_text_representer()}' "
-                            f"contains lemma '{lemma_lower}' not found in story text. "
-                            f"Provenance: {node.provenance}"
-                        )
-
+                    if node.provenance == NodeProvenance.STORY_TEXT:
+                        if any(lemma not in story_lemmas for lemma in node.lemmas):
+                            logging.warning(
+                                "PROVENANCE WARNING: Node '%s' lemma(s) %s not found in story lemma set.",
+                                node.get_text_representer(),
+                                node.lemmas,
+                            )
         return warnings
 
     def remove_edge(self, edge: Edge) -> None:
