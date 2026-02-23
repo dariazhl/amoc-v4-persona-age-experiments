@@ -806,9 +806,9 @@ class AMoCv4:
                 if not edge.active:
                     continue
 
-                # Structural CONNECTIVE edges must NOT affect distance
-                if edge.relation_class == RelationClass.CONNECTIVE:
-                    continue
+                # # Structural CONNECTIVE edges must NOT affect distance
+                # if edge.relation_class == RelationClass.CONNECTIVE:
+                #     continue
 
                 # Ignore edges that are fully faded
                 if edge.visibility_score <= 1:
