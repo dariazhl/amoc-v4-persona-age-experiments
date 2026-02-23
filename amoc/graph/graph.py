@@ -618,11 +618,6 @@ class Graph:
             e.dest_node for e in self.edges
         }
 
-        # NEW: allow inferred nodes to propagate activation
-        inferred_nodes = {
-            n for n in self.nodes if n.node_source == NodeSource.INFERENCE_BASED
-        }
-
         concept_seeds = {
             n
             for n in explicit_nodes
@@ -646,6 +641,9 @@ class Graph:
 
             for edge in node.edges:
                 if edge in visited_edges:
+                    continue
+                # Structural edges do NOT propagate activation
+                if edge.structural or edge.relation_class == RelationClass.CONNECTIVE:
                     continue
                 visited_edges.add(edge)
 
@@ -697,20 +695,18 @@ class Graph:
         candidate_edges.sort(key=lambda x: x[0])
         reactivated: Set[Edge] = set()
 
-        if not candidate_edges:
-            memory_edges = sorted(
-                self.edges,
-                key=lambda e: e.created_at_sentence or 0,
-                reverse=True,
-            )
-            for edge in memory_edges:
-                if edge.visibility_score > 0:
-                    edge.mark_as_reactivated(reset_score=False)
-                    reactivated.add(edge)
-                    break
+        # Sort by shortest distance first (paper-aligned priority)
+        candidate_edges.sort(key=lambda x: x[0])
+
+        reactivated: Set[Edge] = set()
 
         for dist, edge in candidate_edges[: self.MAX_REACTIVATION_COUNT]:
-            edge.mark_as_reactivated(reset_score=True)
+
+            # Paper-aligned reactivation:
+            # - activate edge
+            # - mark as reactivated
+            # - DO NOT fully reset visibility score
+            edge.mark_as_reactivated(reset_score=False)
             reactivated.add(edge)
 
         return reactivated
@@ -1227,6 +1223,7 @@ class Graph:
         # Add active edges
         for edge in active_edges:
             G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
+
         # Check if already connected
         if G_active.number_of_nodes() <= 1 or nx.is_connected(G_active):
             return set()

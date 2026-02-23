@@ -919,14 +919,14 @@ def plot_amoc_triplets(
     if not is_first_layout:
         layout_graph = G
     else:
-        if layout_from_active_only and G_active.number_of_nodes() > 0:
-            layout_graph = G_active.copy()
+        # Always compute layout from full projection graph
+        layout_graph = G.copy()
 
-            # === GUARANTEE: explicit nodes must be plotted ===
-            if explicit_nodes:
-                for node in explicit_nodes:
-                    if node not in layout_graph:
-                        layout_graph.add_node(node)
+        # === GUARANTEE: explicit nodes must be plotted ===
+        if explicit_nodes:
+            for node in explicit_nodes:
+                if node not in layout_graph:
+                    layout_graph.add_node(node)
         else:
             layout_graph = G
 

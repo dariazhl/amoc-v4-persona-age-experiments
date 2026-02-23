@@ -3117,29 +3117,7 @@ class AMoCv4:
             added_edges,
         )
         self._propagate_activation_from_edges()
-        # ============================================================
-        # SOFT SEMANTIC HALO (Non-structural activation boost)
-        # Increases yellow nodes without altering connectivity or decay
-        # ============================================================
 
-        halo_strength = 1  # low amplitude, does not override decay
-        explicit_nodes = self._explicit_nodes_current_sentence
-
-        for edge in self.graph.edges:
-            if not edge.active:
-                continue
-            if edge.relation_class == RelationClass.CONNECTIVE:
-                continue
-
-            if edge.source_node in explicit_nodes:
-                if edge.dest_node.activation_score == 0:
-                    edge.dest_node.activation_score = halo_strength
-                    edge.dest_node.active = True
-
-            if edge.dest_node in explicit_nodes:
-                if edge.source_node.activation_score == 0:
-                    edge.source_node.activation_score = halo_strength
-                    edge.source_node.active = True
         # # ============================================================
         # # HARD CONNECTIVITY ENFORCEMENT (GRAPH-LEVEL, NOT PLOT-LEVEL)
         # # Must run BEFORE projection, view building, and plotting
@@ -3401,8 +3379,6 @@ class AMoCv4:
                 self._triplet_intro = _triplet_intro_snapshot
                 return (nodes_before_sentence, True)  # should_skip_sentence = True
 
-        self._decay_node_activation()
-
         return (nodes_before_sentence, False)
 
     def _apply_global_edge_decay(self):
@@ -3424,9 +3400,9 @@ class AMoCv4:
             if edge.created_at_sentence == self._current_sentence_index:
                 continue
 
-            # Only edges not asserted this sentence decay
-            if edge.structural:
-                continue
+            # # Only edges not asserted this sentence decay
+            # if edge.structural:
+            #     continue
 
             if not edge.asserted_this_sentence and not edge.reactivated_this_sentence:
                 edge.reduce_visibility()
@@ -3469,7 +3445,16 @@ class AMoCv4:
                 nodes_before_sentence,
             )
             if not result[1]:  # Only run decay if not skipping
+                # Paper-aligned decay order:
+                # 1. Decay edge visibility
+                # 2. Decay node activation
                 self._apply_global_edge_decay()
+                self._decay_node_activation()
+                # Re-check connectivity after decay
+                if not self.graph.check_active_connectivity():
+                    if self._enforce_connectivity(prev_sentences):
+                        return (nodes_before_sentence, True)
+
             return result
 
     def _finalize_outputs(self, matrix_suffix: Optional[str]) -> tuple:
@@ -3709,6 +3694,9 @@ class AMoCv4:
 
                         if edge:
                             edge.active = True
+                            edge.structural = True
+                            edge.asserted_this_sentence = False
+                            edge.reactivated_this_sentence = False
                             backbone.update(comp)
 
                 repair_success = self._is_active_connected()
@@ -3756,6 +3744,9 @@ class AMoCv4:
                             if edge:
                                 edge.active = True
                                 backbone.add(node)
+                                edge.structural = True
+                                edge.asserted_this_sentence = False
+                                edge.reactivated_this_sentence = False
 
             repair_success = self._is_active_connected()
 
@@ -4034,41 +4025,113 @@ class AMoCv4:
     def _post_projection_bookkeeping(
         self, sentence_id: int, i: int, newly_inferred_nodes: set, per_sentence_view
     ):
-        # Refresh active projection for this step
+        # ------------------------------------------------------------------
+        # Refresh activation state
+        # ------------------------------------------------------------------
         self._record_sentence_activation(
             sentence_id=sentence_id,
             explicit_nodes=list(self._explicit_nodes_current_sentence),
             newly_inferred_nodes=newly_inferred_nodes,
         )
 
+        # ------------------------------------------------------------------
+        # Compute active nodes from projection
+        # ------------------------------------------------------------------
         current_active_nodes = set(per_sentence_view.explicit_nodes) | set(
             per_sentence_view.carryover_nodes
         )
-        # Connectivity check using per-sentence view (only in strict mode)
+
+        # ------------------------------------------------------------------
+        # HARD PROJECTION INVARIANT
+        # Every active node must have ≥ 1 projection edge
+        # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # HARD PROJECTION INVARIANT
+        # Every active node must have ≥ 1 projection edge
+        # ------------------------------------------------------------------
+
+        # Make mutable copy of projection edges
+        active_edges_mutable = set(per_sentence_view.active_edges)
+        projection_invalid = False
+
+        for node in current_active_nodes:
+
+            has_projection_edge = any(
+                (edge.source_node == node or edge.dest_node == node)
+                for edge in active_edges_mutable
+            )
+
+            if has_projection_edge:
+                continue
+
+            # Reactivate one valid edge connecting to another active node
+            for edge in self.graph.edges:
+
+                other = None
+                if edge.source_node == node:
+                    other = edge.dest_node
+                elif edge.dest_node == node:
+                    other = edge.source_node
+
+                if other is None:
+                    continue
+
+                if other not in current_active_nodes:
+                    continue
+
+                edge.active = True
+                active_edges_mutable.add(edge)
+                projection_invalid = True
+                break
+
+        # If we modified projection edges → replace projection object
+        if projection_invalid:
+
+            self._per_sentence_view = type(per_sentence_view)(
+                explicit_nodes=per_sentence_view.explicit_nodes,
+                carryover_nodes=per_sentence_view.carryover_nodes,
+                active_edges=frozenset(active_edges_mutable),
+                is_connected=per_sentence_view.is_connected,
+                is_empty=per_sentence_view.is_empty,
+            )
+
+            per_sentence_view = self._per_sentence_view
+
+        # ------------------------------------------------------------------
+        # Optional connectivity logging
+        # ------------------------------------------------------------------
         if (
             per_sentence_view is not None
             and not per_sentence_view.is_empty
             and not per_sentence_view.is_connected
         ):
             logging.error(
-                "Per-sentence graph disconnected at sentence %s for persona '%s' "
-                "(this should not happen with strict-attachment-constraint enabled)",
+                "Per-sentence graph disconnected at sentence %s for persona '%s'",
                 sentence_id,
                 self.persona,
             )
 
+        # ------------------------------------------------------------------
+        # Track deactivated nodes (for inference targeting)
+        # ------------------------------------------------------------------
         if i == 0:
             recently_deactivated_nodes: set[Node] = set()
         else:
             appeared = current_active_nodes - self._prev_active_nodes_for_plot
             gone = self._prev_active_nodes_for_plot - current_active_nodes
+
             self._cumulative_deactivated_nodes_for_plot.update(gone)
             self._cumulative_deactivated_nodes_for_plot.difference_update(
                 current_active_nodes
             )
+
             recently_deactivated_nodes = set(gone)
 
+        # ------------------------------------------------------------------
+        # Plot preparation
+        # ------------------------------------------------------------------
         if self._per_sentence_view is not None:
+
             explicit_nodes_for_plot = sorted(
                 filter(
                     None,
@@ -4100,19 +4163,21 @@ class AMoCv4:
             }
 
             active_nodes = set(explicit_nodes_for_plot) | set(salient_nodes_for_plot)
-
             inactive_nodes_for_plot = sorted(all_nodes - active_nodes)
+
         else:
             explicit_nodes_for_plot = []
             salient_nodes_for_plot = []
             inactive_nodes_for_plot = []
 
-        # Only keep the deactivated set for targeted inference when the
-        # attachment constraint is enforced.
+        # ------------------------------------------------------------------
+        # Attachment constraint logic
+        # ------------------------------------------------------------------
         if self.ENFORCE_ATTACHMENT_CONSTRAINT:
             self._recently_deactivated_nodes_for_inference = recently_deactivated_nodes
         else:
             self._recently_deactivated_nodes_for_inference = set()
+
         self._prev_active_nodes_for_plot = current_active_nodes
 
         return (
@@ -4679,15 +4744,18 @@ class AMoCv4:
 
     def _propagate_activation_from_edges(self):
         for edge in self.graph.edges:
-            if edge.active:
-                edge.source_node.activation_score = max(
-                    edge.source_node.activation_score, edge.activation_score
-                )
-                edge.dest_node.activation_score = max(
-                    edge.dest_node.activation_score, edge.activation_score
-                )
-                edge.source_node.active = True
-                edge.dest_node.active = True
+            if not edge.active:
+                continue
+            if edge.structural:
+                continue
+            edge.source_node.activation_score = max(
+                edge.source_node.activation_score, edge.activation_score
+            )
+            edge.dest_node.activation_score = max(
+                edge.dest_node.activation_score, edge.activation_score
+            )
+            edge.source_node.active = True
+            edge.dest_node.active = True
 
     # creates edges
     def _extract_deterministic_structure(
