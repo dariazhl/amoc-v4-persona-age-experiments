@@ -1215,14 +1215,18 @@ class Graph:
         """
         # Build active subgraph
         active_edges = [e for e in self.edges if e.active]
-        if not active_edges:
-            return set()
 
         # Build undirected graph of active edges
         G_active = nx.Graph()
+
+        # Add active nodes explicitly
+        active_nodes = {n for n in self.nodes if n.active}
+        for node in active_nodes:
+            G_active.add_node(node)
+
+        # Add active edges
         for edge in active_edges:
             G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
-
         # Check if already connected
         if G_active.number_of_nodes() <= 1 or nx.is_connected(G_active):
             return set()
@@ -1279,16 +1283,14 @@ class Graph:
                         continue
 
             if best_path is None:
-                # No path exists in cumulative graph - caller needs to use
-                # secondary LLM call to create new edges
+                # No cumulative path exists — caller must use LLM fallback
                 continue
 
-            # Promote edges along the path as connectors
+            # Promote cumulative edges along path
             for i in range(len(best_path) - 1):
                 node_a = best_path[i]
                 node_b = best_path[i + 1]
 
-                # Find the edge in cumulative graph
                 edge_data = G_cumulative.get_edge_data(node_a, node_b)
                 if edge_data is None:
                     continue
@@ -1297,17 +1299,14 @@ class Graph:
                 if edge is None:
                     continue
 
-                # STRICT: Never use ATTRIBUTIVE edges as connectors
                 if edge.relation_class == RelationClass.ATTRIBUTIVE:
                     continue
 
-                # Only promote if not already active
                 if not edge.active:
                     edge.structural = True
                     edge.active = True
                     edge.asserted_this_sentence = False
                     edge.reactivated_this_sentence = False
-                    # edge.mark_as_reactivated(reset_score=True)
                     promoted_connectors.add(edge)
 
             if __debug__:

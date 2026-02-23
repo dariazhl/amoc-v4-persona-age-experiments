@@ -2506,7 +2506,6 @@ class AMoCv4:
         """
         # Now mutate
         self.graph.deactivate_all_edges()
-        self._decay_node_activation()
         # ============================================================
         # POST-DECAY LLM REATTACHMENT FOR ISOLATED CARRYOVER NODES
         # ============================================================
@@ -2753,18 +2752,6 @@ class AMoCv4:
             )
         )
 
-        # ------------------------------------------------------------
-        #  DETERMINISTIC STRUCTURE
-        # ------------------------------------------------------------
-        self._extract_deterministic_structure(
-            current_sentence,
-            current_sentence_text_based_nodes,
-            current_sentence_text_based_words,
-        )
-        # ------------------------------------------------------------------
-        # Explicit nodes: strictly grounded in current sentence
-        # ------------------------------------------------------------------
-
         # Build lemma set for THIS sentence only
         sentence_lemma_set = {
             token.lemma_.lower() for token in self.spacy_nlp(original_text)
@@ -2776,13 +2763,23 @@ class AMoCv4:
             if n.node_type in {NodeType.CONCEPT, NodeType.PROPERTY}
             and any(lemma in sentence_lemma_set for lemma in n.lemmas)
         }
+
         # ------------------------------------------------------------
-        # Reactivate explicit nodes (AMoC v4 Step 3 alignment)
-        # Explicit concepts start with maximum activation.
+        #  DETERMINISTIC STRUCTURE
         # ------------------------------------------------------------
+        self._extract_deterministic_structure(
+            current_sentence,
+            current_sentence_text_based_nodes,
+            current_sentence_text_based_words,
+        )
+
         for node in self._explicit_nodes_current_sentence:
             node.activation_score = self.ACTIVATION_MAX_DISTANCE
             node.active = True
+        # ------------------------------------------------------------------
+        # Explicit nodes: strictly grounded in current sentence
+        # ------------------------------------------------------------------
+
         # # RULE 1: explicit nodes must exist
         # for node in self._explicit_nodes_current_sentence:
         #     if node not in self.graph.nodes:
@@ -3120,6 +3117,29 @@ class AMoCv4:
             added_edges,
         )
         self._propagate_activation_from_edges()
+        # ============================================================
+        # SOFT SEMANTIC HALO (Non-structural activation boost)
+        # Increases yellow nodes without altering connectivity or decay
+        # ============================================================
+
+        halo_strength = 1  # low amplitude, does not override decay
+        explicit_nodes = self._explicit_nodes_current_sentence
+
+        for edge in self.graph.edges:
+            if not edge.active:
+                continue
+            if edge.relation_class == RelationClass.CONNECTIVE:
+                continue
+
+            if edge.source_node in explicit_nodes:
+                if edge.dest_node.activation_score == 0:
+                    edge.dest_node.activation_score = halo_strength
+                    edge.dest_node.active = True
+
+            if edge.dest_node in explicit_nodes:
+                if edge.source_node.activation_score == 0:
+                    edge.source_node.activation_score = halo_strength
+                    edge.source_node.active = True
         # # ============================================================
         # # HARD CONNECTIVITY ENFORCEMENT (GRAPH-LEVEL, NOT PLOT-LEVEL)
         # # Must run BEFORE projection, view building, and plotting
@@ -3192,7 +3212,8 @@ class AMoCv4:
             n for n in self._anchor_nodes if n in self._get_nodes_with_active_edges()
         }
         connector_edges = self.graph.ensure_active_connectivity(
-            focus_nodes=self._explicit_nodes_current_sentence,
+            focus_nodes=self._explicit_nodes_current_sentence
+            | getattr(self, "_carryover_nodes_current_sentence", set()),
             carryover_focus_nodes=filtered_anchors,
         )
         if connector_edges:
@@ -3379,6 +3400,8 @@ class AMoCv4:
                 self._anchor_nodes = _anchor_snapshot
                 self._triplet_intro = _triplet_intro_snapshot
                 return (nodes_before_sentence, True)  # should_skip_sentence = True
+
+        self._decay_node_activation()
 
         return (nodes_before_sentence, False)
 
@@ -5186,7 +5209,23 @@ class AMoCv4:
             # Counts ONLY nodes created in this sentence
             # ============================================================
 
-            MAX_NEW_INFERRED = 3
+            # ============================================================
+            # ADAPTIVE INFERENCE BUDGET (SAFE DENSITY CONTROL)
+            # ============================================================
+
+            explicit_count = len(self._explicit_nodes_current_sentence)
+            active_count = len(self._get_nodes_with_active_edges())
+
+            # Base budget scales with explicit richness
+            base_budget = max(3, explicit_count)
+
+            # If graph is sparse, allow more inference
+            if active_count < explicit_count * 2:
+                bonus = 2
+            else:
+                bonus = 0
+
+            MAX_NEW_INFERRED = min(base_budget + bonus, 8)
 
             if not hasattr(self, "_new_inferred_nodes_count"):
                 self._new_inferred_nodes_count = 0
