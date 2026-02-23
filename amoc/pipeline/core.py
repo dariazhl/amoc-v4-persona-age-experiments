@@ -1367,12 +1367,28 @@ class AMoCv4:
 
         if mode == "active":
             relevant_edges = [e for e in self.graph.edges if e.active]
+
+            # ------------------------------------------------------------
+            # Protected nodes = explicit + carryover
+            # ------------------------------------------------------------
+            protected_nodes = set(self._explicit_nodes_current_sentence) | set(
+                getattr(self, "_carryover_nodes_current_sentence", set())
+            )
+
+            candidate_nodes = protected_nodes | self._get_nodes_with_active_edges()
         else:
             relevant_edges = list(self.graph.edges)
+            protected_nodes = set()
+            candidate_nodes = set(self.graph.nodes)
 
         G = nx.Graph()
+        # Add candidate nodes explicitly so isolated nodes are visible
+        for node in candidate_nodes:
+            G.add_node(node)
+
         for e in relevant_edges:
-            G.add_edge(e.source_node, e.dest_node)
+            if e.source_node in candidate_nodes and e.dest_node in candidate_nodes:
+                G.add_edge(e.source_node, e.dest_node)
 
         if G.number_of_nodes() <= 1:
             return []
@@ -1381,7 +1397,18 @@ class AMoCv4:
         if len(components) <= 1:
             return []
 
-        components = sorted(components, key=len, reverse=True)
+        # ------------------------------------------------------------
+        # Backbone = component containing most protected nodes
+        # ------------------------------------------------------------
+        if mode == "active":
+            components = sorted(
+                components,
+                key=lambda c: len(set(c) & protected_nodes),
+                reverse=True,
+            )
+        else:
+            components = sorted(components, key=len, reverse=True)
+
         backbone = set(components[0])
         forced_edges = []
 
@@ -2479,6 +2506,70 @@ class AMoCv4:
         """
         # Now mutate
         self.graph.deactivate_all_edges()
+        self._decay_node_activation()
+        # ============================================================
+        # POST-DECAY LLM REATTACHMENT FOR ISOLATED CARRYOVER NODES
+        # ============================================================
+
+        carryover = getattr(self, "_carryover_nodes_current_sentence", set())
+        active_nodes = set(n for n in self.graph.nodes if n.active)
+
+        G = nx.Graph()
+        for node in active_nodes:
+            G.add_node(node)
+
+        for e in self.graph.edges:
+            if e.active and e.source_node.active and e.dest_node.active:
+                G.add_edge(e.source_node, e.dest_node)
+
+        components = list(nx.connected_components(G))
+        if len(components) > 1:
+
+            components = sorted(components, key=len, reverse=True)
+            backbone = set(components[0])
+
+            for comp in components[1:]:
+
+                isolated_carryover = set(comp) & carryover
+
+                for node in isolated_carryover:
+
+                    # Call LLM for real semantic edge
+                    result = self.client.get_forced_connectivity_edge_label(
+                        node_a=node.get_text_representer(),
+                        node_b=next(iter(backbone)).get_text_representer(),
+                        story_context=(
+                            " ".join(prev_sentences[:-1])
+                            if len(prev_sentences) > 1
+                            else ""
+                        ),
+                        current_sentence=self._current_sentence_text,
+                        persona=self.persona,
+                    )
+
+                    relation = (
+                        result.get("label") if isinstance(result, dict) else result
+                    )
+                    if not relation:
+                        continue
+
+                    relation = self._normalize_edge_label(relation)
+                    if not relation:
+                        continue
+
+                    edge = self.graph.add_edge(
+                        node,
+                        next(iter(backbone)),
+                        relation,
+                        self.edge_visibility,
+                        relation_class=self._classify_relation(relation),
+                        justification=Justification.CONNECTIVE,
+                        inferred=True,
+                    )
+
+                    if edge:
+                        edge.active = True
+                        backbone.add(node)
         # Reset structural connectors each sentence
         for edge in self.graph.edges:
             if edge.structural:
@@ -3316,7 +3407,6 @@ class AMoCv4:
 
             if not edge.asserted_this_sentence and not edge.reactivated_this_sentence:
                 edge.reduce_visibility()
-        self._decay_node_activation()
 
     def _process_sentence_core(
         self,
@@ -3574,8 +3664,11 @@ class AMoCv4:
 
                     components = sorted(components, key=len, reverse=True)
                     backbone = set(components[0])
-
                     for comp in components[1:]:
+
+                        # Only enforce connectivity for components containing protected nodes
+                        if mode == "active" and not (set(comp) & protected_nodes):
+                            continue
 
                         node_a = next(iter(backbone))
                         node_b = next(iter(comp))
@@ -5077,8 +5170,8 @@ class AMoCv4:
                 source_node, dest_node = dest_node, source_node
                 edge_label = canon_label
 
-            source_active = getattr(source_node, "visibility_score", 0) > 0
-            dest_active = getattr(dest_node, "visibility_score", 0) > 0
+            source_active = source_node.active
+            dest_active = dest_node.active
 
             if not (
                 source_active
@@ -5124,6 +5217,20 @@ class AMoCv4:
                 if self._new_inferred_nodes_count >= MAX_NEW_INFERRED:
                     continue
                 self._new_inferred_nodes_count += 1
+
+            # ============================================================
+            # ACTIVE GRAPH INTEGRITY ENFORCEMENT
+            # Explicit nodes are allowed.
+            # Non-explicit inactive nodes are forbidden endpoints.
+            # ============================================================
+
+            explicit_set = set(self._explicit_nodes_current_sentence)
+
+            if not source_node.active and source_node not in explicit_set:
+                continue
+
+            if not dest_node.active and dest_node not in explicit_set:
+                continue
 
             potential_edge = self._add_edge(
                 source_node,
