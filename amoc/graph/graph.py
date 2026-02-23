@@ -445,7 +445,6 @@ class Graph:
 
         if self.check_if_similar_edge_exists(edge, edge_visibility):
             return self.get_edge(edge)
-
         # ==========================================================================
         # CONNECTIVITY CHECK (non-blocking - records violation but allows edge)
         # ==========================================================================

@@ -677,8 +677,10 @@ def is_adverb_token(token: Token) -> bool:
 
 
 def get_concept_lemmas(nlp, concept: str) -> List[str]:
+    if not concept:
+        return []
     doc = nlp(concept)
-    return [token.lemma_ for token in doc]
+    return [token.lemma_ for token in doc if token.lemma_]
 
 
 def canonicalize_node_text(nlp, text: str) -> str:

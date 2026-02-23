@@ -158,19 +158,6 @@ class PerSentenceGraphBuilder:
         return self
 
     def compute_carryover_nodes(self) -> "PerSentenceGraphBuilder":
-        """
-        Compute carry-over nodes via BFS from explicit nodes.
-
-        Carry-over nodes are those reachable from explicit nodes
-        within max_distance hops via active edges. This is the
-        "working memory" that persists across sentences.
-
-        CRITICAL (Paper-Aligned):
-        PROPERTY nodes are EXCLUDED from carry-over logic.
-        Per AMoC v4 paper: PROPERTY nodes have no independent activation.
-        They only appear when their property edge is active in the current sentence.
-        BFS should not traverse through or include PROPERTY nodes as carry-over.
-        """
         if not self._explicit_nodes:
             self._carryover_nodes = set()
             return self
@@ -219,7 +206,12 @@ class PerSentenceGraphBuilder:
 
         # Carry-over = reachable CONCEPT nodes that aren't explicit
         # PROPERTY nodes are NEVER carry-over (per paper alignment)
+        # ------------------------------------------------------------
+        # Carryover nodes: must be within distance AND have active cumulative edge
+        # ------------------------------------------------------------
+
         self._carryover_nodes = set(distances.keys()) - self._explicit_nodes
+
         return self
 
     def get_active_nodes(self) -> Set["Node"]:

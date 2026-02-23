@@ -6,6 +6,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR  # reuse existing output base
 from collections import defaultdict
+import textwrap
 
 DEFAULT_BLUE_NODES: Iterable[str] = ()
 
@@ -1801,13 +1802,30 @@ def plot_amoc_triplets(
             return None
         return [n for n in nodes if n in plotted_nodes]
 
-    def _format_nodes_line(label: str, nodes: Optional[Iterable[str]]) -> Optional[str]:
+    def _format_nodes_line(
+        label: str,
+        nodes: Optional[Iterable[str]],
+        width: int = 140,
+    ) -> Optional[str]:
         if nodes is None:
             return None
+
         cleaned = [_pretty_text(n) for n in nodes if n]
         if not cleaned:
             return f"{label}: none"
-        return f"{label}: " + ", ".join(cleaned)
+
+        joined = ", ".join(cleaned)
+
+        wrapped = textwrap.fill(
+            joined,
+            width=width,
+            initial_indent=f"{label}: ",
+            subsequent_indent=" " * (len(label) + 2),
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+
+        return wrapped
 
     title_persona = (persona[:150] + "...") if len(persona) > 150 else persona
     ax.set_title(f"AMoC Knowledge Graph: {model_name}", size=20, pad=20)
