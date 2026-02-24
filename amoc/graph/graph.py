@@ -674,15 +674,15 @@ class Graph:
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
-                if (
-                    neighbor.node_type == NodeType.PROPERTY
-                    or neighbor.is_setting()
-                    or (
-                        neighbor.node_role is not None
-                        and neighbor.node_role not in {NodeRole.ACTOR, NodeRole.OBJECT}
-                    )
-                ):
-                    continue
+                # if (
+                #     neighbor.node_type == NodeType.PROPERTY
+                #     or neighbor.is_setting()
+                #     or (
+                #         neighbor.node_role is not None
+                #         and neighbor.node_role not in {NodeRole.ACTOR, NodeRole.OBJECT}
+                #     )
+                # ):
+                #     continue
                 if neighbor not in reachable_nodes:
                     reachable_nodes[neighbor] = dist + 1
                     queue.append(neighbor)
@@ -899,14 +899,6 @@ class Graph:
                         if edge.dest_node == curr_node:
                             next_node = edge.source_node
 
-                    # CRITICAL: Skip PROPERTY nodes in BFS traversal
-                    # Per paper: PROPERTY nodes don't propagate activation
-                    if (
-                        next_node is not None
-                        and next_node.node_type == NodeType.PROPERTY
-                    ):
-                        continue
-
                     if next_node is not None:
                         queue.append((next_node, curr_distance + 1))
         return distances
@@ -966,7 +958,6 @@ class Graph:
             node
             for node in self.nodes
             if node.score <= score_threshold
-            and node.node_type != NodeType.PROPERTY  # Per paper: no PROPERTY carry-over
             and (not only_text_based or node.node_source == NodeSource.TEXT_BASED)
         ]
 
@@ -1323,7 +1314,11 @@ class Graph:
         for node in active_nodes:
             G_final.add_node(node)
         for e in self.edges:
-            if e.active and e.source_node in active_nodes and e.dest_node in active_nodes:
+            if (
+                e.active
+                and e.source_node in active_nodes
+                and e.dest_node in active_nodes
+            ):
                 G_final.add_edge(e.source_node, e.dest_node)
 
         if G_final.number_of_nodes() <= 1:

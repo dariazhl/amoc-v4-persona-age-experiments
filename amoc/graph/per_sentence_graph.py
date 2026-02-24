@@ -162,14 +162,9 @@ class PerSentenceGraphBuilder:
             self._carryover_nodes = set()
             return self
 
-        # BFS from explicit nodes - EXCLUDING PROPERTY nodes from propagation
-        # Per paper: only CONCEPT nodes participate in carry-over / distance logic
-        concept_explicit = {
-            n for n in self._explicit_nodes if n.node_type != NodeType.PROPERTY
-        }
-
-        distances: Dict["Node", int] = {n: 0 for n in concept_explicit}
-        queue: deque = deque(concept_explicit)
+        # Use ALL explicit nodes as seeds
+        distances: Dict["Node", int] = {n: 0 for n in self._explicit_nodes}
+        queue: deque = deque(self._explicit_nodes)
 
         while queue:
             node = queue.popleft()
@@ -181,22 +176,17 @@ class PerSentenceGraphBuilder:
             for edge in node.edges:
                 if not edge.active:
                     continue
+
                 if (
                     edge.created_at_sentence is not None
                     and self._sentence_index is not None
+                    and edge.created_at_sentence > self._sentence_index
                 ):
-                    if edge.created_at_sentence > self._sentence_index:
-                        continue
+                    continue
 
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
-
-                # CRITICAL (Paper-aligned):
-                # PROPERTY nodes do NOT propagate activation.
-                # They only appear if their edge is active.
-                if neighbor.node_type == NodeType.PROPERTY:
-                    continue
 
                 if neighbor in distances:
                     continue
@@ -204,12 +194,7 @@ class PerSentenceGraphBuilder:
                 distances[neighbor] = current_dist + 1
                 queue.append(neighbor)
 
-        # Carry-over = reachable CONCEPT nodes that aren't explicit
-        # PROPERTY nodes are NEVER carry-over (per paper alignment)
-        # ------------------------------------------------------------
-        # Carryover nodes: must be within distance AND have active cumulative edge
-        # ------------------------------------------------------------
-
+        # Carry-over = reachable nodes excluding explicit
         self._carryover_nodes = set(distances.keys()) - self._explicit_nodes
 
         return self
