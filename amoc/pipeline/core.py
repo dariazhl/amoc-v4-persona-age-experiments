@@ -1705,18 +1705,46 @@ class AMoCv4:
 
     def _can_attach_lemma(self, active_node: Node, lemma: str) -> bool:
         """
-        Returns True if the lemma can attach to the given active node.
-        Attachment rule: lemma matches any lemma of the active node.
+        Semantic attachment rule (safe version).
+
+        Allows:
+        - Exact lemma match (identity)
+        - Shared token overlap (compound match)
+        - Same sentence co-occurrence (early graph seeding only)
         """
+
         lemma_lower = lemma.lower().strip()
-        return lemma_lower in active_node.lemmas
+
+        #  Exact lemma match (keep existing behavior)
+        if lemma_lower in active_node.lemmas:
+            return True
+
+        # Compound overlap (e.g., "music festival" ↔ "festival")
+        active_tokens = set(active_node.lemmas)
+        lemma_tokens = set(lemma_lower.split())
+
+        if active_tokens & lemma_tokens:
+            return True
+
+        # Early-sentence soft attachment (controlled)
+        if self._current_sentence_index <= 2:
+            if lemma_lower in self.story_lemmas:
+                return True
+
+        return False
 
     def _has_active_attachment(self, lemma: str) -> bool:
         """
         Inferred node is allowed ONLY if it can attach to
         at least one currently ACTIVE node.
         """
+
         active_nodes = self._get_nodes_with_active_edges()
+
+        # EARLY SENTENCE FALLBACK:
+        # If no active-edge nodes yet, allow attachment to explicit nodes.
+        if not active_nodes:
+            active_nodes = set(self._explicit_nodes_current_sentence)
 
         for node in active_nodes:
             if self._can_attach_lemma(node, lemma):
@@ -3249,16 +3277,26 @@ class AMoCv4:
         filtered_anchors = {
             n for n in self._anchor_nodes if n in self._get_nodes_with_active_edges()
         }
-        connector_edges = self.graph.ensure_active_connectivity(
-            focus_nodes=self._explicit_nodes_current_sentence
-            | getattr(self, "_carryover_nodes_current_sentence", set()),
-            carryover_focus_nodes=filtered_anchors,
-        )
-        if connector_edges:
-            logging.debug(
-                "[Connectivity] Promoted %d edges as connectors to preserve connectivity",
-                len(connector_edges),
+        all_active_nodes = set(self._get_nodes_with_active_edges())
+
+        connector_edges = self.graph.ensure_active_connectivity()
+
+        if not self.graph.check_active_connectivity():
+
+            forced_edges = self._create_forced_connectivity_edges(
+                story_context=(
+                    " ".join(prev_sentences[:-1]) if len(prev_sentences) > 1 else ""
+                ),
+                current_sentence=resolved_text,
+                mode="active",
             )
+
+            if forced_edges:
+                logging.info(
+                    "[Connectivity] Created %d forced connectivity edges via fallback",
+                    len(forced_edges),
+                )
+                added_edges.extend(forced_edges)
 
         # TASK 2: SECONDARY LLM CALL FOR FORCED CONNECTIVITY
         # ==========================================================================
@@ -3348,6 +3386,37 @@ class AMoCv4:
                                 edge.mark_as_asserted(reset_score=True)
                                 break
 
+        # ============================================================
+        # HARD GUARANTEE: Explicit node must have at least one edge
+        # ============================================================
+
+        active_nodes = self._get_nodes_with_active_edges()
+
+        for node in self._explicit_nodes_current_sentence:
+
+            if node not in active_nodes:
+
+                # Attach to closest anchor deterministically
+                anchor = next(
+                    (
+                        n
+                        for n in self._anchor_nodes
+                        if n != node and n in self._get_nodes_with_active_edges()
+                    ),
+                    None,
+                )
+
+                if anchor:
+                    edge = self._add_edge(
+                        anchor,
+                        node,
+                        "relates to",
+                        self.edge_visibility,
+                        relation_class=RelationClass.CONNECTIVE,
+                        justification=Justification.CONNECTIVE,
+                    )
+                    if edge:
+                        edge.mark_as_asserted(reset_score=True)
         # Restrict active nodes only if there is at least one active edge
         self._restrict_active_to_current_explicit(
             list(self._explicit_nodes_current_sentence)
