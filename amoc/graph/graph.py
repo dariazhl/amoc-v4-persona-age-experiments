@@ -1176,81 +1176,124 @@ class Graph:
 
         return pairs_needing_connection
 
-    def ensure_active_connectivity(self) -> Set[Edge]:
+    def ensure_active_connectivity(
+        self,
+        focus_nodes: Set[Node],
+        carryover_focus_nodes: Optional[Set[Node]] = None,
+    ) -> Set[Edge]:
         """
-        Enforce GLOBAL active connectivity.
+        Ensure the active graph remains connected.
 
-        Uses only existing cumulative edges (non-attributive).
-        Promotes shortest-path connectors.
-        If cumulative graph cannot connect components,
-        caller must trigger LLM fallback.
+        STEP 1 of connectivity enforcement: Try to connect using EXISTING edges.
+
+        If the active graph becomes disconnected:
+        1. Identify focus nodes (explicit entities in current sentence + carry-over focus)
+        2. Compute connected components of the active graph
+        3. If multiple components exist, find minimum set of existing memory edges
+        that connect them
+        4. Promote those edges to active as "connectors"
+
+        Connector edge constraints (CRITICAL):
+        - Must already exist in the cumulative graph
+        - Must NOT be ATTRIBUTIVE edges
+        - Must NOT be counted as asserted or reactivated
+        - Do NOT increase activation scores
+        - Are NOT eligible for inference
+        - Exist only to preserve structural connectivity
+
+        IMPORTANT: If this method returns an empty set but the graph is still
+        disconnected (check with check_active_connectivity()), caller should
+        trigger a secondary LLM call to create new edges. Use
+        get_nodes_needing_connection() to get the pairs that need connecting.
+
+        Returns:
+            Set of edges promoted as connectors.
+
+
         """
-
-        # ----------------------------
-        # Build active graph
-        # ----------------------------
+        # Build active subgraph
         active_edges = [e for e in self.edges if e.active]
 
+        # Build undirected graph of active edges
         G_active = nx.Graph()
+
+        # Add active nodes explicitly
         active_nodes = {n for n in self.nodes if n.active}
 
         for node in active_nodes:
             G_active.add_node(node)
 
+        # Add active edges
         for edge in active_edges:
             G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
 
+        # Check if already connected
         if G_active.number_of_nodes() <= 1 or nx.is_connected(G_active):
             return set()
 
+        # Graph is disconnected - find components
         components = list(nx.connected_components(G_active))
         if len(components) <= 1:
             return set()
 
-        # ----------------------------
-        # Build cumulative graph (no attributive edges)
-        # ----------------------------
+        # Identify focus component (contains focus nodes)
+        all_focus = focus_nodes | (carryover_focus_nodes or set())
+        focus_component_idx = 0
+        for idx, comp in enumerate(components):
+            if any(n in comp for n in all_focus):
+                focus_component_idx = idx
+                break
+
+        # Build full cumulative graph for finding paths
         G_cumulative = nx.Graph()
 
         for edge in self.edges:
-            if edge.relation_class == RelationClass.ATTRIBUTIVE:
+            if edge.relation_class != RelationClass.CONNECTIVE:
                 continue
             G_cumulative.add_edge(edge.source_node, edge.dest_node, edge=edge)
 
         promoted_connectors: Set[Edge] = set()
 
-        # Deterministic merging
-        base_component = components[0]
+        # For each non-focus component, find shortest path to focus component
+        focus_comp_nodes = components[focus_component_idx]
+        for idx, comp in enumerate(components):
+            if idx == focus_component_idx:
+                continue
 
-        for comp in components[1:]:
-
+            # Find shortest path in cumulative graph between any node in comp
+            # and any node in focus component
             best_path = None
-            best_len = float("inf")
+            best_path_len = float("inf")
 
             for src in comp:
+                # Skip if src not in cumulative graph (only has property edges)
                 if src not in G_cumulative:
                     continue
-
-                for tgt in base_component:
+                for tgt in focus_comp_nodes:
+                    if src == tgt:
+                        continue
+                    # Skip if tgt not in cumulative graph (only has property edges)
                     if tgt not in G_cumulative:
                         continue
 
                     try:
                         path = nx.shortest_path(G_cumulative, src, tgt)
-                        if len(path) < best_len:
+                        if len(path) < best_path_len:
                             best_path = path
-                            best_len = len(path)
+                            best_path_len = len(path)
                     except (nx.NetworkXNoPath, nx.NodeNotFound):
                         continue
 
             if best_path is None:
+                # No cumulative path exists — caller must use LLM fallback
                 continue
 
+            # Promote cumulative edges along path
             for i in range(len(best_path) - 1):
-                a = best_path[i]
-                b = best_path[i + 1]
+                node_a = best_path[i]
+                node_b = best_path[i + 1]
 
-                edge_data = G_cumulative.get_edge_data(a, b)
+                edge_data = G_cumulative.get_edge_data(node_a, node_b)
                 if edge_data is None:
                     continue
 
@@ -1268,7 +1311,14 @@ class Graph:
                     edge.reactivated_this_sentence = False
                     promoted_connectors.add(edge)
 
-            base_component = base_component | comp
+            if __debug__:
+                G_check = nx.Graph()
+                for e in self.edges:
+                    if e.active:
+                        G_check.add_edge(e.source_node, e.dest_node)
+                if G_check.number_of_nodes() > 1:
+                    # Note: might still be disconnected if no path was found
+                    pass
 
         return promoted_connectors
 

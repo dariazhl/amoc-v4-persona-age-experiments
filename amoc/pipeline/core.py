@@ -3343,24 +3343,17 @@ class AMoCv4:
         }
         all_active_nodes = set(self._get_nodes_with_active_edges())
 
-        connector_edges = self.graph.ensure_active_connectivity()
+        connector_edges = self.graph.ensure_active_connectivity(
+            focus_nodes=self._explicit_nodes_current_sentence
+            | getattr(self, "_carryover_nodes_current_sentence", set()),
+            carryover_focus_nodes=filtered_anchors,
+        )
 
-        if not self.graph.check_active_connectivity():
-
-            forced_edges = self._create_forced_connectivity_edges(
-                story_context=(
-                    " ".join(prev_sentences[:-1]) if len(prev_sentences) > 1 else ""
-                ),
-                current_sentence=resolved_text,
-                mode="active",
+        if connector_edges:
+            logging.debug(
+                "[Connectivity] Promoted %d edges as connectors to preserve connectivity",
+                len(connector_edges),
             )
-
-            if forced_edges:
-                logging.info(
-                    "[Connectivity] Created %d forced connectivity edges via fallback",
-                    len(forced_edges),
-                )
-                added_edges.extend(forced_edges)
 
         # TASK 2: SECONDARY LLM CALL FOR FORCED CONNECTIVITY
         # ==========================================================================
@@ -3454,19 +3447,13 @@ class AMoCv4:
         # HARD GUARANTEE: Explicit node must have at least one edge
         # ============================================================
 
-        active_nodes = self._get_nodes_with_active_edges()
-
         for node in self._explicit_nodes_current_sentence:
-
+            active_nodes = self._get_nodes_with_active_edges()
             if node not in active_nodes:
 
                 # Attach to closest anchor deterministically
                 anchor = next(
-                    (
-                        n
-                        for n in self._anchor_nodes
-                        if n != node and n in self._get_nodes_with_active_edges()
-                    ),
+                    (n for n in self._get_nodes_with_active_edges() if n != node),
                     None,
                 )
 
@@ -3474,13 +3461,20 @@ class AMoCv4:
                     edge = self._add_edge(
                         anchor,
                         node,
-                        "relates to",
+                        "relates_to",
                         self.edge_visibility,
                         relation_class=RelationClass.CONNECTIVE,
                         justification=Justification.CONNECTIVE,
                     )
+
                     if edge:
-                        edge.mark_as_asserted(reset_score=True)
+                        # Structural activation only
+                        edge.active = True
+                        edge.structural = True
+
+                        # Do NOT treat as asserted or reactivated
+                        edge.asserted_this_sentence = False
+                        edge.reactivated_this_sentence = False
         # Restrict active nodes only if there is at least one active edge
         self._restrict_active_to_current_explicit(
             list(self._explicit_nodes_current_sentence)
