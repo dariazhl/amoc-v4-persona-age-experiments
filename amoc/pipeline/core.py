@@ -507,6 +507,23 @@ class AMoCv4:
         }:
             return False
 
+        # ==================================================
+        # HARD RULE: Explicit nodes cannot be verbs
+        # ==================================================
+        if provenance == "STORY_EXPLICIT":
+            if sent is None:
+                return False
+
+            # Find token in sentence
+            token_matches = [tok for tok in sent if tok.lemma_.lower() == lemma]
+
+            if not token_matches:
+                return False
+
+            # If ANY matching token is a verb → reject
+            for tok in token_matches:
+                if tok.pos_ in {"VERB", "AUX"}:
+                    return False
         # --------------------------------------------------
         # STORY_EXPLICIT admission
         # --------------------------------------------------
@@ -3637,6 +3654,22 @@ class AMoCv4:
                 # 1. Decay edge visibility
                 # 2. Decay node activation
                 self._apply_global_edge_decay()
+                # SAFETY INVARIANT: Enforce carryover connectivity FIRST
+                # Reactivate historical edges for isolated carryover nodes
+                # Must come BEFORE cumulative stability (reactivation may prevent collapse)
+                self.graph.enforce_carryover_connectivity(
+                    {
+                        n
+                        for n in self.graph.nodes
+                        if n.created_at_sentence < self._current_sentence_index
+                    }
+                )
+
+                # SAFETY INVARIANT: Enforce cumulative stability SECOND
+                # After carryover repair, before projection/plotting
+                self.graph.enforce_cumulative_stability(
+                    set(self._explicit_nodes_current_sentence)
+                )
                 self._decay_node_activation()
                 # Re-check connectivity after decay
                 if not self.graph.check_active_connectivity():
@@ -4667,19 +4700,6 @@ class AMoCv4:
                 if plot_after_each_sentence and _previous_per_sentence_view is not None:
                     self._per_sentence_view = _previous_per_sentence_view
                 continue
-
-            # SAFETY INVARIANT: Enforce carryover connectivity FIRST
-            # Reactivate historical edges for isolated carryover nodes
-            # Must come BEFORE cumulative stability (reactivation may prevent collapse)
-            self.graph.enforce_carryover_connectivity(
-                set(getattr(self, "_carryover_nodes_current_sentence", set()))
-            )
-
-            # SAFETY INVARIANT: Enforce cumulative stability SECOND
-            # After carryover repair, before projection/plotting
-            self.graph.enforce_cumulative_stability(
-                set(self._explicit_nodes_current_sentence)
-            )
 
             per_sentence_view = self._build_projection(sentence_id)
 

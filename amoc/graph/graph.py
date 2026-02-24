@@ -1356,32 +1356,51 @@ class Graph:
         """
         SAFETY INVARIANT:
 
-        If cumulative graph collapses structurally:
-            1) No explicit nodes are active
-            OR
-            2) All nodes are inactive
+        If cumulative graph collapses structurally, replace it
+        with the active subgraph.
 
-        Then replace cumulative graph with active subgraph.
-
-        This guarantees structural stability.
+        Collapse conditions:
+            1) No explicit nodes active
+            2) All nodes inactive
+            3) Active projection empty
         """
 
-        # Condition 1: No explicit node active
-        explicit_active = any(node.active for node in explicit_nodes)
-
-        # Condition 2: All nodes inactive
-        all_inactive = all(not node.active for node in self.nodes)
-
-        if explicit_active and not all_inactive:
-            return  # Graph stable
-
-        # Replace cumulative with active subgraph
+        # --------------------------------------------------
+        # Compute projection
+        # --------------------------------------------------
         active_nodes, active_edges = self.get_active_subgraph()
 
-        new_nodes = set(active_nodes)
-        new_edges = set(active_edges)
+        active_empty = len(active_nodes) == 0
+        explicit_active = any(node.active for node in explicit_nodes)
+        all_inactive = all(not node.active for node in self.nodes)
 
-        # Rebuild adjacency
+        # --------------------------------------------------
+        # If stable → do nothing
+        # --------------------------------------------------
+        if explicit_active and not all_inactive and not active_empty:
+            return
+
+        # --------------------------------------------------
+        # Recovery triggered
+        # --------------------------------------------------
+        if active_empty:
+            # Fallback: use last visible edges (visibility > 0)
+            visible_edges = {e for e in self.edges if e.visibility_score > 0}
+
+            visible_nodes = {e.source_node for e in visible_edges} | {
+                e.dest_node for e in visible_edges
+            }
+
+            new_nodes = set(visible_nodes)
+            new_edges = set(visible_edges)
+
+        else:
+            new_nodes = set(active_nodes)
+            new_edges = set(active_edges)
+
+        # --------------------------------------------------
+        # Rebuild adjacency safely
+        # --------------------------------------------------
         for node in new_nodes:
             node.edges = []
 
@@ -1389,6 +1408,7 @@ class Graph:
             edge.source_node.edges.append(edge)
             edge.dest_node.edges.append(edge)
 
+        # Replace cumulative graph
         self.nodes = new_nodes
         self.edges = new_edges
 
@@ -1397,48 +1417,40 @@ class Graph:
         carryover_nodes: set,
     ) -> None:
         """
-        MAXIMUM SAFETY INVARIANT:
+        SAFETY INVARIANT:
+        Carryover nodes must not be isolated.
 
-        If a carryover node has no active edges,
-        attempt to reactivate its most recent historical edge.
-
-        Never create new edges.
-        Never fabricate structure.
+        Reactivates the most recent visible historical edge.
+        Never fabricates structure.
         """
 
-        # Active edges
         active_edges = {e for e in self.edges if e.active and e.visibility_score > 0}
 
         for node in list(carryover_nodes):
 
-            # Compute active degree
             degree = sum(
                 1 for e in active_edges if e.source_node == node or e.dest_node == node
             )
 
             if degree > 0:
-                continue  # already connected
+                continue
 
-            # Find historical edges for this node
             historical_edges = [
-                e for e in self.edges if e.source_node == node or e.dest_node == node
+                e
+                for e in self.edges
+                if (e.source_node == node or e.dest_node == node)
+                and e.visibility_score > 0
             ]
 
             if not historical_edges:
-                continue  # nothing to restore safely
+                continue
 
-            # Choose most recent edge (structurally safest)
             edge_to_restore = max(
                 historical_edges,
                 key=lambda e: getattr(e, "created_at_sentence", -1),
             )
 
-            # Reactivate safely
             edge_to_restore.active = True
-
-            # Ensure minimal visibility floor
-            if edge_to_restore.visibility_score <= 0:
-                edge_to_restore.visibility_score = 1
 
     def __str__(self) -> str:
         return "nodes: {}\n\nedges: {}".format(
