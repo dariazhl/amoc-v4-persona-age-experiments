@@ -1412,18 +1412,14 @@ class Graph:
         self.nodes = new_nodes
         self.edges = new_edges
 
-    def enforce_carryover_connectivity(
-        self,
-        carryover_nodes: set,
-    ) -> None:
-        """
-        SAFETY INVARIANT:
-        Carryover nodes must not be isolated.
+    def enforce_carryover_connectivity(self, carryover_nodes: set) -> None:
 
-        Reactivates the most recent visible historical edge.
-        Never fabricates structure.
-        """
+        if not carryover_nodes:
+            return
 
+        # --------------------------------------------------
+        # PHASE 1 — Repair isolated carryover nodes
+        # --------------------------------------------------
         active_edges = {e for e in self.edges if e.active and e.visibility_score > 0}
 
         for node in list(carryover_nodes):
@@ -1436,10 +1432,7 @@ class Graph:
                 continue
 
             historical_edges = [
-                e
-                for e in self.edges
-                if (e.source_node == node or e.dest_node == node)
-                and e.visibility_score > 0
+                e for e in self.edges if e.source_node == node or e.dest_node == node
             ]
 
             if not historical_edges:
@@ -1451,6 +1444,54 @@ class Graph:
             )
 
             edge_to_restore.active = True
+            edge_to_restore.visibility_score = max(edge_to_restore.visibility_score, 1)
+
+            edge_to_restore.source_node.active = True
+            edge_to_restore.dest_node.active = True
+
+        # --------------------------------------------------
+        # PHASE 2 — Repair disconnected carryover components
+        # --------------------------------------------------
+
+        def build_active_graph():
+            G = nx.Graph()
+            for e in self.edges:
+                if e.active and e.visibility_score > 0:
+                    G.add_edge(e.source_node, e.dest_node)
+            return G
+
+        G = build_active_graph()
+        sub = G.subgraph(carryover_nodes)
+        components = list(nx.connected_components(sub))
+
+        if len(components) <= 1:
+            return
+
+        # Try to reconnect components
+        for comp_a in components:
+            for comp_b in components:
+                if comp_a is comp_b:
+                    continue
+
+                for e in self.edges:
+                    if not (
+                        (e.source_node in comp_a and e.dest_node in comp_b)
+                        or (e.source_node in comp_b and e.dest_node in comp_a)
+                    ):
+                        continue
+
+                    e.active = True
+                    e.visibility_score = max(e.visibility_score, 1)
+                    e.source_node.active = True
+                    e.dest_node.active = True
+
+                    # Recompute components
+                    G = build_active_graph()
+                    sub = G.subgraph(carryover_nodes)
+                    components = list(nx.connected_components(sub))
+
+                    if len(components) <= 1:
+                        return
 
     def __str__(self) -> str:
         return "nodes: {}\n\nedges: {}".format(

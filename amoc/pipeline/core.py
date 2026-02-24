@@ -2334,6 +2334,13 @@ class AMoCv4:
             if triplets_override is not None
             else self._graph_edges_to_triplets(only_active=only_active)
         )
+
+        # ------------------------------------------------------------
+        # Build ACTIVE snapshot for safe plotting
+        # ------------------------------------------------------------
+        active_nodes_for_filter, _ = self.graph.get_active_subgraph()
+
+        active_node_names = {n.get_text_representer() for n in active_nodes_for_filter}
         # ============================================================
         # HARD EXPLICIT NODE VISIBILITY GUARANTEE
         # ============================================================
@@ -2427,17 +2434,23 @@ class AMoCv4:
             # Paper-aligned: Yellow = INFERENCE_BASED nodes (LLM-created)
             inferred_nodes_for_plot = sorted(
                 {
-                    node.get_text_representer()
-                    for node in self.graph.nodes
-                    if node.node_source == NodeSource.INFERENCE_BASED
-                    and node.get_text_representer()
+                    n.get_text_representer()
+                    for n in active_nodes_for_filter
+                    if n.node_source == NodeSource.INFERENCE_BASED
                 }
             )
 
             self._enforce_cumulative_connectivity()
 
+            # SAFE FILTERING: Only plot triplets where both endpoints are active
+            triplets_for_plot = [
+                (s, r, o)
+                for (s, r, o) in triplets
+                if s in active_node_names and o in active_node_names
+            ]
+
             saved_path = plot_amoc_triplets(
-                triplets=triplets,
+                triplets=triplets_for_plot,
                 persona=self.persona,
                 model_name=self.model_name,
                 age=age_for_filename,
@@ -3654,16 +3667,6 @@ class AMoCv4:
                 # 1. Decay edge visibility
                 # 2. Decay node activation
                 self._apply_global_edge_decay()
-                # SAFETY INVARIANT: Enforce carryover connectivity FIRST
-                # Reactivate historical edges for isolated carryover nodes
-                # Must come BEFORE cumulative stability (reactivation may prevent collapse)
-                self.graph.enforce_carryover_connectivity(
-                    {
-                        n
-                        for n in self.graph.nodes
-                        if n.created_at_sentence < self._current_sentence_index
-                    }
-                )
 
                 # SAFETY INVARIANT: Enforce cumulative stability SECOND
                 # After carryover repair, before projection/plotting
@@ -4701,6 +4704,15 @@ class AMoCv4:
                     self._per_sentence_view = _previous_per_sentence_view
                 continue
 
+            # First build a temporary projection just to get carryover set
+            temp_projection = self._build_projection(sentence_id)
+
+            # Repair using that carryover set
+            self.graph.enforce_carryover_connectivity(
+                set(temp_projection.carryover_nodes)
+            )
+
+            # Now rebuild projection after repair
             per_sentence_view = self._build_projection(sentence_id)
 
             (
