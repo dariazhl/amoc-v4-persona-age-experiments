@@ -1125,66 +1125,34 @@ class AMoCv4:
         allow_inference_bridge: bool = False,
     ) -> bool:
 
-        # Canonicalize early
+        # Canonicalize
         subject = canonicalize_node_text(self.spacy_nlp, subject)
         obj = canonicalize_node_text(self.spacy_nlp, obj)
 
         subj_key = tuple(get_concept_lemmas(self.spacy_nlp, subject))
         obj_key = tuple(get_concept_lemmas(self.spacy_nlp, obj))
 
-        # ------------------------------------------------------------
-        # GUARANTEE: Preserve historical connectivity
-        # ------------------------------------------------------------
-        # If both nodes are already active (carryover and not decayed),
-        # allow the edge to survive attachment filtering.
-        active_nodes = self._get_nodes_with_active_edges()
-        active_lemma_keys = {tuple(n.lemmas) for n in active_nodes}
-        if subj_key in active_lemma_keys and obj_key in active_lemma_keys:
-            return True
-
-        memory_lemma_keys = {tuple(n.lemmas) for n in self.graph.nodes}
-        current_lemma_keys = {tuple(n.lemmas) for n in current_sentence_nodes}
-
-        # === explicit-to-explicit always allowed ===
-        explicit_keys = {tuple(n.lemmas) for n in self._explicit_nodes_current_sentence}
-        if subj_key in explicit_keys and obj_key in explicit_keys:
-            return True
-
-        # Bootstrap
+        # Bootstrap: first edge in graph
         if not self.graph.nodes:
             return True
 
-        # Allow new entity pairs inside same sentence
-        if subj_key in current_lemma_keys and obj_key in current_lemma_keys:
+        # --- Build frontier (connected component surface) ---
+        active_nodes = set(self._get_nodes_with_active_edges())
+        explicit_nodes = set(self._explicit_nodes_current_sentence)
+
+        frontier_nodes = active_nodes | explicit_nodes
+        frontier_keys = {tuple(n.lemmas) for n in frontier_nodes}
+
+        # Preserve already-connected relationships
+        if subj_key in frontier_keys and obj_key in frontier_keys:
             return True
 
-        # Strict attachment mode
-        if self.strict_attachament_constraint:
-
-            # If inference bridge allowed, relax safely
-            if allow_inference_bridge and graph_active_edge_nodes is not None:
-                active_keys = {tuple(n.lemmas) for n in graph_active_edge_nodes}
-                if subj_key in active_keys or obj_key in active_keys:
-                    return True
-
-            # Strict fallback
-            return subj_key in memory_lemma_keys or obj_key in memory_lemma_keys
-
-        # Permissive mode
-        active_nodes = self._get_nodes_with_active_edges()
-        active_keys = {tuple(n.lemmas) for n in active_nodes}
-
-        explicit_keys = {tuple(n.lemmas) for n in self._explicit_nodes_current_sentence}
-
-        # Allow if at least one endpoint is on the active frontier
-        if (
-            subj_key in active_keys
-            or obj_key in active_keys
-            or subj_key in explicit_keys
-            or obj_key in explicit_keys
-        ):
+        # SAFE MULTI-HOP RULE
+        # Allow if at least one endpoint touches frontier
+        if subj_key in frontier_keys or obj_key in frontier_keys:
             return True
 
+        # Otherwise reject (prevents island creation)
         return False
 
     def _create_edge_with_event_mediation(
