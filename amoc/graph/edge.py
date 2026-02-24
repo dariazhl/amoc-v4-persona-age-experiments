@@ -182,18 +182,15 @@ class Edge:
         return self.relation_class == RelationClass.ATTRIBUTIVE
 
     def reduce_visibility(self) -> None:
-        if self.visibility_score <= 0:
+        if self.visibility_score <= 1:
+            self.visibility_score = 1
             return
 
         self.visibility_score -= self.DECAY_STEP
 
-        # Activation decays with visibility
-        # if self.activation_score > 0:
-        #     self.activation_score -= 1
-
-        if self.visibility_score <= 0:
-            self.visibility_score = 0
-            self.active = False
+        # Enforce safety floor
+        if self.visibility_score <= 1:
+            self.visibility_score = 1
 
     def reset_for_sentence_start(self) -> None:
         """
@@ -204,6 +201,11 @@ class Edge:
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = False
         self.activation_role = None
+
+        # Preserve structural edges across sentences
+        if self.structural:
+            return
+
         self.active = False
 
     def deactivate(self) -> None:
