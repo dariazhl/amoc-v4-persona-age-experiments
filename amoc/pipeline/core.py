@@ -643,8 +643,7 @@ class AMoCv4:
         # where "danger" may not be a direct token but is semantically inferred.
         if allow_bootstrap:
             # ensure graph not empty
-            if self.graph.nodes:
-                return True
+            return False
 
         # STRICT: Not in story text and not grounded - REJECT
         if self.debug:
@@ -4668,6 +4667,19 @@ class AMoCv4:
                 if plot_after_each_sentence and _previous_per_sentence_view is not None:
                     self._per_sentence_view = _previous_per_sentence_view
                 continue
+
+            # SAFETY INVARIANT: Enforce carryover connectivity FIRST
+            # Reactivate historical edges for isolated carryover nodes
+            # Must come BEFORE cumulative stability (reactivation may prevent collapse)
+            self.graph.enforce_carryover_connectivity(
+                set(getattr(self, "_carryover_nodes_current_sentence", set()))
+            )
+
+            # SAFETY INVARIANT: Enforce cumulative stability SECOND
+            # After carryover repair, before projection/plotting
+            self.graph.enforce_cumulative_stability(
+                set(self._explicit_nodes_current_sentence)
+            )
 
             per_sentence_view = self._build_projection(sentence_id)
 
