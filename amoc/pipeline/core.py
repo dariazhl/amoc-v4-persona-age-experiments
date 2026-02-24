@@ -719,7 +719,14 @@ class AMoCv4:
                 continue
 
             canonical_node = self.graph.get_node(node.lemmas)
-
+            if node.get_text_representer().lower() in {
+                "has",
+                "is",
+                "was",
+                "were",
+                "be",
+            }:
+                continue
             if canonical_node is None:
                 canonical_node = self.graph.add_or_get_node(
                     node.lemmas,
@@ -1725,9 +1732,12 @@ class AMoCv4:
 
             # Explicit nodes always stay active
             if node in explicit_set:
-                node.active = True
+                has_active_edge = any(
+                    e.active and (e.source_node == node or e.dest_node == node)
+                    for e in self.graph.edges
+                )
+                node.active = has_active_edge
                 continue
-
             # Non-explicit nodes only stay active if they have active edges
             has_active_edge = any(
                 e.active and (e.source_node == node or e.dest_node == node)
@@ -1776,39 +1786,40 @@ class AMoCv4:
         - Shared token overlap (compound match)
         - Same sentence co-occurrence (early graph seeding only)
         """
+        return True
 
-        lemma_lower = lemma.lower().strip()
+        # lemma_lower = lemma.lower().strip()
 
-        #  Exact lemma match (keep existing behavior)
-        if lemma_lower in active_node.lemmas:
-            return True
+        # #  Exact lemma match (keep existing behavior)
+        # if lemma_lower in active_node.lemmas:
+        #     return True
 
-        # Compound overlap (e.g., "music festival" ↔ "festival")
-        active_tokens = set(active_node.lemmas)
-        lemma_tokens = set(lemma_lower.split())
+        # # Compound overlap (e.g., "music festival" ↔ "festival")
+        # active_tokens = set(active_node.lemmas)
+        # lemma_tokens = set(lemma_lower.split())
 
-        if active_tokens & lemma_tokens:
-            return True
+        # if active_tokens & lemma_tokens:
+        #     return True
 
-        # Early-sentence soft attachment (controlled)
-        if self._current_sentence_index <= 2:
-            if lemma_lower in self.story_lemmas:
-                return True
+        # # Early-sentence soft attachment (controlled)
+        # if self._current_sentence_index <= 2:
+        #     if lemma_lower in self.story_lemmas:
+        #         return True
 
-        return False
+        # return False
 
     def _has_active_attachment(self, lemma: str) -> bool:
         """
-        Inferred node is allowed ONLY if it can attach to
-        at least one currently ACTIVE node.
+        Relaxed attachment:
+        Inferred node is allowed if it can attach to
+        any active node OR any explicit node.
         """
 
-        active_nodes = self._get_nodes_with_active_edges()
+        # Use node.active instead of only nodes with active edges
+        active_nodes = {n for n in self.graph.nodes if n.active}
 
-        # EARLY SENTENCE FALLBACK:
-        # If no active-edge nodes yet, allow attachment to explicit nodes.
-        if not active_nodes:
-            active_nodes = set(self._explicit_nodes_current_sentence)
+        # Always include explicit nodes
+        active_nodes |= set(self._explicit_nodes_current_sentence)
 
         for node in active_nodes:
             if self._can_attach_lemma(node, lemma):
@@ -2721,10 +2732,7 @@ class AMoCv4:
                     if edge:
                         edge.active = True
                         backbone.add(node)
-        # Reset structural connectors each sentence
-        for edge in self.graph.edges:
-            if edge.structural:
-                edge.active = False
+
         self._current_sentence_text = original_text
 
         # ------------------------------------------------------------------
@@ -3342,6 +3350,25 @@ class AMoCv4:
             n for n in self._anchor_nodes if n in self._get_nodes_with_active_edges()
         }
         all_active_nodes = set(self._get_nodes_with_active_edges())
+
+        for e in self.graph.edges:
+            if (
+                e.source_node.get_text_representer() == "man"
+                and e.dest_node.get_text_representer() == "mealtime"
+            ) or (
+                e.source_node.get_text_representer() == "mealtime"
+                and e.dest_node.get_text_representer() == "man"
+            ):
+                print(
+                    "DEBUG EDGE:",
+                    e.relation,
+                    "active=",
+                    e.active,
+                    "structural=",
+                    getattr(e, "structural", None),
+                    "score=",
+                    getattr(e, "score", None),
+                )
 
         connector_edges = self.graph.ensure_active_connectivity(
             focus_nodes=self._explicit_nodes_current_sentence

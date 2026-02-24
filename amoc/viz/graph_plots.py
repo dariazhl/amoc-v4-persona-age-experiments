@@ -1142,6 +1142,15 @@ def plot_amoc_triplets(
         # Build set of active nodes for filtering
         # Active nodes = all nodes NOT in inactive_node_set
         active_nodes_for_filter = plotted_nodes - inactive_node_set
+        edges_to_remove = []
+
+        for u, v, k in list(G.edges(keys=True)):
+            if u not in active_nodes_for_filter or v not in active_nodes_for_filter:
+                edges_to_remove.append((u, v, k))
+
+        for edge in edges_to_remove:
+            G.remove_edge(*edge)
+
         _draw_triplet_overlay(
             ax,
             active_triplets_for_overlay,

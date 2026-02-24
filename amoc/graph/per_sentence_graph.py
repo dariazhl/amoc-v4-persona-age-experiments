@@ -424,20 +424,21 @@ class PerSentenceGraphBuilder:
             for comp in sorted_components[1:]:
                 representative = next(iter(comp))
                 anchor = next(iter(main_component))
+                forced_edges = None
+                if self.repair_callback is not None:
+                    forced_edges = self.repair_callback(
+                        components=[{representative}, {anchor}],
+                        active_nodes=active_nodes,
+                        active_edges=active_edges,
+                        sentence_index=self._sentence_index,
+                        temperature=0.2,  # deterministic
+                    )
 
-                forced_edges = self.repair_callback(
-                    components=[{representative}, {anchor}],
-                    active_nodes=active_nodes,
-                    active_edges=active_edges,
-                    sentence_index=self._sentence_index,
-                    temperature=0.2,  # deterministic
-                )
-
-                if forced_edges:
-                    for e in forced_edges:
-                        active_edges.add(e)
-                        active_nodes.add(e.source_node)
-                        active_nodes.add(e.dest_node)
+                    if forced_edges:
+                        for e in forced_edges:
+                            active_edges.add(e)
+                            active_nodes.add(e.source_node)
+                            active_nodes.add(e.dest_node)
 
             # re-check
             final_components = self._connected_components(active_nodes, active_edges)
