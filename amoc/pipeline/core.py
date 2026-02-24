@@ -481,18 +481,23 @@ class AMoCv4:
         provenance: str,
         sent: Optional[Span] = None,
     ) -> bool:
-        """
-        Gate for node admission.
 
-        INVARIANTS (STEP 4):
-        - Inferred nodes must attach to at least one ACTIVE node
-        - No floating abstraction nodes allowed
-        """
-        if provenance == "STORY_EXPLICIT" and lemma not in self.story_lemmas:
-            return None
-        lemma = lemma.lower().strip()
+        # --------------------------------------------------
+        # Normalize FIRST
+        # --------------------------------------------------
+        lemma = (lemma or "").lower().strip()
 
-        # Provenance guard (hard gate)
+        if not lemma:
+            return False
+
+        # Reject obvious fragment garbage
+        # (3-letter fragments like "chi" blocked, but allow valid short nouns if needed)
+        if len(lemma) < 4 and lemma not in self.story_lemmas:
+            return False
+
+        # --------------------------------------------------
+        # Hard provenance guard
+        # --------------------------------------------------
         if provenance in {
             "LLM_PROMPT",
             "GRAPH_SERIALIZATION",
@@ -502,11 +507,26 @@ class AMoCv4:
         }:
             return False
 
+        # --------------------------------------------------
+        # STORY_EXPLICIT admission
+        # --------------------------------------------------
+        if provenance == "STORY_EXPLICIT":
+
+            # Allow if lemma OR surface form exists in story lexicon
+            if lemma not in self.story_lemmas:
+                # allow simple plural stripping
+                if lemma.endswith("s") and lemma[:-1] in self.story_lemmas:
+                    pass
+                else:
+                    return False
+
+        # --------------------------------------------------
+        # Property grounding check
+        # --------------------------------------------------
         if node_type == NodeType.PROPERTY:
             if sent is None:
                 return False
 
-            # Check if the adjective appears in the sentence as ADJ
             grounded = any(
                 tok.lemma_.lower() == lemma
                 and tok.pos_ == "ADJ"
@@ -517,27 +537,27 @@ class AMoCv4:
             if not grounded:
                 return False
 
-        # STEP 4: Strict attachment guard for inference
-        # Story-grounded nodes are always allowed
-        primary_lemma = lemma.lower()
-        is_story_grounded = primary_lemma in self.story_lemmas
+        # --------------------------------------------------
+        # Inference admission
+        # --------------------------------------------------
+        is_story_grounded = lemma in self.story_lemmas
 
         is_allowed_inference = (
             provenance in {"INFERRED_RELATION", "INFERENCE_BASED"}
-            and primary_lemma in self.story_lemmas
+            and is_story_grounded
             and self._has_active_attachment(lemma)
         )
 
-        if not is_story_grounded and not is_allowed_inference:
-            return False
-
-        is_new = primary_lemma not in self._ever_admitted_nodes
-
-        self._ever_admitted_nodes.add(primary_lemma)
+        if provenance != "STORY_EXPLICIT":
+            if not is_allowed_inference:
+                return False
 
         # --------------------------------------------------
-        # Adaptive layout depth update (monotonic)
+        # Track new node admission
         # --------------------------------------------------
+        is_new = lemma not in self._ever_admitted_nodes
+        self._ever_admitted_nodes.add(lemma)
+
         if is_new:
             total_nodes = len(self._ever_admitted_nodes)
 
@@ -2310,6 +2330,16 @@ class AMoCv4:
                 }
             )
 
+            # Paper-aligned: Yellow = INFERENCE_BASED nodes (LLM-created)
+            inferred_nodes_for_plot = sorted(
+                {
+                    node.get_text_representer()
+                    for node in self.graph.nodes
+                    if node.node_source == NodeSource.INFERENCE_BASED
+                    and node.get_text_representer()
+                }
+            )
+
             self._enforce_cumulative_connectivity()
 
             saved_path = plot_amoc_triplets(
@@ -2342,6 +2372,8 @@ class AMoCv4:
                 active_triplets_for_overlay=active_triplets_for_overlay,
                 show_triplet_overlay=True,
                 layout_depth=self._layout_depth,
+                # Paper-aligned: Yellow = inferred nodes (NodeSource.INFERENCE_BASED)
+                inferred_nodes=inferred_nodes_for_plot,
             )
             if triplets:
                 logging.info(
@@ -2366,21 +2398,27 @@ class AMoCv4:
 
             # Explicit nodes never decay this sentence
             if node in self._explicit_nodes_current_sentence:
+                node.active = True
                 continue
 
-            # Decrease activation score
+            # Step 1 — numeric decay
             if node.activation_score > 0:
                 node.activation_score -= 1
 
-            # If fully decayed → deactivate node AND its edges
+            # Step 2 — hard cutoff by score
             if node.activation_score <= 0:
-                node.activation_score = 0
                 node.active = False
+                continue
 
-                # Deactivate all edges incident to this node
-                for edge in self.graph.edges:
-                    if edge.source_node == node or edge.dest_node == node:
-                        edge.active = False
+            # Step 3 — structural invariant:
+            # Active node must have ≥1 active edge
+            has_active_edge = any(
+                e.active and (e.source_node == node or e.dest_node == node)
+                for e in self.graph.edges
+            )
+
+            if not has_active_edge:
+                node.active = False
 
     # ==========================================================================
     # ANALYZE HELPER METHODS - Mechanical extraction only
@@ -3423,8 +3461,8 @@ class AMoCv4:
                 continue
 
             # # Only edges not asserted this sentence decay
-            # if edge.structural:
-            #     continue
+            if edge.structural:
+                continue
 
             if not edge.asserted_this_sentence and not edge.reactivated_this_sentence:
                 edge.reduce_visibility()

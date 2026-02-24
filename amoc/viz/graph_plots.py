@@ -102,7 +102,14 @@ def _compute_radial_positions(G, hub):
 
         if n == 1:
             radius = BASE_RADIUS + level * RING_GAP
-            pos[nodes[0]] = (radius, 0.0)
+
+            # Alternate direction to avoid collinearity
+            angle = (math.pi / 3) if level % 2 == 0 else (-math.pi / 3)
+
+            x = radius * math.cos(angle)
+            y = radius * math.sin(angle)
+
+            pos[nodes[0]] = (x, y)
             continue
 
         # ensure no overlap using circumference math
@@ -410,6 +417,9 @@ def plot_amoc_triplets(
     new_nodes: Optional[List[str]] = None,
     explicit_nodes: Optional[Iterable[str]] = None,
     ever_explicit_nodes: Optional[Iterable[str]] = None,
+    inferred_nodes: Optional[
+        Iterable[str]
+    ] = None,  # Paper-aligned: Yellow = LLM-inferred
     salient_nodes: Optional[Iterable[str]] = None,
     inactive_nodes: Optional[Iterable[str]] = None,
     inactive_nodes_for_title: Optional[Iterable[str]] = None,
@@ -578,6 +588,7 @@ def plot_amoc_triplets(
     inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
     ever_explicit_node_set = set(ever_explicit_nodes) if ever_explicit_nodes else set()
     salient_node_set = set(salient_nodes) if salient_nodes else set()
+    inferred_node_set = set(inferred_nodes) if inferred_nodes else set()
 
     # =========================================================================
     # DETERMINISTIC BFS RADIAL LAYOUT
@@ -637,9 +648,9 @@ def plot_amoc_triplets(
 
     # Draw active nodes on top with full opacity
     if active_in_graph:
-        # Blue = ever_explicit, Yellow = everything else
+        # Paper-aligned: Yellow = LLM-inferred (INFERENCE_BASED), Blue = text-derived
         active_colors = [
-            "#a0cbe2" if node in ever_explicit_node_set else "#ffe8a0"
+            "#ffe8a0" if node in inferred_node_set else "#a0cbe2"
             for node in active_in_graph
         ]
 
