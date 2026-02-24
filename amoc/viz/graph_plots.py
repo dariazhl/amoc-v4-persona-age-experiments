@@ -16,7 +16,7 @@ MAX_NODES_PER_RING = 6  # Split ring if more than this many nodes
 SUB_RING_RADIUS_OFFSET = (
     0.15  # Small radial offset between sub-rings (fraction of ring_step)
 )
-MIN_SPACING_PADDING = 0.25  # 25% padding on node diameter for collision detection
+MIN_SPACING_PADDING = 0.45  # 25% padding on node diameter for collision detection
 RADIUS_GROWTH_MAX = 4.0
 RADIUS_GROWTH_MIN = 1.0
 TRIVIAL_NODE_TEXTS = {
@@ -898,7 +898,7 @@ def plot_amoc_triplets(
 
     # If after injection the graph is still empty, return
     if G.number_of_nodes() == 0:
-        fig, ax = plt.subplots(figsize=(22, 18))
+        fig, ax = plt.subplots(figsize=(26, 18))
         ax.axis("off")
         fig.savefig(save_path, format="PNG", dpi=300, bbox_inches="tight")
         plt.close(fig)
@@ -910,6 +910,15 @@ def plot_amoc_triplets(
 
     position_cache = positions if positions is not None else {}
     is_first_layout = len(position_cache) == 0
+
+    # =========================================================================
+    # IMMUTABLE CUMULATIVE LAYOUT: Freeze Mode
+    # =========================================================================
+    # When existing positions exist, ALL relaxation passes are SKIPPED.
+    # Only newly introduced nodes receive positions (on outermost ring).
+    # Existing nodes NEVER move - not even temporarily.
+    # =========================================================================
+    freeze_all_existing = bool(position_cache)
 
     fixed_pos: Dict[str, Tuple[float, float]] = {
         node: position_cache[node] for node in nodes if node in position_cache
@@ -933,8 +942,8 @@ def plot_amoc_triplets(
     # largest_component_only is now only for backward compatibility
     # With strict invariants, the graph should always be connected
 
-    fig, ax = plt.subplots(figsize=(22, 18))
-
+    fig, ax = plt.subplots(figsize=(26, 18))
+    # plt.subplots_adjust(top=0.05)
     # Build sets for node categorization (refresh from parameter)
     inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
     ever_explicit_node_set = set(ever_explicit_nodes) if ever_explicit_nodes else set()
@@ -957,7 +966,7 @@ def plot_amoc_triplets(
         layout_nodes.append(hub)
 
     max_label_len = max((len(_pretty_text(n)) for n in nodes), default=0)
-    target_min_dist = 7.0 + max(0, max_label_len - 10) * 0.12
+    target_min_dist = 18.0 + max(0, max_label_len - 10) * 0.22
 
     if len(layout_nodes) == 0:
         # No active nodes - place all nodes in a simple grid
@@ -1015,7 +1024,7 @@ def plot_amoc_triplets(
             if node not in levels:
                 levels[node] = max_level
 
-        ring_step = max(12.0, target_min_dist * 1.55)
+        ring_step = max(26.0, target_min_dist * 1.55)
         radii: Dict[int, float] = {}
 
         # If we have cached coordinates, keep existing nodes fixed and only
@@ -1260,124 +1269,136 @@ def plot_amoc_triplets(
 
     # ---------------------------------------------------------------------
     # Light spring relaxation (paper-faithful organic refinement)
-    # Keeps hub fixed while allowing peripheral nodes to settle naturally.
+    # IMMUTABLE CUMULATIVE LAYOUT: SKIP when freeze_all_existing is True
     # ---------------------------------------------------------------------
 
-    min_edge_len = max(5.0, target_min_dist * 0.75)
-    _enforce_min_edge_length(
-        pos, [(u, v) for u, v, _ in G.edges(keys=True)], min_len=min_edge_len, hub=hub
-    )
-    if avoid_edge_overlap:
-        _push_nodes_off_edges(fig, ax, pos, list(G.edges()))
-    _enforce_minimum_spacing(
-        fig,
-        ax,
-        pos,
-        hub,
-        fixed_nodes,
-        node_size=3800,
-        pad_px=8.0,
-        scale_step=1.06,
-        max_iter=140,
-    )
+    if not freeze_all_existing:
+        # Only run relaxation passes on first layout (no existing positions)
+        min_edge_len = max(5.0, target_min_dist * 0.75)
+        _enforce_min_edge_length(
+            pos,
+            [(u, v) for u, v, _ in G.edges(keys=True)],
+            min_len=min_edge_len,
+            hub=hub,
+        )
+        if avoid_edge_overlap:
+            _push_nodes_off_edges(fig, ax, pos, list(G.edges()))
+        _enforce_minimum_spacing(
+            fig,
+            ax,
+            pos,
+            hub,
+            fixed_nodes,
+            node_size=3800,
+            pad_px=8.0,
+            scale_step=1.06,
+            max_iter=140,
+        )
 
-    _enforce_node_edge_separation(
-        G,
-        pos,
-        fixed_nodes,
-        min_dist=target_min_dist * 0.45,
-        iterations=4,
-    )
+        _enforce_node_edge_separation(
+            G,
+            pos,
+            fixed_nodes,
+            min_dist=target_min_dist * 0.45,
+            iterations=4,
+        )
 
-    if avoid_edge_overlap:
-        _push_nodes_off_edges(fig, ax, pos, list(G.edges()))
+        if avoid_edge_overlap:
+            _push_nodes_off_edges(fig, ax, pos, list(G.edges()))
 
     # ---------------------------------------------------------------------
     # LAYOUT POLICY D (CONSTRAINED): Final collision adjustment
-    # Preserves:
-    #   - hub immutability
-    #   - fixed_nodes immutability
-    #   - radial depth ordering
-    #   - no inward collapse of deeper nodes
+    # IMMUTABLE CUMULATIVE LAYOUT: SKIP when freeze_all_existing is True
     # ---------------------------------------------------------------------
-    _set_axes_limits(ax, pos)
+    if not freeze_all_existing:
+        _set_axes_limits(ax, pos)
 
-    required_dist = _node_required_center_distance_data(
-        fig, ax, node_size=3800, use_percentage_padding=True
-    )
+        required_dist = _node_required_center_distance_data(
+            fig, ax, node_size=3800, use_percentage_padding=True
+        )
 
-    # We rely on `levels` already computed earlier in layout logic
-    node_levels = levels if "levels" in locals() else {}
+        # We rely on `levels` already computed earlier in layout logic
+        node_levels = levels if "levels" in locals() else {}
 
-    for _ in range(40):
-        collision_found = False
-        nodes_list = list(pos.keys())
+        for _ in range(40):
+            collision_found = False
+            nodes_list = list(pos.keys())
 
-        for i, n1 in enumerate(nodes_list):
+            for i, n1 in enumerate(nodes_list):
 
-            if n1 in fixed_nodes:
-                continue
-
-            x1, y1 = pos[n1]
-            r1 = math.hypot(x1, y1)
-            lvl1 = node_levels.get(n1, 0)
-
-            for n2 in nodes_list[i + 1 :]:
-
-                if n2 in fixed_nodes:
+                if n1 in fixed_nodes:
                     continue
 
-                x2, y2 = pos[n2]
-                r2 = math.hypot(x2, y2)
-                lvl2 = node_levels.get(n2, 0)
+                x1, y1 = pos[n1]
+                r1 = math.hypot(x1, y1)
+                lvl1 = node_levels.get(n1, 0)
 
-                dist = math.hypot(x2 - x1, y2 - y1)
+                for n2 in nodes_list[i + 1 :]:
 
-                if dist >= required_dist or dist <= 1e-6:
-                    continue
+                    if n2 in fixed_nodes:
+                        continue
 
-                collision_found = True
-                push = (required_dist - dist) * 0.5
+                    x2, y2 = pos[n2]
+                    r2 = math.hypot(x2, y2)
+                    lvl2 = node_levels.get(n2, 0)
 
-                # --------------------------------------------------
-                # SAME LEVEL → Tangential separation (rotate on ring)
-                # --------------------------------------------------
-                if lvl1 == lvl2:
-                    # Tangential direction for n1
-                    tx1, ty1 = -y1, x1
-                    norm1 = math.hypot(tx1, ty1)
-                    if norm1 > 1e-6:
-                        tx1, ty1 = tx1 / norm1, ty1 / norm1
-                        pos[n1] = (x1 - tx1 * push, y1 - ty1 * push)
+                    dist = math.hypot(x2 - x1, y2 - y1)
 
-                    # Tangential direction for n2
-                    tx2, ty2 = -y2, x2
-                    norm2 = math.hypot(tx2, ty2)
-                    if norm2 > 1e-6:
-                        tx2, ty2 = tx2 / norm2, ty2 / norm2
-                        pos[n2] = (x2 + tx2 * push, y2 + ty2 * push)
+                    if dist >= required_dist or dist <= 1e-6:
+                        continue
 
-                # --------------------------------------------------
-                # DIFFERENT LEVELS → Only push outward
-                # Prevent inward collapse
-                # --------------------------------------------------
-                else:
-                    if lvl1 >= lvl2 and r1 > 1e-6:
-                        new_r1 = r1 + push
-                        pos[n1] = (
-                            (x1 / r1) * new_r1,
-                            (y1 / r1) * new_r1,
-                        )
+                    collision_found = True
+                    push = (required_dist - dist) * 0.5
 
-                    if lvl2 >= lvl1 and r2 > 1e-6:
-                        new_r2 = r2 + push
-                        pos[n2] = (
-                            (x2 / r2) * new_r2,
-                            (y2 / r2) * new_r2,
-                        )
+                    # --------------------------------------------------
+                    # SAME LEVEL → Tangential separation (rotate on ring)
+                    # --------------------------------------------------
+                    if lvl1 == lvl2:
+                        # Tangential direction for n1
+                        tx1, ty1 = -y1, x1
+                        norm1 = math.hypot(tx1, ty1)
+                        if norm1 > 1e-6:
+                            tx1, ty1 = tx1 / norm1, ty1 / norm1
+                            pos[n1] = (x1 - tx1 * push, y1 - ty1 * push)
 
-        if not collision_found:
-            break
+                        # Tangential direction for n2
+                        tx2, ty2 = -y2, x2
+                        norm2 = math.hypot(tx2, ty2)
+                        if norm2 > 1e-6:
+                            tx2, ty2 = tx2 / norm2, ty2 / norm2
+                            pos[n2] = (x2 + tx2 * push, y2 + ty2 * push)
+
+                    # --------------------------------------------------
+                    # DIFFERENT LEVELS → Only push outward
+                    # Prevent inward collapse
+                    # --------------------------------------------------
+                    else:
+                        if lvl1 >= lvl2 and r1 > 1e-6:
+                            new_r1 = r1 + push
+                            pos[n1] = (
+                                (x1 / r1) * new_r1,
+                                (y1 / r1) * new_r1,
+                            )
+
+                        if lvl2 >= lvl1 and r2 > 1e-6:
+                            new_r2 = r2 + push
+                            pos[n2] = (
+                                (x2 / r2) * new_r2,
+                                (y2 / r2) * new_r2,
+                            )
+
+            if not collision_found:
+                break
+
+    # =========================================================================
+    # HARD INVARIANT CHECK: Existing nodes must not have moved
+    # =========================================================================
+    if freeze_all_existing:
+        for node, cached_coords in position_cache.items():
+            if node in pos:
+                assert (
+                    pos[node] == cached_coords
+                ), f"INVARIANT VIOLATION: Node {node} moved from {cached_coords} to {pos[node]}"
 
     # Draw inactive nodes first (underneath) with faded appearance
     # --------------------------------------------------
@@ -1387,22 +1408,35 @@ def plot_amoc_triplets(
     missing_nodes = [n for n in G.nodes() if n not in pos]
 
     if missing_nodes:
-        # Compute safe outer radius
+        # Compute current max radius safely
         if pos:
             max_radius = max(math.hypot(x, y) for x, y in pos.values())
         else:
-            max_radius = target_min_dist * 2.0
+            max_radius = target_min_dist * 3.0
 
-        fallback_radius = max_radius + target_min_dist * 2.0
-        angle_step = 2.0 * math.pi / max(1, len(missing_nodes))
+        # -------------------------------
+        # BOUNDED radial growth
+        # -------------------------------
+        fallback_radius = max(
+            max_radius * 1.25,  # proportional growth
+            max_radius + target_min_dist * 2.5,  # minimum outward jump
+        )
 
-        for i, node in enumerate(missing_nodes):
-            angle = i * angle_step
-            pos[node] = (
-                fallback_radius * math.cos(angle),
-                fallback_radius * math.sin(angle),
-            )
+        count = len(missing_nodes)
 
+        # -------------------------------
+        # Deterministic angular spacing
+        # -------------------------------
+        angle_step = 2.0 * math.pi / max(1, count)
+
+        # Small constant phase shift for aesthetics (deterministic)
+        phase_shift = 0.25
+
+        for idx, node in enumerate(sorted(missing_nodes)):
+            theta = idx * angle_step + phase_shift
+            x = fallback_radius * math.cos(theta)
+            y = fallback_radius * math.sin(theta)
+            pos[node] = (x, y)
     inactive_in_graph = [n for n in G.nodes() if n in inactive_node_set]
     active_in_graph = [n for n in G.nodes() if n not in inactive_node_set]
 

@@ -4063,7 +4063,20 @@ class AMoCv4:
 
             if has_projection_edge:
                 continue
+            # --------------------------------------------------
+            # Recover at least one cumulative edge for this node
+            # --------------------------------------------------
+            recovered = False
 
+            for edge in self.graph.edges:
+                if edge.source_node == node or edge.dest_node == node:
+                    active_edges_mutable.add(edge)
+                    recovered = True
+                    projection_invalid = True
+                    break
+
+            # If no cumulative edge exists, this is a true isolation
+            # (optional: raise or log)
             # Reactivate one valid edge connecting to another active node
             for edge in self.graph.edges:
 
@@ -4086,16 +4099,8 @@ class AMoCv4:
 
         # If we modified projection edges → replace projection object
         if projection_invalid:
-
-            self._per_sentence_view = type(per_sentence_view)(
-                explicit_nodes=per_sentence_view.explicit_nodes,
-                carryover_nodes=per_sentence_view.carryover_nodes,
-                active_edges=frozenset(active_edges_mutable),
-                is_connected=per_sentence_view.is_connected,
-                is_empty=per_sentence_view.is_empty,
-            )
-
-            per_sentence_view = self._per_sentence_view
+            per_sentence_view = self._build_projection(sentence_id)
+            self._per_sentence_view = per_sentence_view
 
         # ------------------------------------------------------------------
         # Optional connectivity logging
