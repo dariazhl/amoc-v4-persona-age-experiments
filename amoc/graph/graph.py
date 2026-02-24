@@ -514,9 +514,6 @@ class Graph:
         # - Activity status is IGNORED - this is a memory check
         G = nx.Graph()
         for edge in self.edges:
-            # Exclude ATTRIBUTIVE edges from connectivity graph
-            if edge.relation_class == RelationClass.ATTRIBUTIVE:
-                continue
             G.add_edge(edge.source_node, edge.dest_node)
 
         # Check if at least one endpoint already exists in cumulative memory
@@ -1055,16 +1052,21 @@ class Graph:
         Returns:
             True if connected (or empty/single node), False if disconnected
         """
+        active_nodes = {n for n in self.nodes if n.active}
         active_edges = [e for e in self.edges if e.active]
-        if not active_edges:
-            return True  # Empty graph is trivially connected
+
+        if len(active_nodes) <= 1:
+            return True
 
         G_active = nx.Graph()
-        for edge in active_edges:
-            G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
 
-        if G_active.number_of_nodes() <= 1:
-            return True
+        # Add all active nodes explicitly
+        for node in active_nodes:
+            G_active.add_node(node)
+
+        # Add edges between active nodes
+        for edge in active_edges:
+            G_active.add_edge(edge.source_node, edge.dest_node)
 
         return nx.is_connected(G_active)
 
@@ -1178,16 +1180,19 @@ class Graph:
 
     def ensure_active_connectivity(
         self,
-        focus_nodes: Set[Node],
-        carryover_focus_nodes: Optional[Set[Node]] = None,
-    ) -> Set[Edge]:
+        required_nodes: Set[Node],
+    ) -> bool:
         """
         Ensure the active graph remains connected.
 
         STEP 1 of connectivity enforcement: Try to connect using EXISTING edges.
 
+        Guarantees: All nodes that are explicit OR carry-over for the current
+        sentence must belong to a single connected component in the active graph.
+        No visible carry-over node may remain isolated.
+
         If the active graph becomes disconnected:
-        1. Identify focus nodes (explicit entities in current sentence + carry-over focus)
+        1. Build active nodes from graph memory + required nodes (explicit + carryover)
         2. Compute connected components of the active graph
         3. If multiple components exist, find minimum set of existing memory edges
         that connect them
@@ -1201,55 +1206,57 @@ class Graph:
         - Are NOT eligible for inference
         - Exist only to preserve structural connectivity
 
-        IMPORTANT: If this method returns an empty set but the graph is still
-        disconnected (check with check_active_connectivity()), caller should
-        trigger a secondary LLM call to create new edges. Use
-        get_nodes_needing_connection() to get the pairs that need connecting.
+        Args:
+            required_nodes: Set of nodes that MUST be connected (explicit + carryover)
 
         Returns:
-            Set of edges promoted as connectors.
-
-
+            True if graph is connected after enforcement, False otherwise.
+            If False, caller should trigger secondary LLM call.
         """
-        # Build active subgraph
+        # Base active nodes from graph memory
+        active_nodes = {n for n in self.nodes if n.active}
+
+        # Enforce required nodes (explicit + carryover)
+        active_nodes |= required_nodes
+
         active_edges = [e for e in self.edges if e.active]
 
         # Build undirected graph of active edges
         G_active = nx.Graph()
 
-        # Add active nodes explicitly
-        active_nodes = {n for n in self.nodes if n.active}
-
+        # Add ALL active_nodes explicitly
         for node in active_nodes:
             G_active.add_node(node)
 
-        # Add active edges
+        # Add edges only if both endpoints are in active_nodes
         for edge in active_edges:
-            G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
+            if edge.source_node in active_nodes and edge.dest_node in active_nodes:
+                G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
 
         # Check if already connected
-        if G_active.number_of_nodes() <= 1 or nx.is_connected(G_active):
-            return set()
+        if G_active.number_of_nodes() <= 1:
+            return True
+        if nx.is_connected(G_active):
+            return True
 
         # Graph is disconnected - find components
         components = list(nx.connected_components(G_active))
         if len(components) <= 1:
-            return set()
+            return True
 
-        # Identify focus component (contains focus nodes)
-        all_focus = focus_nodes | (carryover_focus_nodes or set())
+        # Identify focus component (largest component containing required nodes)
         focus_component_idx = 0
+        max_required_count = 0
         for idx, comp in enumerate(components):
-            if any(n in comp for n in all_focus):
+            required_in_comp = len(comp & required_nodes)
+            if required_in_comp > max_required_count:
+                max_required_count = required_in_comp
                 focus_component_idx = idx
-                break
 
         # Build full cumulative graph for finding paths
         G_cumulative = nx.Graph()
 
         for edge in self.edges:
-            if edge.relation_class != RelationClass.CONNECTIVE:
-                continue
             G_cumulative.add_edge(edge.source_node, edge.dest_node, edge=edge)
 
         promoted_connectors: Set[Edge] = set()
@@ -1311,16 +1318,18 @@ class Graph:
                     edge.reactivated_this_sentence = False
                     promoted_connectors.add(edge)
 
-            if __debug__:
-                G_check = nx.Graph()
-                for e in self.edges:
-                    if e.active:
-                        G_check.add_edge(e.source_node, e.dest_node)
-                if G_check.number_of_nodes() > 1:
-                    # Note: might still be disconnected if no path was found
-                    pass
+        # Check final connectivity state
+        G_final = nx.Graph()
+        for node in active_nodes:
+            G_final.add_node(node)
+        for e in self.edges:
+            if e.active and e.source_node in active_nodes and e.dest_node in active_nodes:
+                G_final.add_edge(e.source_node, e.dest_node)
 
-        return promoted_connectors
+        if G_final.number_of_nodes() <= 1:
+            return True
+
+        return nx.is_connected(G_final)
 
     def get_active_edges_by_role(self) -> dict[str, Set[Edge]]:
         """

@@ -3361,7 +3361,7 @@ class AMoCv4:
             ):
                 print(
                     "DEBUG EDGE:",
-                    e.relation,
+                    e.label,
                     "active=",
                     e.active,
                     "structural=",
@@ -3370,16 +3370,17 @@ class AMoCv4:
                     getattr(e, "score", None),
                 )
 
-        connector_edges = self.graph.ensure_active_connectivity(
-            focus_nodes=self._explicit_nodes_current_sentence
-            | getattr(self, "_carryover_nodes_current_sentence", set()),
-            carryover_focus_nodes=filtered_anchors,
+        # Construct required nodes: explicit + carryover
+        required_nodes = (
+            self._explicit_nodes_current_sentence
+            | getattr(self, "_carryover_nodes_current_sentence", set())
         )
 
-        if connector_edges:
+        connected = self.graph.ensure_active_connectivity(required_nodes)
+
+        if not connected:
             logging.debug(
-                "[Connectivity] Promoted %d edges as connectors to preserve connectivity",
-                len(connector_edges),
+                "[Connectivity] Graph still disconnected after enforcement — LLM repair needed",
             )
 
         # TASK 2: SECONDARY LLM CALL FOR FORCED CONNECTIVITY

@@ -1138,26 +1138,30 @@ def plot_amoc_triplets(
         if (u, v, k) in edge_labels
     ]
 
-    if show_triplet_overlay and active_triplets_for_overlay:
-        # Build set of active nodes for filtering
-        # Active nodes = all nodes NOT in inactive_node_set
-        active_nodes_for_filter = plotted_nodes - inactive_node_set
-        edges_to_remove = []
+    if show_triplet_overlay:
 
+        active_nodes_for_filter = plotted_nodes - inactive_node_set
+
+        # Prune edges
         for u, v, k in list(G.edges(keys=True)):
             if u not in active_nodes_for_filter or v not in active_nodes_for_filter:
-                edges_to_remove.append((u, v, k))
+                G.remove_edge(u, v, k)
 
-        for edge in edges_to_remove:
-            G.remove_edge(*edge)
+        # Recompute triplets from cleaned G
+        active_triplets_for_overlay = [
+            (u, edge_labels[(u, v, k)], v)
+            for u, v, k in G.edges(keys=True)
+            if (u, v, k) in edge_labels
+        ]
 
-        _draw_triplet_overlay(
-            ax,
-            active_triplets_for_overlay,
-            active_nodes=active_nodes_for_filter,
-            max_triplets=12,
-            font_size=8,
-        )
+        if active_triplets_for_overlay:
+            _draw_triplet_overlay(
+                ax,
+                active_triplets_for_overlay,
+                active_nodes=active_nodes_for_filter,
+                max_triplets=12,
+                font_size=8,
+            )
 
     ax.axis("off")
     fig.savefig(save_path, format="PNG", dpi=300, bbox_inches="tight")
