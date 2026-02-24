@@ -1043,6 +1043,16 @@ class AMoCv4:
         subj_key = tuple(get_concept_lemmas(self.spacy_nlp, subject))
         obj_key = tuple(get_concept_lemmas(self.spacy_nlp, obj))
 
+        # ------------------------------------------------------------
+        # GUARANTEE: Preserve historical connectivity
+        # ------------------------------------------------------------
+        # If both nodes are already active (carryover and not decayed),
+        # allow the edge to survive attachment filtering.
+        active_nodes = self._get_nodes_with_active_edges()
+        active_lemma_keys = {tuple(n.lemmas) for n in active_nodes}
+        if subj_key in active_lemma_keys and obj_key in active_lemma_keys:
+            return True
+
         memory_lemma_keys = {tuple(n.lemmas) for n in self.graph.nodes}
         current_lemma_keys = {tuple(n.lemmas) for n in current_sentence_nodes}
 
@@ -2353,12 +2363,24 @@ class AMoCv4:
 
     def _decay_node_activation(self):
         for node in self.graph.nodes:
+
+            # Explicit nodes never decay this sentence
             if node in self._explicit_nodes_current_sentence:
                 continue
+
+            # Decrease activation score
             if node.activation_score > 0:
                 node.activation_score -= 1
+
+            # If fully decayed → deactivate node AND its edges
             if node.activation_score <= 0:
+                node.activation_score = 0
                 node.active = False
+
+                # Deactivate all edges incident to this node
+                for edge in self.graph.edges:
+                    if edge.source_node == node or edge.dest_node == node:
+                        edge.active = False
 
     # ==========================================================================
     # ANALYZE HELPER METHODS - Mechanical extraction only
@@ -3754,6 +3776,53 @@ class AMoCv4:
                 rollback_needed = True
 
         # ---------- CUMULATIVE ----------
+        # Enforce connectivity on the full memory graph (active + inactive edges)
+
+        if not rollback_needed and not self._is_cumulative_connected():
+
+            G_full = nx.Graph()
+
+            # Include ALL nodes
+            for node in self.graph.nodes:
+                G_full.add_node(node)
+
+            # Include ALL edges (active + inactive)
+            for e in self.graph.edges:
+                G_full.add_edge(e.source_node, e.dest_node)
+
+            components = list(nx.connected_components(G_full))
+
+            if len(components) > 1:
+
+                components = sorted(components, key=len, reverse=True)
+                backbone = set(components[0])
+
+                for comp in components[1:]:
+
+                    node_a = next(iter(backbone))
+                    node_b = next(iter(comp))
+
+                    edge = self.graph.add_edge(
+                        node_a,
+                        node_b,
+                        "relates_to",
+                        self.edge_visibility,
+                        relation_class=RelationClass.CONNECTIVE,
+                        justification=Justification.CONNECTIVE,
+                        persona_influenced=False,
+                        inferred=False,
+                    )
+
+                    if edge:
+                        edge.structural = True
+                        edge.active = True  # ensures active remains connected
+                        edge.asserted_this_sentence = False
+                        edge.reactivated_this_sentence = False
+                        backbone.update(comp)
+
+            # Final validation
+            if not self._is_cumulative_connected():
+                rollback_needed = True
         # if not self._is_cumulative_connected():
 
         #     repair_success = False
@@ -4035,136 +4104,14 @@ class AMoCv4:
         )
 
         # ------------------------------------------------------------------
-        # Compute active nodes from projection
+        # Compute active nodes (projection is read-only view)
         # ------------------------------------------------------------------
         current_active_nodes = set(per_sentence_view.explicit_nodes) | set(
             per_sentence_view.carryover_nodes
         )
 
         # ------------------------------------------------------------------
-        # HARD PROJECTION INVARIANT
-        # Every active node must have ≥ 1 projection edge
-        # ------------------------------------------------------------------
-        # ------------------------------------------------------------------
-        # HARD PROJECTION INVARIANT
-        # Every active node must have ≥ 1 projection edge
-        # ------------------------------------------------------------------
-
-        # Make mutable copy of projection edges
-        active_edges_mutable = set(per_sentence_view.active_edges)
-        projection_invalid = False
-
-        for node in current_active_nodes:
-
-            has_projection_edge = any(
-                (edge.source_node == node or edge.dest_node == node)
-                for edge in active_edges_mutable
-            )
-
-            if has_projection_edge:
-                continue
-
-            # --------------------------------------------------
-            # Recover at least one cumulative edge for this node
-            # ONLY if it connects to ANOTHER ACTIVE NODE
-            # --------------------------------------------------
-            recovered = False
-
-            for edge in self.graph.edges:
-
-                other = None
-                if edge.source_node == node:
-                    other = edge.dest_node
-                elif edge.dest_node == node:
-                    other = edge.source_node
-                else:
-                    continue
-
-                # Only recover edge if it connects to ANOTHER ACTIVE NODE
-                if other not in current_active_nodes:
-                    continue
-
-                active_edges_mutable.add(edge)
-                projection_invalid = True
-                recovered = True
-                break
-
-        # If we modified projection edges → replace projection object
-        if projection_invalid:
-            per_sentence_view = self._build_projection(sentence_id)
-            self._per_sentence_view = per_sentence_view
-
-        # ============================================================
-        # HARD SEMANTIC CONNECTIVITY INVARIANT
-        # Every EXPLICIT node must participate in ≥1 REAL edge
-        # (no structural edges allowed)
-        # ============================================================
-
-        active_edges_mutable = set(per_sentence_view.active_edges)
-
-        explicit_nodes_current = set(self._explicit_nodes_current_sentence)
-
-        # Build adjacency map
-        node_to_edges = {}
-        for edge in active_edges_mutable:
-            node_to_edges.setdefault(edge.source_node, []).append(edge)
-            node_to_edges.setdefault(edge.dest_node, []).append(edge)
-
-        for node in explicit_nodes_current:
-
-            relation_value = getattr(edge, "relation", None)
-            if relation_value is None:
-                relation_value = getattr(edge, "label", None)
-            if relation_value is None:
-                relation_value = getattr(edge, "predicate", None)
-
-            is_structural = isinstance(
-                relation_value, str
-            ) and relation_value.startswith("structural::")
-
-            participates = any(
-                not (
-                    isinstance(
-                        getattr(
-                            e,
-                            "relation",
-                            getattr(e, "label", getattr(e, "predicate", "")),
-                        ),
-                        str,
-                    )
-                    and getattr(
-                        e, "relation", getattr(e, "label", getattr(e, "predicate", ""))
-                    ).startswith("structural::")
-                )
-                for e in node_to_edges.get(node, [])
-            )
-
-            if participates:
-                continue
-
-            # If isolated, attach to another explicit node with REAL edge
-            candidates = [n for n in explicit_nodes_current if n != node]
-
-            if not candidates:
-                continue
-
-            target = candidates[0]
-
-            new_edge = self.graph.add_edge(
-                node,
-                target,
-                relation="relates_to",
-                activation_score=1,
-            )
-
-            active_edges_mutable.add(new_edge)
-
-        # Replace projection with updated edges
-        per_sentence_view.active_edges = active_edges_mutable
-        self._per_sentence_view = per_sentence_view
-
-        # ------------------------------------------------------------------
-        # Optional connectivity logging
+        # Optional connectivity logging (memory governs structure)
         # ------------------------------------------------------------------
         if (
             per_sentence_view is not None
