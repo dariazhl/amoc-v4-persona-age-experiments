@@ -4063,21 +4063,13 @@ class AMoCv4:
 
             if has_projection_edge:
                 continue
+
             # --------------------------------------------------
             # Recover at least one cumulative edge for this node
+            # ONLY if it connects to ANOTHER ACTIVE NODE
             # --------------------------------------------------
             recovered = False
 
-            for edge in self.graph.edges:
-                if edge.source_node == node or edge.dest_node == node:
-                    active_edges_mutable.add(edge)
-                    recovered = True
-                    projection_invalid = True
-                    break
-
-            # If no cumulative edge exists, this is a true isolation
-            # (optional: raise or log)
-            # Reactivate one valid edge connecting to another active node
             for edge in self.graph.edges:
 
                 other = None
@@ -4085,22 +4077,91 @@ class AMoCv4:
                     other = edge.dest_node
                 elif edge.dest_node == node:
                     other = edge.source_node
-
-                if other is None:
+                else:
                     continue
 
+                # Only recover edge if it connects to ANOTHER ACTIVE NODE
                 if other not in current_active_nodes:
                     continue
 
-                edge.active = True
                 active_edges_mutable.add(edge)
                 projection_invalid = True
+                recovered = True
                 break
 
         # If we modified projection edges → replace projection object
         if projection_invalid:
             per_sentence_view = self._build_projection(sentence_id)
             self._per_sentence_view = per_sentence_view
+
+        # ============================================================
+        # HARD SEMANTIC CONNECTIVITY INVARIANT
+        # Every EXPLICIT node must participate in ≥1 REAL edge
+        # (no structural edges allowed)
+        # ============================================================
+
+        active_edges_mutable = set(per_sentence_view.active_edges)
+
+        explicit_nodes_current = set(self._explicit_nodes_current_sentence)
+
+        # Build adjacency map
+        node_to_edges = {}
+        for edge in active_edges_mutable:
+            node_to_edges.setdefault(edge.source_node, []).append(edge)
+            node_to_edges.setdefault(edge.dest_node, []).append(edge)
+
+        for node in explicit_nodes_current:
+
+            relation_value = getattr(edge, "relation", None)
+            if relation_value is None:
+                relation_value = getattr(edge, "label", None)
+            if relation_value is None:
+                relation_value = getattr(edge, "predicate", None)
+
+            is_structural = isinstance(
+                relation_value, str
+            ) and relation_value.startswith("structural::")
+
+            participates = any(
+                not (
+                    isinstance(
+                        getattr(
+                            e,
+                            "relation",
+                            getattr(e, "label", getattr(e, "predicate", "")),
+                        ),
+                        str,
+                    )
+                    and getattr(
+                        e, "relation", getattr(e, "label", getattr(e, "predicate", ""))
+                    ).startswith("structural::")
+                )
+                for e in node_to_edges.get(node, [])
+            )
+
+            if participates:
+                continue
+
+            # If isolated, attach to another explicit node with REAL edge
+            candidates = [n for n in explicit_nodes_current if n != node]
+
+            if not candidates:
+                continue
+
+            target = candidates[0]
+
+            new_edge = self.graph.add_edge(
+                node,
+                target,
+                relation="relates_to",
+                activation_score=1,
+            )
+
+            active_edges_mutable.add(new_edge)
+
+        # Replace projection with updated edges
+        per_sentence_view.active_edges = active_edges_mutable
+        self._per_sentence_view = per_sentence_view
 
         # ------------------------------------------------------------------
         # Optional connectivity logging

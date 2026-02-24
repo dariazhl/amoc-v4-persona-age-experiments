@@ -10,15 +10,6 @@ import textwrap
 
 DEFAULT_BLUE_NODES: Iterable[str] = ()
 
-# LAYOUT POLICY: Option B + D — Sub-Rings as primary, Collision as fallback
-# When nodes at the same hop distance exceed threshold, split into sub-rings
-MAX_NODES_PER_RING = 6  # Split ring if more than this many nodes
-SUB_RING_RADIUS_OFFSET = (
-    0.15  # Small radial offset between sub-rings (fraction of ring_step)
-)
-MIN_SPACING_PADDING = 0.45  # 25% padding on node diameter for collision detection
-RADIUS_GROWTH_MAX = 4.0
-RADIUS_GROWTH_MIN = 1.0
 TRIVIAL_NODE_TEXTS = {
     # Determiners - should be stripped at node creation but filter here as safety
     "the",
@@ -54,8 +45,6 @@ TRIVIAL_NODE_TEXTS = {
     "while",
     "as",
 }
-_FROZEN_POSITIONS = {}
-_LAYOUT_INITIALIZED = False
 
 
 def _pretty_text(text: str) -> str:
@@ -65,395 +54,72 @@ def _pretty_text(text: str) -> str:
     return text
 
 
-def _enforce_node_edge_separation(G, pos, fixed_nodes, min_dist=1.5, iterations=4):
-    """
-    Push nodes away from edges they are not incident to.
-    Prevents edge lines crossing node centers.
-    """
-
-    import math
-
-    def point_segment_distance(px, py, x1, y1, x2, y2):
-        # Projection-based distance
-        dx = x2 - x1
-        dy = y2 - y1
-        if dx == dy == 0:
-            return math.hypot(px - x1, py - y1)
-
-        t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)
-        t = max(0, min(1, t))
-        proj_x = x1 + t * dx
-        proj_y = y1 + t * dy
-        return math.hypot(px - proj_x, py - proj_y), proj_x, proj_y
-
-    for _ in range(iterations):
-        for node in G.nodes():
-            if node in fixed_nodes:
-                continue
-
-            px, py = pos[node]
-
-            for u, v in G.edges():
-                if node in (u, v):
-                    continue
-
-                x1, y1 = pos[u]
-                x2, y2 = pos[v]
-
-                dist, proj_x, proj_y = point_segment_distance(px, py, x1, y1, x2, y2)
-
-                if dist < min_dist:
-                    # Push node away from edge
-                    dx = px - proj_x
-                    dy = py - proj_y
-                    length = math.hypot(dx, dy) + 1e-6
-                    shift = (min_dist - dist) * 0.6
-                    pos[node] = (
-                        px + shift * dx / length,
-                        py + shift * dy / length,
-                    )
-
-
 def _is_trivial_node_text(text: str) -> bool:
     return _pretty_text(text).lower() in TRIVIAL_NODE_TEXTS
 
 
-def _wrap_angle(angle: float) -> float:
-    two_pi = 2.0 * math.pi
-    return angle % two_pi
+def _compute_radial_positions(G, hub):
+    """
+    Deterministic BFS-based concentric radial layout.
+    No scaling loops.
+    No collision detection.
+    No jitter.
+    """
+    from collections import deque
 
+    # ---------------------------
+    # BFS LEVEL COMPUTATION
+    # ---------------------------
+    levels = {hub: 0}
+    queue = deque([hub])
 
-def _circular_distance(a: float, b: float) -> float:
-    two_pi = 2.0 * math.pi
-    diff = abs(a - b) % two_pi
-    return min(diff, two_pi - diff)
+    while queue:
+        node = queue.popleft()
+        for neighbor in G.neighbors(node):
+            if neighbor not in levels:
+                levels[neighbor] = levels[node] + 1
+                queue.append(neighbor)
 
+    # ---------------------------
+    # GROUP NODES BY LEVEL
+    # ---------------------------
+    rings = {}
+    for node, level in levels.items():
+        rings.setdefault(level, []).append(node)
 
-def _min_pairwise_distance(pos: Dict[str, Tuple[float, float]]) -> float:
-    coords = list(pos.values())
-    if len(coords) < 2:
-        return float("inf")
-    min_dist = float("inf")
-    for i in range(len(coords)):
-        x1, y1 = coords[i]
-        for j in range(i + 1, len(coords)):
-            x2, y2 = coords[j]
-            dist = math.hypot(x1 - x2, y1 - y2)
-            if dist < min_dist:
-                min_dist = dist
-    return min_dist
+    pos = {}
 
+    BASE_RADIUS = 4.0
+    RING_GAP = 4.5
+    NODE_DIAMETER = 1.8
 
-def _set_axes_limits(ax, pos: Dict[str, Tuple[float, float]]) -> None:
-    xs = [x for x, _ in pos.values()]
-    ys = [y for _, y in pos.values()]
-    if not xs or not ys:
-        return
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
-    dx = max(1.0, max_x - min_x)
-    dy = max(1.0, max_y - min_y)
-    pad_x = dx * 0.18
-    pad_y = dy * 0.18
-    ax.set_xlim(min_x - pad_x, max_x + pad_x)
-    ax.set_ylim(min_y - pad_y, max_y + pad_y)
+    # ---------------------------
+    # PLACE EACH RING
+    # ---------------------------
+    for level, nodes in rings.items():
 
+        n = len(nodes)
 
-def _node_required_center_distance_data(
-    fig,
-    ax,
-    *,
-    node_size: float,
-    pad_px: float = 6.0,
-    use_percentage_padding: bool = True,
-) -> float:
-    # node_size is matplotlib scatter "s" in points^2 (area).
-    # LAYOUT POLICY: Use 25% padding (MIN_SPACING_PADDING) when use_percentage_padding=True
-    fig.canvas.draw()
-    dpi = fig.dpi
-    radius_pts = math.sqrt(float(node_size) / math.pi)
-    radius_px = radius_pts * dpi / 72.0
+        if n == 1:
+            radius = BASE_RADIUS + level * RING_GAP
+            pos[nodes[0]] = (radius, 0.0)
+            continue
 
-    # Calculate padding: either use percentage of diameter or fixed pixels
-    if use_percentage_padding:
-        # 25% of node diameter = 50% of radius
-        diameter_px = 2.0 * radius_px
-        effective_pad_px = diameter_px * MIN_SPACING_PADDING
-    else:
-        effective_pad_px = pad_px
+        # ensure no overlap using circumference math
+        circumference_needed = n * NODE_DIAMETER * 1.5
+        min_radius = circumference_needed / (2 * math.pi)
 
-    # Convert px to data units via the current data transform.
-    x0, y0 = ax.transData.transform((0.0, 0.0))
-    x1, _ = ax.transData.transform((1.0, 0.0))
-    _, y1 = ax.transData.transform((0.0, 1.0))
-    px_per_x = max(1e-6, abs(x1 - x0))
-    px_per_y = max(1e-6, abs(y1 - y0))
-    radius_data = max(
-        (radius_px + effective_pad_px) / px_per_x,
-        (radius_px + effective_pad_px) / px_per_y,
-    )
-    return 2.0 * radius_data
+        radius = max(BASE_RADIUS + level * RING_GAP, min_radius)
 
+        angle_step = 2 * math.pi / n
 
-def _ring_required_radius(n_ring: int, target_min_dist: float) -> float:
-    if n_ring <= 1:
-        return target_min_dist * 1.6
-    # For two-node rings, keep edges off a straight line by using a 120° spread.
-    angular_sep = (2.0 * math.pi / 3.0) if n_ring == 2 else (2.0 * math.pi / n_ring)
-    chord_factor = 2.0 * math.sin(angular_sep / 2.0)
-    if chord_factor <= 0.0:
-        chord_factor = 1e-6
-    return (target_min_dist / chord_factor) * 1.05
-
-
-def _enforce_minimum_spacing(
-    fig,
-    ax,
-    pos: Dict[str, Tuple[float, float]],
-    hub: Optional[str],
-    fixed_nodes,
-    *,
-    node_size: float = 3800,
-    pad_px: float = 8.0,
-    scale_step: float = 1.03,
-    max_iter: int = 140,
-) -> None:
-    if len(pos) < 2:
-        return
-    for _ in range(max_iter):
-        _set_axes_limits(ax, pos)
-        required = _node_required_center_distance_data(
-            fig, ax, node_size=node_size, pad_px=pad_px
-        )
-        if _min_pairwise_distance(pos) >= required:
-            return
-        # Radial scale (keep angles) until node circles no longer overlap.
-        for node, (x, y) in list(pos.items()):
-            if node in fixed_nodes:
-                continue  # NEVER move frozen nodes
-            pos[node] = (x * scale_step, y * scale_step)
-
-
-def _level_angle_seed(level: int) -> float:
-    golden_angle = math.pi * (3.0 - math.sqrt(5.0))
-    return _wrap_angle(level * golden_angle)
-
-
-def _point_segment_distance(
-    px: float, py: float, ax: float, ay: float, bx: float, by: float
-) -> Tuple[float, float, float]:
-    dx = bx - ax
-    dy = by - ay
-    if dx == 0.0 and dy == 0.0:
-        return math.hypot(px - ax, py - ay), ax, ay
-    t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)
-    t = max(0.0, min(1.0, t))
-    proj_x = ax + t * dx
-    proj_y = ay + t * dy
-    return math.hypot(px - proj_x, py - proj_y), proj_x, proj_y
-
-
-def _push_nodes_off_edges(
-    fig,
-    ax,
-    pos: Dict[str, Tuple[float, float]],
-    edges: List[Tuple[str, str]],
-    *,
-    node_size: float = 3800,
-    pad_px: float = 12.0,
-    corridor_scale: float = 1.25,
-    max_iter: int = 140,
-) -> None:
-    if len(pos) < 3 or not edges:
-        return
-    edges_list = [(u, v) for u, v in edges if u in pos and v in pos]
-    if not edges_list:
-        return
-    for _ in range(max_iter):
-        _set_axes_limits(ax, pos)
-        required = _node_required_center_distance_data(
-            fig, ax, node_size=node_size, pad_px=pad_px
-        )
-        corridor = required * corridor_scale
-        moved = False
-        for node, (x, y) in list(pos.items()):
-            for u, v in edges_list:
-                if node == u or node == v:
-                    continue
-                ux, uy = pos[u]
-                vx, vy = pos[v]
-                dist, proj_x, proj_y = _point_segment_distance(x, y, ux, uy, vx, vy)
-                if dist >= corridor:
-                    continue
-                dx = x - proj_x
-                dy = y - proj_y
-                norm = math.hypot(dx, dy)
-                if norm < 1e-6:
-                    # Nudge sideways if perfectly aligned
-                    dx, dy = -(vy - uy), vx - ux
-                    norm = math.hypot(dx, dy)
-                dx /= norm
-                dy /= norm
-                gap = corridor - dist
-                step = max(gap * 1.25, required * 0.12)
-                x += dx * step
-                y += dy * step
-                moved = True
+        for i, node in enumerate(sorted(nodes)):
+            angle = i * angle_step
+            x = radius * math.cos(angle)
+            y = radius * math.sin(angle)
             pos[node] = (x, y)
-        if not moved:
-            break
 
-
-def _enforce_min_edge_length(
-    pos: Dict[str, Tuple[float, float]],
-    edges: List[Tuple[str, str]],
-    *,
-    min_len: float,
-    hub: Optional[str] = None,
-    step_factor: float = 1.04,
-    max_iter: int = 80,
-) -> None:
-    if min_len <= 0 or not edges:
-        return
-    for _ in range(max_iter):
-        moved = False
-        for u, v in edges:
-            if u not in pos or v not in pos:
-                continue
-            x1, y1 = pos[u]
-            x2, y2 = pos[v]
-            dx = x2 - x1
-            dy = y2 - y1
-            dist = math.hypot(dx, dy)
-            if dist >= min_len:
-                continue
-            if dist < 1e-6:
-                dx, dy, dist = 1.0, 0.0, 1.0
-            deficit = (min_len - dist) * step_factor
-            if hub is not None and u == hub and v != hub:
-                pos[v] = (x2 + (dx / dist) * deficit, y2 + (dy / dist) * deficit)
-            elif hub is not None and v == hub and u != hub:
-                pos[u] = (x1 - (dx / dist) * deficit, y1 - (dy / dist) * deficit)
-            else:
-                shift = deficit * 0.5
-                pos[u] = (x1 - (dx / dist) * shift, y1 - (dy / dist) * shift)
-                pos[v] = (x2 + (dx / dist) * shift, y2 + (dy / dist) * shift)
-            moved = True
-        if not moved:
-            break
-
-
-def _split_into_subrings(
-    nodes: List[str],
-    base_radius: float,
-    ring_step: float,
-    level_seed: float,
-) -> Dict[str, Tuple[float, float]]:
-    """
-    LAYOUT POLICY B: Sub-Ring Expansion
-    When nodes exceed MAX_NODES_PER_RING, split them across multiple sub-rings
-    at slightly different radii to prevent overcrowding.
-
-    Returns a dict of node -> (x, y) positions.
-    """
-    if not nodes:
-        return {}
-
-    positions: Dict[str, Tuple[float, float]] = {}
-    nodes = list(nodes)
-    n_nodes = len(nodes)
-
-    if n_nodes <= MAX_NODES_PER_RING:
-        # No split needed - place all on single ring
-        if n_nodes == 1:
-            angle = level_seed
-            positions[nodes[0]] = (
-                base_radius * math.cos(angle),
-                base_radius * math.sin(angle),
-            )
-        elif n_nodes == 2:
-            spread = 2.0 * math.pi / 3.0  # 120° to avoid straight line
-            angles = [
-                _wrap_angle(level_seed - spread / 2.0),
-                _wrap_angle(level_seed + spread / 2.0),
-            ]
-            for i, node in enumerate(nodes):
-                positions[node] = (
-                    base_radius * math.cos(angles[i]),
-                    base_radius * math.sin(angles[i]),
-                )
-        else:
-            for idx, node in enumerate(nodes):
-                angle = 2.0 * math.pi * idx / n_nodes + level_seed
-                positions[node] = (
-                    base_radius * math.cos(angle),
-                    base_radius * math.sin(angle),
-                )
-        return positions
-
-    # Split into sub-rings
-    num_subrings = (n_nodes + MAX_NODES_PER_RING - 1) // MAX_NODES_PER_RING
-    sub_ring_offset = ring_step * SUB_RING_RADIUS_OFFSET
-
-    for subring_idx in range(num_subrings):
-        start_idx = subring_idx * MAX_NODES_PER_RING
-        end_idx = min(start_idx + MAX_NODES_PER_RING, n_nodes)
-        subring_nodes = nodes[start_idx:end_idx]
-        n_subring = len(subring_nodes)
-
-        # Offset radius for each sub-ring
-        subring_radius = base_radius + (subring_idx * sub_ring_offset)
-
-        # Offset the starting angle for each sub-ring to stagger nodes
-        subring_seed = level_seed + (subring_idx * math.pi / (num_subrings * 2))
-
-        for idx, node in enumerate(subring_nodes):
-            angle = 2.0 * math.pi * idx / n_subring + subring_seed
-            positions[node] = (
-                subring_radius * math.cos(angle),
-                subring_radius * math.sin(angle),
-            )
-
-    return positions
-
-
-def _choose_angles_in_gaps(
-    *,
-    existing_angles: Dict[str, float],
-    missing_nodes: List[str],
-    candidate_count: int,
-    penalty_target: Dict[str, float] | None = None,
-    penalty_weight: float = 0.0,
-) -> Dict[str, float]:
-    if not missing_nodes:
-        return {}
-    missing_nodes = list(missing_nodes)
-    candidates = [2.0 * math.pi * i / candidate_count for i in range(candidate_count)]
-    occupied: List[float] = list(existing_angles.values())
-    chosen: Dict[str, float] = {}
-    for node in missing_nodes:
-        best_angle: float | None = None
-        best_score = -1e9
-        target = penalty_target.get(node) if penalty_target else None
-        for cand in candidates:
-            min_sep = min(
-                (_circular_distance(cand, occ) for occ in occupied), default=math.pi
-            )
-            score = min_sep
-            if target is not None and penalty_weight:
-                score -= penalty_weight * _circular_distance(cand, target)
-            if score > best_score:
-                best_score = score
-                best_angle = cand
-        if best_angle is None:
-            best_angle = 0.0
-        chosen[node] = best_angle
-        occupied.append(best_angle)
-        try:
-            candidates.remove(best_angle)
-        except ValueError:
-            pass
-    return chosen
+    return pos
 
 
 def _compute_edge_curvatures(
@@ -898,7 +564,7 @@ def plot_amoc_triplets(
 
     # If after injection the graph is still empty, return
     if G.number_of_nodes() == 0:
-        fig, ax = plt.subplots(figsize=(26, 18))
+        fig, ax = plt.subplots(figsize=(34, 26))
         ax.axis("off")
         fig.savefig(save_path, format="PNG", dpi=300, bbox_inches="tight")
         plt.close(fig)
@@ -906,360 +572,21 @@ def plot_amoc_triplets(
 
     plotted_nodes = set(G.nodes())
 
-    nodes = list(G.nodes())
+    fig, ax = plt.subplots(figsize=(34, 26))
 
-    position_cache = positions if positions is not None else {}
-    is_first_layout = len(position_cache) == 0
-
-    # =========================================================================
-    # IMMUTABLE CUMULATIVE LAYOUT: Freeze Mode
-    # =========================================================================
-    # When existing positions exist, ALL relaxation passes are SKIPPED.
-    # Only newly introduced nodes receive positions (on outermost ring).
-    # Existing nodes NEVER move - not even temporarily.
-    # =========================================================================
-    freeze_all_existing = bool(position_cache)
-
-    fixed_pos: Dict[str, Tuple[float, float]] = {
-        node: position_cache[node] for node in nodes if node in position_cache
-    }
-    hub: Optional[str] = None
-    # Freeze policy: once positions exist, always use full graph
-    if not is_first_layout:
-        layout_graph = G
-    else:
-        # Always compute layout from full projection graph
-        layout_graph = G.copy()
-
-        # === GUARANTEE: explicit nodes must be plotted ===
-        if explicit_nodes:
-            for node in explicit_nodes:
-                if node not in layout_graph:
-                    layout_graph.add_node(node)
-        else:
-            layout_graph = G
-
-    # largest_component_only is now only for backward compatibility
-    # With strict invariants, the graph should always be connected
-
-    fig, ax = plt.subplots(figsize=(26, 18))
-    # plt.subplots_adjust(top=0.05)
-    # Build sets for node categorization (refresh from parameter)
+    # Build sets for node categorization
     inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
     ever_explicit_node_set = set(ever_explicit_nodes) if ever_explicit_nodes else set()
     salient_node_set = set(salient_nodes) if salient_nodes else set()
 
-    pos: Dict[str, Tuple[float, float]] = {}
+    # =========================================================================
+    # DETERMINISTIC BFS RADIAL LAYOUT
+    # =========================================================================
+    # Select hub: highest degree node
+    hub = max(G.degree, key=lambda x: x[1])[0]
 
-    # Freeze all previously known nodes
-    fixed_nodes = set(position_cache.keys())
-
-    # Seed pos with frozen coordinates
-    for node in nodes:
-        if node in position_cache:
-            pos[node] = position_cache[node]
-
-    layout_nodes = list(layout_graph.nodes())  # Nodes for layout computation
-
-    # SAFETY: ensure hub exists in layout graph
-    if hub is not None and hub not in layout_nodes:
-        layout_nodes.append(hub)
-
-    max_label_len = max((len(_pretty_text(n)) for n in nodes), default=0)
-    target_min_dist = 18.0 + max(0, max_label_len - 10) * 0.22
-
-    if len(layout_nodes) == 0:
-        # No active nodes - place all nodes in a simple grid
-        for i, node in enumerate(nodes):
-            pos[node] = (i % 5 * 10, i // 5 * 10)
-        hub = nodes[0] if nodes else None
-    elif len(layout_nodes) == 1:
-        pos[layout_nodes[0]] = (0.0, 0.0)
-        hub = layout_nodes[0]
-    else:
-        # LAYOUT POLICY: Use layout_graph (active subgraph) for hub selection and levels
-        UG = layout_graph
-
-        # Single-hub radial layout (hub centered) to keep the nodes at fixed positions
-        if (
-            positions is not None
-            and "__HUB__" in positions
-            and positions["__HUB__"] in layout_nodes
-        ):
-            hub = positions["__HUB__"]
-        else:
-            # Deterministic hub: highest degree node
-            hub_candidates = [
-                n for n in layout_nodes if n in blue_nodes
-            ] or layout_nodes
-            hub = max(hub_candidates, key=lambda n: (UG.degree(n), str(n)))
-            if positions is not None:
-                positions["__HUB__"] = hub
-
-        pos[hub] = (0.0, 0.0)
-
-        # Compute radial levels from hub
-        if hub in UG and UG.number_of_nodes() > 0:
-            levels = nx.single_source_shortest_path_length(UG, hub)
-            max_level = max(levels.values(), default=0)
-        else:
-            levels = {}
-            max_level = 0
-
-        # ------------------------------------------------------------------
-        # RADIAL DEPTH CAP
-        # Prevent infinite ring growth while preserving cumulative memory
-        # ------------------------------------------------------------------
-        MAX_LAYOUT_DEPTH = layout_depth  # Max rings from hub (configurable)
-
-        # Cap depth
-        for node in list(levels.keys()):
-            if levels[node] > MAX_LAYOUT_DEPTH:
-                levels[node] = MAX_LAYOUT_DEPTH
-
-        max_level = min(max_level, MAX_LAYOUT_DEPTH)
-
-        # Ensure every layout node has a level (safety for collision phase)
-        for node in layout_nodes:
-            if node not in levels:
-                levels[node] = max_level
-
-        ring_step = max(26.0, target_min_dist * 1.55)
-        radii: Dict[int, float] = {}
-
-        # If we have cached coordinates, keep existing nodes fixed and only
-        # place newly appearing nodes.
-        # LAYOUT POLICY: Only new nodes may be adjusted (frozen nodes stay fixed)
-        if fixed_pos:
-            for node, coords in fixed_pos.items():
-                pos[node] = coords
-            if hub not in pos:
-                pos[hub] = (0.0, 0.0)
-            movable_nodes = [n for n in nodes if n not in pos]
-
-            # Calculate initial radius for bounded growth enforcement
-            initial_radius = max(
-                (math.hypot(x, y) for x, y in pos.values() if (x, y) != (0.0, 0.0)),
-                default=ring_step,
-            )
-            max_allowed_radius = radii.get(max_level, initial_radius)
-
-            # Precompute ring radii based on both fixed + new nodes per level,
-            # but never pull a new node inward past any already-placed node.
-            max_r_by_level: Dict[int, float] = {}
-            for node, (x, y) in pos.items():
-                if node == hub:
-                    continue
-                lvl = levels.get(node)
-                if lvl is None:
-                    continue
-                max_r_by_level[lvl] = max(
-                    max_r_by_level.get(lvl, 0.0), math.hypot(x, y)
-                )
-            for level in range(1, max_level + 1):
-                ring_nodes = [n for n in nodes if levels.get(n) == level]
-                n_ring = len(ring_nodes)
-                # LAYOUT POLICY B: Use effective count for sub-ring calculation
-                effective_n = min(n_ring, MAX_NODES_PER_RING)
-                required_r = _ring_required_radius(effective_n, target_min_dist)
-                prev_r = radii.get(level - 1, 0.0)
-                radii[level] = max(required_r, prev_r + ring_step)
-
-            # Now that radii are computed, set bounded growth limit correctly
-            max_allowed_radius = radii.get(max_level, initial_radius)
-
-            # LAYOUT POLICY B: Place new nodes using sub-rings when overcrowded
-            # Fill angular gaps around already placed nodes (if any).
-            for level in range(1, max_level + 1):
-                ring_new = sorted([n for n in movable_nodes if levels.get(n) == level])
-                if not ring_new:
-                    continue
-                r = radii[level]
-
-                # Check if we need sub-rings for new nodes at this level
-                existing_at_level = [
-                    n for n in pos if n != hub and levels.get(n) == level
-                ]
-                total_at_level = len(existing_at_level) + len(ring_new)
-
-                if total_at_level > MAX_NODES_PER_RING and len(ring_new) > 1:
-                    # Use sub-ring placement for new nodes only
-                    level_seed = _level_angle_seed(level)
-                    # Offset sub-ring seed to avoid existing nodes
-                    existing_angles = [
-                        _wrap_angle(math.atan2(y, x))
-                        for n, (x, y) in pos.items()
-                        if n in existing_at_level and (x != 0.0 or y != 0.0)
-                    ]
-                    if existing_angles:
-                        # Find largest gap and place sub-rings there
-                        avg_existing = sum(existing_angles) / len(existing_angles)
-                        level_seed = _wrap_angle(
-                            avg_existing + math.pi
-                        )  # Opposite side
-
-                    subring_positions = _split_into_subrings(
-                        ring_new, r, ring_step, level_seed
-                    )
-                    pos.update(subring_positions)
-                else:
-                    # Standard gap-filling for small number of new nodes
-                    default_angle = _level_angle_seed(level)
-                    existing_angles = {
-                        n: _wrap_angle(math.atan2(y, x))
-                        for n, (x, y) in pos.items()
-                        if n != hub
-                        and levels.get(n) == level
-                        and (x != 0.0 or y != 0.0)
-                    }
-                    chosen = _choose_angles_in_gaps(
-                        existing_angles=existing_angles,
-                        missing_nodes=ring_new,
-                        candidate_count=max(
-                            12, len(ring_new) + len(existing_angles) + 6
-                        ),
-                    )
-                    for node in ring_new:
-                        angle = chosen.get(node, default_angle)
-                        pos[node] = (r * math.cos(angle), r * math.sin(angle))
-
-            # Any node still not placed (shouldn't happen) goes to an outer ring.
-            max_existing_r = max(
-                (math.hypot(x, y) for x, y in pos.values()), default=0.0
-            )
-            for node in movable_nodes:
-                if node in pos:
-                    continue
-                r = min(max_existing_r + ring_step, max_allowed_radius)
-                pos[node] = (r, 0.0)
-
-            # LAYOUT POLICY D: Collision-avoidance pass as fallback
-            # Only moves newly placed nodes (keeps cached nodes in place).
-            # BOUNDED RADIUS GROWTH: Respect max_allowed_radius
-            movable_sorted = sorted(movable_nodes)
-            for _ in range(180):
-                _set_axes_limits(ax, pos)
-                required = _node_required_center_distance_data(
-                    fig, ax, node_size=3800, use_percentage_padding=True
-                )
-                moved = False
-                for node in movable_nodes:
-                    if node not in pos:
-                        continue
-                    x, y = pos[node]
-                    if x == 0.0 and y == 0.0:
-                        x = required
-                        y = 0.0
-                    # Push outward until no overlap with any other node.
-                    for _inner in range(12):
-                        min_dist = float("inf")
-                        for other, (ox, oy) in pos.items():
-                            if other == node:
-                                continue
-                            d = math.hypot(x - ox, y - oy)
-                            if d < min_dist:
-                                min_dist = d
-                        if min_dist >= required:
-                            break
-                        # Check bounded growth before scaling
-                        new_r = math.hypot(x * 1.10, y * 1.10)
-                        if new_r > max_allowed_radius:
-                            break  # Don't exceed bounded growth
-                        x *= 1.10
-                        y *= 1.10
-                        moved = True
-                    pos[node] = (x, y)
-                # Also ensure movable nodes don't overlap each other after scaling.
-                if not moved:
-                    # Quick check
-                    any_overlap = False
-                    for i1, n1 in enumerate(movable_sorted):
-                        if n1 not in pos:
-                            continue
-                        x1, y1 = pos[n1]
-                        for n2 in movable_sorted[i1 + 1 :]:
-                            if n2 not in pos:
-                                continue
-                            x2, y2 = pos[n2]
-                            if math.hypot(x1 - x2, y1 - y2) < required:
-                                any_overlap = True
-                                break
-                        if any_overlap:
-                            break
-                    if not any_overlap:
-                        break
-        else:
-            # No cache: compute a full radial layout from scratch.
-            # LAYOUT POLICY B: Use sub-rings when nodes exceed MAX_NODES_PER_RING
-            # Precompute counts per ring to choose radii that avoid overlap on the ring.
-            for level in range(1, max_level + 1):
-                ring_nodes = [n for n in nodes if levels.get(n) == level]
-                n_ring = len(ring_nodes)
-                # For sub-ring calculation, use effective count per sub-ring
-                effective_n = min(n_ring, MAX_NODES_PER_RING)
-                required_r = _ring_required_radius(effective_n, target_min_dist)
-                prev_r = radii.get(level - 1, 0.0)
-                radii[level] = max(required_r, prev_r + target_min_dist * 1.4)
-
-            pos = {hub: (0.0, 0.0)}
-            initial_radius = radii.get(1, ring_step)  # Track for bounded growth
-
-            for level in range(1, max_level + 1):
-                ring = sorted([n for n in nodes if levels.get(n) == level])
-                if not ring:
-                    continue
-                r = radii[level]
-
-                # LAYOUT POLICY B: Use sub-ring placement for overcrowded rings
-                level_seed = _level_angle_seed(level)
-                subring_positions = _split_into_subrings(ring, r, ring_step, level_seed)
-                pos.update(subring_positions)
-
-            # LAYOUT POLICY D: Collision-driven adjustment as fallback
-            # Scale outward until node circles cannot overlap in screen space.
-            # BOUNDED RADIUS GROWTH: Limit scaling to RADIUS_GROWTH_MAX
-            max_allowed_radius = initial_radius * RADIUS_GROWTH_MAX
-            for _ in range(120):
-                _set_axes_limits(ax, pos)
-                required = _node_required_center_distance_data(
-                    fig, ax, node_size=3800, use_percentage_padding=True
-                )
-                if _min_pairwise_distance(pos) >= required:
-                    break
-                # Check if we've hit the radius bound
-                current_max_r = max(
-                    (math.hypot(x, y) for x, y in pos.values() if (x, y) != (0.0, 0.0)),
-                    default=0.0,
-                )
-                if current_max_r >= max_allowed_radius:
-                    break  # Don't exceed bounded growth
-                for node, (x, y) in list(pos.items()):
-                    if node in fixed_nodes:
-                        continue
-                    new_x, new_y = x * 1.08, y * 1.08
-                    # Respect bounded growth
-                    if math.hypot(new_x, new_y) <= max_allowed_radius:
-                        pos[node] = (new_x, new_y)
-            _set_axes_limits(ax, pos)
-            required = _node_required_center_distance_data(
-                fig, ax, node_size=3800, use_percentage_padding=True
-            )
-            min_dist = _min_pairwise_distance(pos)
-            if min_dist > 0 and min_dist < required:
-                factor = min(
-                    (required / min_dist) * 1.02,
-                    RADIUS_GROWTH_MAX / RADIUS_GROWTH_MIN,
-                )
-                for node, (x, y) in list(pos.items()):
-                    if node in fixed_nodes:
-                        continue
-                    new_x, new_y = x * factor, y * factor
-                    # Respect bounded growth
-                    if math.hypot(new_x, new_y) <= max_allowed_radius:
-                        pos[node] = (new_x, new_y)
-
-    if pos and hub is None:
-        hub = next(iter(pos.keys()))
+    # Compute positions using pure BFS radial layout
+    pos = _compute_radial_positions(G, hub)
 
     # --------------------------------------------------
     # SAFETY: Never allow empty layout (prevents blank plot)
@@ -1267,141 +594,6 @@ def plot_amoc_triplets(
     if not pos:
         pos = nx.spring_layout(G, seed=42)
 
-    # ---------------------------------------------------------------------
-    # Light spring relaxation (paper-faithful organic refinement)
-    # IMMUTABLE CUMULATIVE LAYOUT: SKIP when freeze_all_existing is True
-    # ---------------------------------------------------------------------
-
-    if not freeze_all_existing:
-        # Only run relaxation passes on first layout (no existing positions)
-        min_edge_len = max(5.0, target_min_dist * 0.75)
-        _enforce_min_edge_length(
-            pos,
-            [(u, v) for u, v, _ in G.edges(keys=True)],
-            min_len=min_edge_len,
-            hub=hub,
-        )
-        if avoid_edge_overlap:
-            _push_nodes_off_edges(fig, ax, pos, list(G.edges()))
-        _enforce_minimum_spacing(
-            fig,
-            ax,
-            pos,
-            hub,
-            fixed_nodes,
-            node_size=3800,
-            pad_px=8.0,
-            scale_step=1.06,
-            max_iter=140,
-        )
-
-        _enforce_node_edge_separation(
-            G,
-            pos,
-            fixed_nodes,
-            min_dist=target_min_dist * 0.45,
-            iterations=4,
-        )
-
-        if avoid_edge_overlap:
-            _push_nodes_off_edges(fig, ax, pos, list(G.edges()))
-
-    # ---------------------------------------------------------------------
-    # LAYOUT POLICY D (CONSTRAINED): Final collision adjustment
-    # IMMUTABLE CUMULATIVE LAYOUT: SKIP when freeze_all_existing is True
-    # ---------------------------------------------------------------------
-    if not freeze_all_existing:
-        _set_axes_limits(ax, pos)
-
-        required_dist = _node_required_center_distance_data(
-            fig, ax, node_size=3800, use_percentage_padding=True
-        )
-
-        # We rely on `levels` already computed earlier in layout logic
-        node_levels = levels if "levels" in locals() else {}
-
-        for _ in range(40):
-            collision_found = False
-            nodes_list = list(pos.keys())
-
-            for i, n1 in enumerate(nodes_list):
-
-                if n1 in fixed_nodes:
-                    continue
-
-                x1, y1 = pos[n1]
-                r1 = math.hypot(x1, y1)
-                lvl1 = node_levels.get(n1, 0)
-
-                for n2 in nodes_list[i + 1 :]:
-
-                    if n2 in fixed_nodes:
-                        continue
-
-                    x2, y2 = pos[n2]
-                    r2 = math.hypot(x2, y2)
-                    lvl2 = node_levels.get(n2, 0)
-
-                    dist = math.hypot(x2 - x1, y2 - y1)
-
-                    if dist >= required_dist or dist <= 1e-6:
-                        continue
-
-                    collision_found = True
-                    push = (required_dist - dist) * 0.5
-
-                    # --------------------------------------------------
-                    # SAME LEVEL → Tangential separation (rotate on ring)
-                    # --------------------------------------------------
-                    if lvl1 == lvl2:
-                        # Tangential direction for n1
-                        tx1, ty1 = -y1, x1
-                        norm1 = math.hypot(tx1, ty1)
-                        if norm1 > 1e-6:
-                            tx1, ty1 = tx1 / norm1, ty1 / norm1
-                            pos[n1] = (x1 - tx1 * push, y1 - ty1 * push)
-
-                        # Tangential direction for n2
-                        tx2, ty2 = -y2, x2
-                        norm2 = math.hypot(tx2, ty2)
-                        if norm2 > 1e-6:
-                            tx2, ty2 = tx2 / norm2, ty2 / norm2
-                            pos[n2] = (x2 + tx2 * push, y2 + ty2 * push)
-
-                    # --------------------------------------------------
-                    # DIFFERENT LEVELS → Only push outward
-                    # Prevent inward collapse
-                    # --------------------------------------------------
-                    else:
-                        if lvl1 >= lvl2 and r1 > 1e-6:
-                            new_r1 = r1 + push
-                            pos[n1] = (
-                                (x1 / r1) * new_r1,
-                                (y1 / r1) * new_r1,
-                            )
-
-                        if lvl2 >= lvl1 and r2 > 1e-6:
-                            new_r2 = r2 + push
-                            pos[n2] = (
-                                (x2 / r2) * new_r2,
-                                (y2 / r2) * new_r2,
-                            )
-
-            if not collision_found:
-                break
-
-    # =========================================================================
-    # HARD INVARIANT CHECK: Existing nodes must not have moved
-    # =========================================================================
-    if freeze_all_existing:
-        for node, cached_coords in position_cache.items():
-            if node in pos:
-                assert (
-                    pos[node] == cached_coords
-                ), f"INVARIANT VIOLATION: Node {node} moved from {cached_coords} to {pos[node]}"
-
-    # Draw inactive nodes first (underneath) with faded appearance
-    # --------------------------------------------------
     # ==========================================================
     # HARD INVARIANT: Every graph node must have a position
     # ==========================================================
@@ -1412,31 +604,19 @@ def plot_amoc_triplets(
         if pos:
             max_radius = max(math.hypot(x, y) for x, y in pos.values())
         else:
-            max_radius = target_min_dist * 3.0
+            max_radius = 10.0
 
-        # -------------------------------
-        # BOUNDED radial growth
-        # -------------------------------
-        fallback_radius = max(
-            max_radius * 1.25,  # proportional growth
-            max_radius + target_min_dist * 2.5,  # minimum outward jump
-        )
+        fallback_radius = max_radius + 4.5
 
         count = len(missing_nodes)
-
-        # -------------------------------
-        # Deterministic angular spacing
-        # -------------------------------
-        angle_step = 2.0 * math.pi / max(1, count)
-
-        # Small constant phase shift for aesthetics (deterministic)
-        phase_shift = 0.25
+        angle_step = 2 * math.pi / max(1, count)
 
         for idx, node in enumerate(sorted(missing_nodes)):
-            theta = idx * angle_step + phase_shift
+            theta = idx * angle_step
             x = fallback_radius * math.cos(theta)
             y = fallback_radius * math.sin(theta)
             pos[node] = (x, y)
+
     inactive_in_graph = [n for n in G.nodes() if n in inactive_node_set]
     active_in_graph = [n for n in G.nodes() if n not in inactive_node_set]
 
@@ -1597,7 +777,7 @@ def plot_amoc_triplets(
                 node_size=3800,  # Match node size so arrows stop at node boundary
                 width=group_widths,
                 alpha=alpha_val,
-                connectionstyle=f"arc3,rad={curvature}",
+                connectionstyle="arc3,rad=0.0",
                 min_target_margin=15,  # Extra margin so arrowhead is fully visible
                 ax=ax,
             )
@@ -1624,7 +804,7 @@ def plot_amoc_triplets(
                 node_size=3800,  # Match node size so arrows stop at node boundary
                 width=group_widths,
                 style="dashed",
-                connectionstyle=f"arc3,rad={curvature}",
+                connectionstyle="arc3,rad=0.0",
                 min_target_margin=15,
                 ax=ax,
             )
@@ -1651,7 +831,7 @@ def plot_amoc_triplets(
                 arrowsize=35,  # Large arrowheads for visibility
                 arrowstyle="-|>",
                 node_size=3800,  # Match node size so arrows stop at node boundary
-                connectionstyle=f"arc3,rad={curvature}",
+                connectionstyle="arc3,rad=0.0",
                 min_target_margin=15,
                 ax=ax,
             )
@@ -1678,7 +858,7 @@ def plot_amoc_triplets(
                 arrowstyle="-|>",
                 node_size=3800,  # Match node size so arrows stop at node boundary
                 alpha=0.4,
-                connectionstyle=f"arc3,rad={curvature}",
+                connectionstyle="arc3,rad=0.0",
                 min_target_margin=15,
                 ax=ax,
             )
@@ -1696,21 +876,37 @@ def plot_amoc_triplets(
         if (u, v, k) not in edge_labels:
             continue
 
+        # =========================================================================
+        # UNIFIED EDGE/LABEL RENDERING: Same conditions for edge and label colors
+        # =========================================================================
+        is_active = (u, v, k) in active_edge_set or (u, v) in active_edge_set
+        is_structural = str(k).startswith("structural::")
+        involves_inactive = u in inactive_node_set or v in inactive_node_set
+
         # Get curvature and t-parameter for this edge
         # MULTI-EDGE LABEL PLACEMENT: t-parameter varies per parallel edge
         curvature = edge_curvatures.get((u, v, k), 0.0)
         label_t = edge_label_t_params.get((u, v, k), 0.5)
         lx, ly = _compute_label_position_curved(pos, u, v, curvature, t=label_t)
 
-        # TASK 1: Compute rotation angle to align label along edge direction
+        # Compute rotation angle to align label along edge direction
         label_angle = _compute_label_angle_along_edge(pos, u, v, curvature, t=label_t)
 
         label_text = edge_labels[(u, v, k)]
-        status = edge_status.get((u, v, k), "normal")
-        involves_inactive = u in inactive_node_set or v in inactive_node_set
+
+        # =========================================================================
+        # LABEL COLOR CONSISTENCY: Matches edge line color exactly
+        # =========================================================================
+        if is_structural:
+            label_color = "green"
+        elif not is_active:
+            label_color = "#999999"
+        elif involves_inactive:
+            label_color = "#999999"
+        else:
+            label_color = "darkred"
 
         # Common bbox style for ALL labels to ensure readability
-        # White background with slight padding prevents overlap issues
         base_bbox = dict(
             facecolor="white",
             edgecolor="none",
@@ -1719,18 +915,18 @@ def plot_amoc_triplets(
             boxstyle="round,pad=0.15",
         )
 
-        if status == "structural":
+        if is_structural:
             ax.text(
                 lx,
                 ly,
                 _pretty_text(label_text),
                 fontsize=12,
                 fontweight="bold",
-                color="green",
+                color=label_color,
                 ha="center",
                 va="center",
-                rotation=label_angle,  # TASK 1: Rotate to follow edge
-                rotation_mode="anchor",  # Rotate around anchor point
+                rotation=label_angle,
+                rotation_mode="anchor",
                 bbox=dict(
                     facecolor="white",
                     edgecolor="green",
@@ -1738,33 +934,18 @@ def plot_amoc_triplets(
                     pad=0.3,
                     boxstyle="round,pad=0.15",
                 ),
-                zorder=10,  # Ensure labels render above edges
-            )
-        elif status == "implicit":
-            ax.text(
-                lx,
-                ly,
-                "(implicit)",
-                fontsize=11,
-                fontstyle="italic",
-                color="#666699",
-                ha="center",
-                va="center",
-                rotation=label_angle,  # TASK 1: Rotate to follow edge
-                rotation_mode="anchor",
-                bbox=base_bbox,
                 zorder=10,
             )
-        elif involves_inactive:
+        elif not is_active or involves_inactive:
             ax.text(
                 lx,
                 ly,
                 _pretty_text(label_text),
                 fontsize=10,
-                color="#999999",
+                color=label_color,
                 ha="center",
                 va="center",
-                rotation=label_angle,  # TASK 1: Rotate to follow edge
+                rotation=label_angle,
                 rotation_mode="anchor",
                 bbox=dict(
                     facecolor="white",
@@ -1773,7 +954,7 @@ def plot_amoc_triplets(
                     pad=0.25,
                     boxstyle="round,pad=0.1",
                 ),
-                zorder=9,  # Slightly lower z-order for inactive labels
+                zorder=9,
             )
         else:
             ax.text(
@@ -1781,10 +962,10 @@ def plot_amoc_triplets(
                 ly,
                 _pretty_text(label_text),
                 fontsize=12,
-                color="darkred",
+                color=label_color,
                 ha="center",
                 va="center",
-                rotation=label_angle,  # TASK 1: Rotate to follow edge
+                rotation=label_angle,
                 rotation_mode="anchor",
                 bbox=base_bbox,
                 zorder=10,
@@ -1934,10 +1115,18 @@ def plot_amoc_triplets(
     # ==========================================================================
     # TASK 2: Draw active triplet overlay in top-right corner
     # ==========================================================================
-    # VISUALIZATION ONLY: This uses pre-computed triplets from the pipeline.
-    # Triplets originate from core.py (_graph_edges_to_triplets, _reconstruct_semantic_triplets)
-    # and are passed via active_triplets_for_overlay parameter.
-    # Only triplets where BOTH nodes are active are displayed.
+    # ============================================================
+    # OVERLAY CONSISTENCY FIX
+    # Active Triplets must reflect rendered graph edges exactly
+    # ============================================================
+    # Source of truth: G.edges() - the actual rendered graph
+    # This ensures no ghost triplets or projection/render divergence
+    active_triplets_for_overlay = [
+        (u, edge_labels[(u, v, k)], v)
+        for u, v, k in G.edges(keys=True)
+        if (u, v, k) in edge_labels
+    ]
+
     if show_triplet_overlay and active_triplets_for_overlay:
         # Build set of active nodes for filtering
         # Active nodes = all nodes NOT in inactive_node_set
