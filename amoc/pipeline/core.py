@@ -642,11 +642,9 @@ class AMoCv4:
         # This enables semantic relations from LLM extraction (e.g., "knight" → "danger")
         # where "danger" may not be a direct token but is semantically inferred.
         if allow_bootstrap:
-            if self.debug:
-                logging.debug(
-                    f"PROVENANCE GATE: BOOTSTRAP allowed for '{lemma_lower}' (will be connected)"
-                )
-            return True
+            # ensure graph not empty
+            if self.graph.nodes:
+                return True
 
         # STRICT: Not in story text and not grounded - REJECT
         if self.debug:
@@ -1173,12 +1171,21 @@ class AMoCv4:
             return subj_key in memory_lemma_keys or obj_key in memory_lemma_keys
 
         # Permissive mode
-        return (
-            subj_key in memory_lemma_keys
-            or obj_key in memory_lemma_keys
-            or subj_key in current_lemma_keys
-            or obj_key in current_lemma_keys
-        )
+        active_nodes = self._get_nodes_with_active_edges()
+        active_keys = {tuple(n.lemmas) for n in active_nodes}
+
+        explicit_keys = {tuple(n.lemmas) for n in self._explicit_nodes_current_sentence}
+
+        # Allow if at least one endpoint is on the active frontier
+        if (
+            subj_key in active_keys
+            or obj_key in active_keys
+            or subj_key in explicit_keys
+            or obj_key in explicit_keys
+        ):
+            return True
+
+        return False
 
     def _create_edge_with_event_mediation(
         self,
@@ -3371,9 +3378,8 @@ class AMoCv4:
                 )
 
         # Construct required nodes: explicit + carryover
-        required_nodes = (
-            self._explicit_nodes_current_sentence
-            | getattr(self, "_carryover_nodes_current_sentence", set())
+        required_nodes = self._explicit_nodes_current_sentence | getattr(
+            self, "_carryover_nodes_current_sentence", set()
         )
 
         connected = self.graph.ensure_active_connectivity(required_nodes)
@@ -5376,11 +5382,11 @@ class AMoCv4:
             # STRICT LITERAL GROUNDING (FIXED)
             # Removed graph-membership grounding
             # ============================================================
-            if not (
-                self._appears_in_story(relationship[0], check_graph=False)
-                or self._appears_in_story(relationship[2], check_graph=False)
-            ):
-                continue
+            # if not (
+            #     self._appears_in_story(relationship[0], check_graph=False)
+            #     or self._appears_in_story(relationship[2], check_graph=False)
+            # ):
+            #     continue
 
             if not self._passes_attachment_constraint(
                 relationship[0],
@@ -5541,10 +5547,18 @@ class AMoCv4:
 
             explicit_set = set(self._explicit_nodes_current_sentence)
 
-            if not source_node.active and source_node not in explicit_set:
-                continue
+            # if not source_node.active and source_node not in explicit_set:
+            #     continue
 
-            if not dest_node.active and dest_node not in explicit_set:
+            # if not dest_node.active and dest_node not in explicit_set:
+            #     continue
+
+            if not (
+                source_node.active
+                or dest_node.active
+                or source_node in explicit_set
+                or dest_node in explicit_set
+            ):
                 continue
 
             potential_edge = self._add_edge(
