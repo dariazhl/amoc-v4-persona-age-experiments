@@ -718,14 +718,13 @@ class AMoCv4:
             if lemma not in self.story_lemmas:
                 continue
 
-            # Canonical lookup using original node type
             canonical_node = self.graph.get_node(node.lemmas)
 
             if canonical_node is None:
                 canonical_node = self.graph.add_or_get_node(
                     node.lemmas,
                     label,
-                    node.node_type,  # preserve type
+                    node.node_type,
                     node.source,
                     provenance=node.provenance,
                     origin_sentence=sentence_index,
@@ -734,16 +733,81 @@ class AMoCv4:
             if canonical_node:
                 admitted_nodes.append(canonical_node)
 
-        self._per_sentence_view = build_per_sentence_graph(
+        view = build_per_sentence_graph(
             cumulative_graph=self.graph,
             explicit_nodes=admitted_nodes,
             max_distance=self.max_distance_from_active_nodes,
             anchor_nodes=self._anchor_nodes,
             sentence_index=sentence_index,
-            repair_callback=self.repair_connectivity_callback,
+            repair_callback=None,  # projection must not mutate implicitly
         )
 
-        return self._per_sentence_view
+        # ------------------------------------------------------------
+        # HARD GUARANTEE: No active node without active edge
+        # ------------------------------------------------------------
+
+        active_nodes = set(view.explicit_nodes) | set(view.carryover_nodes)
+
+        # Determine backbone nodes (those already connected)
+        connected_nodes = set()
+        for e in view.active_edges:
+            connected_nodes.add(e.source_node)
+            connected_nodes.add(e.dest_node)
+
+        # If graph has at least one connected component
+        if connected_nodes:
+
+            for node in active_nodes:
+
+                has_edge = any(
+                    e.active and (e.source_node == node or e.dest_node == node)
+                    for e in view.active_edges
+                )
+
+                if not has_edge:
+
+                    # Deterministic anchor: highest degree active node
+                    anchor_candidates = sorted(
+                        connected_nodes,
+                        key=lambda n: sum(
+                            1
+                            for e in self.graph.edges
+                            if e.active and (e.source_node == n or e.dest_node == n)
+                        ),
+                        reverse=True,
+                    )
+
+                    anchor = next((n for n in anchor_candidates if n != node), None)
+
+                    if anchor:
+                        edge = self.graph.add_edge(
+                            anchor,
+                            node,
+                            "relates_to",
+                            self.edge_visibility,
+                            relation_class=RelationClass.CONNECTIVE,
+                            justification=Justification.CONNECTIVE,
+                            persona_influenced=False,
+                            inferred=False,
+                        )
+                        if edge:
+                            edge.active = True
+                            edge.structural = True
+                            edge.asserted_this_sentence = False
+                            edge.reactivated_this_sentence = False
+
+            # Rebuild projection after structural repair
+            view = build_per_sentence_graph(
+                cumulative_graph=self.graph,
+                explicit_nodes=admitted_nodes,
+                max_distance=self.max_distance_from_active_nodes,
+                anchor_nodes=self._anchor_nodes,
+                sentence_index=sentence_index,
+                repair_callback=None,
+            )
+
+        self._per_sentence_view = view
+        return view
 
     def _get_attachable_nodes_for_sentence(self) -> set[Node]:
         if self._per_sentence_view is not None:
@@ -3857,7 +3921,9 @@ class AMoCv4:
 
                         if node in self._explicit_nodes_current_sentence:
 
-                            anchor = next(iter(backbone))
+                            anchor = next((n for n in backbone if n != node), None)
+                            if anchor is None:
+                                continue
 
                             edge = self.graph.add_edge(
                                 anchor,
