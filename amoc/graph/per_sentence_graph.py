@@ -308,32 +308,26 @@ class PerSentenceGraphBuilder:
     def build(self, sentence_index: int) -> PerSentenceGraph:
         self._sentence_index = sentence_index
 
-        # ------------------------------------------------------------
-        # 1. Get active subgraph from cumulative memory
-        # ------------------------------------------------------------
         active_nodes, active_edges = self.cumulative_graph.get_active_subgraph()
         active_nodes = set(active_nodes)
         active_edges = set(active_edges)
 
-        # Remove zero-degree nodes
+        # Derive nodes strictly from edges
         nodes_with_edges = {e.source_node for e in active_edges} | {
             e.dest_node for e in active_edges
         }
 
-        active_nodes &= nodes_with_edges
+        active_nodes = nodes_with_edges
 
-        # ------------------------------------------------------------
-        # 2. Guarantee explicit + carryover nodes are present
-        active_nodes |= set(self._explicit_nodes)
-        # ------------------------------------------------------------
+        # Filter explicit and carryover to only those truly active
+        explicit_nodes = {n for n in self._explicit_nodes if n in active_nodes}
 
-        # ------------------------------------------------------------
-        # 6. Construct immutable per-sentence graph
-        # ------------------------------------------------------------
+        carryover_nodes = {n for n in self._carryover_nodes if n in active_nodes}
+
         return PerSentenceGraph(
             sentence_index=sentence_index,
-            explicit_nodes=frozenset(self._explicit_nodes),
-            carryover_nodes=frozenset(self._carryover_nodes),
+            explicit_nodes=frozenset(explicit_nodes),
+            carryover_nodes=frozenset(carryover_nodes),
             active_nodes=frozenset(active_nodes),
             active_edges=frozenset(active_edges),
             anchor_nodes=self.anchor_nodes,

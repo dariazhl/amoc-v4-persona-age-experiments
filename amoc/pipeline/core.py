@@ -3617,10 +3617,6 @@ class AMoCv4:
             if edge.created_at_sentence == self._current_sentence_index:
                 continue
 
-            # # Only edges not asserted this sentence decay
-            if edge.structural:
-                continue
-
             if not edge.asserted_this_sentence and not edge.reactivated_this_sentence:
                 edge.reduce_visibility()
 
@@ -4919,8 +4915,6 @@ class AMoCv4:
         # - When visibility_score reaches 0, edge becomes inactive
 
         for idx, edge in enumerate(edges, start=1):
-            if edge.structural:
-                continue
             if idx in selected or edge in newly_added_edges:
                 if edge.is_property_edge():
                     continue  # PROPERTY edges never reactivate
@@ -4931,8 +4925,6 @@ class AMoCv4:
     def _propagate_activation_from_edges(self):
         for edge in self.graph.edges:
             if not edge.active:
-                continue
-            if edge.structural:
                 continue
             edge.source_node.activation_score = max(
                 edge.source_node.activation_score, edge.activation_score
