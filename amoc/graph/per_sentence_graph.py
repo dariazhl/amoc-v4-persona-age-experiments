@@ -315,6 +315,13 @@ class PerSentenceGraphBuilder:
         active_nodes = set(active_nodes)
         active_edges = set(active_edges)
 
+        # Remove zero-degree nodes
+        nodes_with_edges = {e.source_node for e in active_edges} | {
+            e.dest_node for e in active_edges
+        }
+
+        active_nodes &= nodes_with_edges
+
         # ------------------------------------------------------------
         # 2. Guarantee explicit + carryover nodes are present
         active_nodes |= set(self._explicit_nodes)

@@ -3624,6 +3624,10 @@ class AMoCv4:
             if not edge.asserted_this_sentence and not edge.reactivated_this_sentence:
                 edge.reduce_visibility()
 
+                if edge.visibility_score <= 0:
+                    edge.visibility_score = 0
+                    edge.active = False
+
     def _process_sentence_core(
         self,
         i: int,
