@@ -659,9 +659,7 @@ class AMoCv4:
         # This enables semantic relations from LLM extraction (e.g., "knight" → "danger")
         # where "danger" may not be a direct token but is semantically inferred.
         if allow_bootstrap:
-            # ensure graph not empty
-            return False
-
+            return True
         # STRICT: Not in story text and not grounded - REJECT
         if self.debug:
             logging.debug(
@@ -1155,8 +1153,9 @@ class AMoCv4:
         # --- Build frontier (connected component surface) ---
         active_nodes = set(self._get_nodes_with_active_edges())
         explicit_nodes = set(self._explicit_nodes_current_sentence)
+        carryover_nodes = getattr(self, "_carryover_nodes_current_sentence", set())
 
-        frontier_nodes = active_nodes | explicit_nodes
+        frontier_nodes = active_nodes | explicit_nodes | carryover_nodes
         frontier_keys = {tuple(n.lemmas) for n in frontier_nodes}
 
         # Preserve already-connected relationships
@@ -5252,7 +5251,10 @@ class AMoCv4:
                     subj,
                     allow_bootstrap=(
                         dest_node is not None
-                        and dest_node in self._explicit_nodes_current_sentence
+                        and (
+                            dest_node in self._explicit_nodes_current_sentence
+                            or dest_node in self._get_nodes_with_active_edges()
+                        )
                     ),
                 ):
                     continue

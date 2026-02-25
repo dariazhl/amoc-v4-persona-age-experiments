@@ -1417,37 +1417,20 @@ class Graph:
         if not carryover_nodes:
             return
 
-        # --------------------------------------------------
-        # PHASE 1 — Repair isolated carryover nodes
-        # --------------------------------------------------
-        active_edges = {e for e in self.edges if e.active and e.visibility_score > 0}
+        # Build active edge set
+        active_edges = [e for e in self.edges if e.active and e.visibility_score > 0]
 
+        # Compute active degree
+        degree_map = {}
+
+        for e in active_edges:
+            degree_map[e.source_node] = degree_map.get(e.source_node, 0) + 1
+            degree_map[e.dest_node] = degree_map.get(e.dest_node, 0) + 1
+
+        # Deactivate zero-degree carryover nodes
         for node in list(carryover_nodes):
-
-            degree = sum(
-                1 for e in active_edges if e.source_node == node or e.dest_node == node
-            )
-
-            if degree > 0:
-                continue
-
-            historical_edges = [
-                e for e in self.edges if e.source_node == node or e.dest_node == node
-            ]
-
-            if not historical_edges:
-                continue
-
-            edge_to_restore = max(
-                historical_edges,
-                key=lambda e: getattr(e, "created_at_sentence", -1),
-            )
-
-            edge_to_restore.active = True
-            edge_to_restore.visibility_score = max(edge_to_restore.visibility_score, 1)
-
-            edge_to_restore.source_node.active = True
-            edge_to_restore.dest_node.active = True
+            if degree_map.get(node, 0) == 0:
+                node.active = False
 
         # --------------------------------------------------
         # PHASE 2 — Repair disconnected carryover components
