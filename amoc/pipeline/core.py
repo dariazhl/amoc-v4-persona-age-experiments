@@ -3674,6 +3674,9 @@ class AMoCv4:
                     set(self._explicit_nodes_current_sentence)
                 )
                 self._decay_node_activation()
+                self.graph.enforce_carryover_connectivity(
+                    getattr(self, "_carryover_nodes_current_sentence", set())
+                )
                 # Re-check connectivity after decay
                 if not self.graph.check_active_connectivity():
                     if self._enforce_connectivity(prev_sentences):
@@ -3981,24 +3984,86 @@ class AMoCv4:
 
         # ---------- CUMULATIVE ----------
         # Enforce connectivity on the full memory graph (active + inactive edges)
+        if not self._is_cumulative_connected():
 
-        if not rollback_needed and not self._is_cumulative_connected():
+            repair_success = False
 
-            G_full = nx.Graph()
+            # ------------------------------------------------------------
+            # 1. LLM repair attempts (2)
+            # ------------------------------------------------------------
+            for _ in range(2):
+                self._create_forced_connectivity_edges(
+                    story_context=(
+                        " ".join(prev_sentences[:-1]) if len(prev_sentences) > 1 else ""
+                    ),
+                    current_sentence=self._current_sentence_text,
+                    mode="cumulative",
+                )
 
-            # Include ALL nodes
-            for node in self.graph.nodes:
-                G_full.add_node(node)
+                if self._is_cumulative_connected():
+                    repair_success = True
+                    break
 
-            # Include ALL edges (active + inactive)
-            for e in self.graph.edges:
-                G_full.add_edge(e.source_node, e.dest_node)
+            # ------------------------------------------------------------
+            # 2. Deterministic fallback (structural bridge)
+            # ------------------------------------------------------------
+            if not repair_success:
 
-            components = list(nx.connected_components(G_full))
+                logging.info("[Connectivity] Applying deterministic cumulative bridge.")
 
-            if len(components) > 1:
+                G_full = nx.Graph()
 
+                # Include ALL nodes
+                for node in self.graph.nodes:
+                    G_full.add_node(node)
+
+                # Include ALL edges
+                for e in self.graph.edges:
+                    G_full.add_edge(e.source_node, e.dest_node)
+
+                components = list(nx.connected_components(G_full))
+
+                if len(components) > 1:
+
+                    components = sorted(components, key=len, reverse=True)
+                    backbone = set(components[0])
+
+                    for comp in components[1:]:
+
+                        node_a = next(iter(backbone))
+                        node_b = next(iter(comp))
+
+                        edge = self.graph.add_edge(
+                            node_a,
+                            node_b,
+                            "relates_to",
+                            self.edge_visibility,
+                            relation_class=RelationClass.CONNECTIVE,
+                            justification=Justification.CONNECTIVE,
+                            persona_influenced=False,
+                            inferred=False,
+                        )
+
+                        if edge:
+                            edge.structural = True
+                            backbone.update(comp)
+
+                repair_success = self._is_cumulative_connected()
+
+            # HARD GUARANTEE: cumulative graph must be connected
+            if not self._is_cumulative_connected():
+
+                G_full = nx.Graph()
+
+                for node in self.graph.nodes:
+                    G_full.add_node(node)
+
+                for e in self.graph.edges:
+                    G_full.add_edge(e.source_node, e.dest_node)
+
+                components = list(nx.connected_components(G_full))
                 components = sorted(components, key=len, reverse=True)
+
                 backbone = set(components[0])
 
                 for comp in components[1:]:
@@ -4019,120 +4084,12 @@ class AMoCv4:
 
                     if edge:
                         edge.structural = True
-                        edge.active = True  # ensures active remains connected
-                        edge.asserted_this_sentence = False
-                        edge.reactivated_this_sentence = False
                         backbone.update(comp)
-
-            # Final validation
-            if not self._is_cumulative_connected():
+            # ------------------------------------------------------------
+            # 3. Final validation
+            # ------------------------------------------------------------
+            if not repair_success:
                 rollback_needed = True
-        # if not self._is_cumulative_connected():
-
-        #     repair_success = False
-
-        #     # ------------------------------------------------------------
-        #     # 1. LLM repair attempts (2)
-        #     # ------------------------------------------------------------
-        #     for _ in range(2):
-        #         self._create_forced_connectivity_edges(
-        #             story_context=(
-        #                 " ".join(prev_sentences[:-1]) if len(prev_sentences) > 1 else ""
-        #             ),
-        #             current_sentence=self._current_sentence_text,
-        #             mode="cumulative",
-        #         )
-
-        #         if self._is_cumulative_connected():
-        #             repair_success = True
-        #             break
-
-        #     # ------------------------------------------------------------
-        #     # 2. Deterministic fallback (structural bridge)
-        #     # ------------------------------------------------------------
-        #     if not repair_success:
-
-        #         logging.info("[Connectivity] Applying deterministic cumulative bridge.")
-
-        #         G_full = nx.Graph()
-
-        #         # Include ALL nodes
-        #         for node in self.graph.nodes:
-        #             G_full.add_node(node)
-
-        #         # Include ALL edges
-        #         for e in self.graph.edges:
-        #             G_full.add_edge(e.source_node, e.dest_node)
-
-        #         components = list(nx.connected_components(G_full))
-
-        #         if len(components) > 1:
-
-        #             components = sorted(components, key=len, reverse=True)
-        #             backbone = set(components[0])
-
-        #             for comp in components[1:]:
-
-        #                 node_a = next(iter(backbone))
-        #                 node_b = next(iter(comp))
-
-        #                 edge = self.graph.add_edge(
-        #                     node_a,
-        #                     node_b,
-        #                     "relates_to",
-        #                     self.edge_visibility,
-        #                     relation_class=RelationClass.CONNECTIVE,
-        #                     justification=Justification.CONNECTIVE,
-        #                     persona_influenced=False,
-        #                     inferred=False,
-        #                 )
-
-        #                 if edge:
-        #                     edge.structural = True
-        #                     backbone.update(comp)
-
-        #         repair_success = self._is_cumulative_connected()
-
-        #     # HARD GUARANTEE: cumulative graph must be connected
-        #     if not self._is_cumulative_connected():
-
-        #         G_full = nx.Graph()
-
-        #         for node in self.graph.nodes:
-        #             G_full.add_node(node)
-
-        #         for e in self.graph.edges:
-        #             G_full.add_edge(e.source_node, e.dest_node)
-
-        #         components = list(nx.connected_components(G_full))
-        #         components = sorted(components, key=len, reverse=True)
-
-        #         backbone = set(components[0])
-
-        #         for comp in components[1:]:
-
-        #             node_a = next(iter(backbone))
-        #             node_b = next(iter(comp))
-
-        #             edge = self.graph.add_edge(
-        #                 node_a,
-        #                 node_b,
-        #                 "relates_to",
-        #                 self.edge_visibility,
-        #                 relation_class=RelationClass.CONNECTIVE,
-        #                 justification=Justification.CONNECTIVE,
-        #                 persona_influenced=False,
-        #                 inferred=False,
-        #             )
-
-        #             if edge:
-        #                 edge.structural = True
-        #                 backbone.update(comp)
-        #     # ------------------------------------------------------------
-        #     # 3. Final validation
-        #     # ------------------------------------------------------------
-        #     if not repair_success:
-        #         rollback_needed = True
 
         # ------------------------------------------------------------
         # REBUILD PROJECTION AFTER STRUCTURAL REPAIR
