@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Set, Dict, List
+from typing import TYPE_CHECKING, Set, Dict, List, Tuple
 from collections import deque
 
 if TYPE_CHECKING:
@@ -12,6 +12,15 @@ class ActivationOps:
 
     def __init__(self, graph_ref: "Graph"):
         self._graph = graph_ref
+
+    def get_active_subgraph(self) -> Tuple[Set["Node"], Set["Edge"]]:
+        active_edges: Set["Edge"] = {
+            e for e in self._graph.edges if e.active and e.visibility_score > 0
+        }
+        active_nodes: Set["Node"] = {e.source_node for e in active_edges} | {
+            e.dest_node for e in active_edges
+        }
+        return active_nodes, active_edges
 
     def deactivate_all_edges(self) -> None:
         for edge in self._graph.edges:

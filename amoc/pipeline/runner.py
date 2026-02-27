@@ -126,6 +126,7 @@ def process_persona_csv(
     story_text: Optional[str] = None,
     force_node: bool = False,
     allow_multi_edges: bool = False,
+    checkpoint: bool = False,
 ) -> None:
     short_filename = os.path.basename(filename)
     print(f"\n=== Processing File (chunk): {short_filename} ===")
@@ -254,6 +255,7 @@ def process_persona_csv(
                         matrix_dir_base=str(output_dir),
                         force_node=force_node,
                         allow_multi_edges=allow_multi_edges,
+                        checkpoint=checkpoint,
                     )
 
                     records = []

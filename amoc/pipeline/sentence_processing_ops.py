@@ -537,7 +537,7 @@ class SentenceProcessingOps:
         carryover = self._carryover_nodes_ref() if callable(self._carryover_nodes_ref) else set()
         required_nodes = explicit_nodes_current_sentence | carryover
 
-        connected = self.graph.ensure_active_connectivity(required_nodes)
+        connected = self.graph.can_connect_via_cumulative(required_nodes)
 
         if not connected:
             logging.debug(

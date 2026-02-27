@@ -17,6 +17,9 @@ All other logic has been moved to:
 from amoc.graph.node import Node
 from amoc.graph.node import NodeType, NodeSource, NodeProvenance, NodeRole
 from amoc.graph.edge import Edge
+from amoc.graph.activation_ops import ActivationOps
+from amoc.graph.stability_ops import StabilityOps
+from amoc.graph.provenance_ops import ProvenanceOps
 from typing import List, Set, Dict, Optional, Tuple, Callable
 import re
 import logging
@@ -30,31 +33,21 @@ class Graph:
     Contains only:
     - Node/edge storage
     - Add/remove operations
-    - Connectivity checks (pure, non-mutating)
+    - Delegations to Ops classes for policy logic
     """
-
-    # ==========================================================================
-    # FORBIDDEN NODE LEMMAS (Hard Block)
-    # ==========================================================================
-    FORBIDDEN_NODE_LEMMAS: set[str] = {
-        "student", "persona", "relation", "context", "object", "place",
-        "story", "narrative", "sentence", "edge", "node", "property",
-        "label", "target", "source", "pronoun", "noun", "user",
-    }
-
-    NARRATION_ARTIFACT_LEMMAS: set[str] = {
-        "text", "sentence", "paragraph", "mention", "mentions", "narration", "story",
-    }
 
     def __init__(self) -> None:
         self.nodes: Set[Node] = set()
         self.edges: Set[Edge] = set()
 
-        # Provenance gate state (used by add_or_get_node)
         self._story_lemmas: Optional[Set[str]] = None
         self._persona_only_lemmas: Optional[Set[str]] = None
         self._current_sentence_idx: int = 0
         self._current_sentence_lemmas: Optional[Set[str]] = None
+
+        self._activation_ops = ActivationOps(self)
+        self._stability_ops = StabilityOps(self)
+        self._provenance_ops = ProvenanceOps(self)
 
     # ==========================================================================
     # NODE OPERATIONS
@@ -82,61 +75,20 @@ class Graph:
         node_role: Optional[NodeRole] = None,
         mark_explicit: bool = True,
     ):
-        """Add a new node or get existing node with matching lemmas."""
         lemmas = [lemma.lower() for lemma in lemmas]
-        if not lemmas or not lemmas[0]:
-            return None
-        primary_lemma = lemmas[0].lower()
-
-        if len(primary_lemma) <= 1:
-            return None
-
-        GARBAGE_LEMMAS = {
-            "edge", "node", "relation", "property", "label", "target",
-            "source", "t", "type", "person", "approach", "kind", "thing",
-        }
-
-        if primary_lemma in GARBAGE_LEMMAS:
-            return None
-
-        if node_type != NodeType.EVENT and not re.match(r"^[a-zA-Z]+$", lemmas[0]):
-            return None
-
-        if any(lemma in self.FORBIDDEN_NODE_LEMMAS for lemma in lemmas):
-            return None
-
-        if any(lemma in self.NARRATION_ARTIFACT_LEMMAS for lemma in lemmas):
-            return None
-
-        if self._persona_only_lemmas and primary_lemma in self._persona_only_lemmas:
-            return None
+        primary_lemma = lemmas[0].lower() if lemmas else ""
 
         existing_node = self.get_node(lemmas)
-        if existing_node is None:
-            if self._story_lemmas is not None:
-                ed_stem = (
-                    primary_lemma[:-2]
-                    if primary_lemma.endswith("ed") and len(primary_lemma) > 2
-                    else None
-                )
-                ing_stem = (
-                    primary_lemma[:-3]
-                    if primary_lemma.endswith("ing") and len(primary_lemma) > 3
-                    else None
-                )
-                is_story_grounded = (
-                    primary_lemma in self._story_lemmas
-                    or (ed_stem and ed_stem in self._story_lemmas)
-                    or (ing_stem and ing_stem in self._story_lemmas)
-                )
-                is_inferred = provenance == NodeProvenance.INFERRED_FROM_STORY
+        is_new_node = existing_node is None
 
-                if (
-                    node_type != NodeType.PROPERTY
-                    and not is_story_grounded
-                    and not is_inferred
-                ):
-                    return None
+        valid, reason = self._provenance_ops.validate_node_creation(
+            lemmas=lemmas,
+            node_type=node_type,
+            provenance=provenance,
+            is_new_node=is_new_node,
+        )
+        if not valid:
+            return None
 
         if admit is not None:
             admit_kwargs = admit_kwargs or {}
@@ -169,10 +121,7 @@ class Graph:
                 node.node_role = node_role
 
             if mark_explicit and origin_sentence is not None:
-                if (
-                    self._current_sentence_lemmas is not None
-                    and primary_lemma not in self._current_sentence_lemmas
-                ):
+                if not self._provenance_ops.validate_explicit_marking(primary_lemma):
                     return None
                 node.mark_explicit_in_sentence(origin_sentence)
 
@@ -307,300 +256,21 @@ class Graph:
             edge.dest_node.edges.remove(edge)
 
     # ==========================================================================
-    # SUBGRAPH OPERATIONS
+    # SUBGRAPH OPERATIONS (delegated to ActivationOps)
     # ==========================================================================
 
     def get_active_subgraph(self) -> Tuple[Set[Node], Set[Edge]]:
-        """Get active nodes and edges."""
-        active_edges: Set[Edge] = {
-            e for e in self.edges if e.active and e.visibility_score > 0
-        }
-        active_nodes: Set[Node] = {e.source_node for e in active_edges} | {
-            e.dest_node for e in active_edges
-        }
-        return active_nodes, active_edges
+        return self._activation_ops.get_active_subgraph()
 
     # ==========================================================================
     # GRAPH VIEW BUILDERS (Pure, Non-Mutating)
     # ==========================================================================
 
-    def cumulative_graph(self) -> nx.Graph:
-        """
-        Build a read-only NetworkX graph from ALL edges in cumulative memory.
-
-        This is a snapshot view - modifications to the returned graph
-        do NOT affect the underlying Graph structure.
-        """
+    def to_networkx(self) -> nx.Graph:
         G = nx.Graph()
         for edge in self.edges:
             G.add_edge(edge.source_node, edge.dest_node, edge=edge)
         return G
-
-    def active_graph(self, required_nodes: Optional[Set[Node]] = None) -> nx.Graph:
-        """
-        Build a read-only NetworkX graph from active edges only.
-        """
-        G = nx.Graph()
-
-        active_nodes = {n for n in self.nodes if n.active}
-        for edge in self.edges:
-            if edge.active:
-                active_nodes.add(edge.source_node)
-                active_nodes.add(edge.dest_node)
-        if required_nodes:
-            active_nodes |= required_nodes
-
-        for node in active_nodes:
-            G.add_node(node)
-
-        for edge in self.edges:
-            if edge.active:
-                G.add_edge(edge.source_node, edge.dest_node, edge=edge)
-
-        return G
-
-    # ==========================================================================
-    # CONNECTIVITY CHECKS (Pure, Non-Mutating)
-    # ==========================================================================
-
-    def check_active_connectivity(self) -> bool:
-        """
-        Check if the active graph is connected.
-        Returns True if connected (or empty/single node), False if disconnected.
-        """
-        active_nodes = {n for n in self.nodes if n.active}
-        active_edges = [e for e in self.edges if e.active]
-
-        # Also include nodes from active edges
-        for edge in active_edges:
-            active_nodes.add(edge.source_node)
-            active_nodes.add(edge.dest_node)
-
-        if len(active_nodes) <= 1:
-            return True
-
-        G_active = nx.Graph()
-        for node in active_nodes:
-            G_active.add_node(node)
-        for edge in active_edges:
-            G_active.add_edge(edge.source_node, edge.dest_node)
-
-        return nx.is_connected(G_active)
-
-    def check_cumulative_connectivity(self) -> bool:
-        """Check if cumulative graph is connected."""
-        G = nx.Graph()
-        for edge in self.edges:
-            G.add_edge(edge.source_node, edge.dest_node)
-        if G.number_of_nodes() <= 1:
-            return True
-        return nx.is_connected(G)
-
-    def get_disconnected_components(
-        self,
-        focus_nodes: Set[Node],
-    ) -> Tuple[List[Set[Node]], int]:
-        """
-        Get disconnected components and identify the focus component.
-        """
-        active_edges = [e for e in self.edges if e.active]
-        if not active_edges:
-            return ([], -1)
-
-        G_active = nx.Graph()
-        for edge in active_edges:
-            G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
-
-        if G_active.number_of_nodes() <= 1:
-            return (
-                ([set(G_active.nodes())], 0)
-                if G_active.number_of_nodes() == 1
-                else ([], -1)
-            )
-
-        components = [set(c) for c in nx.connected_components(G_active)]
-
-        if len(components) <= 1:
-            return (components, 0)
-
-        focus_component_idx = 0
-        for idx, comp in enumerate(components):
-            if any(n in comp for n in focus_nodes):
-                focus_component_idx = idx
-                break
-
-        return (components, focus_component_idx)
-
-    def get_nodes_needing_connection(
-        self,
-        focus_nodes: Set[Node],
-    ) -> List[Tuple[Node, Node]]:
-        """
-        Get pairs of nodes that need edges to restore connectivity.
-        """
-        components, focus_idx = self.get_disconnected_components(focus_nodes)
-
-        if len(components) <= 1:
-            return []
-
-        focus_comp = components[focus_idx]
-        pairs_needing_connection = []
-
-        for idx, comp in enumerate(components):
-            if idx == focus_idx:
-                continue
-
-            isolated_node = None
-            for n in comp:
-                if n.node_type == NodeType.CONCEPT:
-                    isolated_node = n
-                    break
-            if isolated_node is None:
-                isolated_node = next(iter(comp))
-
-            focus_node = None
-            for n in focus_comp:
-                if n in focus_nodes and n.node_type == NodeType.CONCEPT:
-                    focus_node = n
-                    break
-            if focus_node is None:
-                for n in focus_comp:
-                    if n.node_type == NodeType.CONCEPT:
-                        focus_node = n
-                        break
-            if focus_node is None:
-                focus_node = next(iter(focus_comp))
-
-            pairs_needing_connection.append((isolated_node, focus_node))
-
-        return pairs_needing_connection
-
-    def ensure_active_connectivity(
-        self,
-        required_nodes: Set[Node],
-    ) -> bool:
-        """
-        Check if the active graph can be connected using existing edges.
-
-        This is a PURE CHECK that does NOT modify any edges. It determines
-        whether connectivity is achievable by examining paths in the
-        cumulative graph, but does not activate or promote any edges.
-
-        Returns:
-            True if graph is connected (or could be connected via existing
-            cumulative edges), False otherwise.
-        """
-        active_edges = [e for e in self.edges if e.active]
-
-        # Build active_nodes from:
-        # 1. Nodes with n.active == True
-        # 2. Nodes connected by active edges
-        # 3. Required nodes (explicit + carryover)
-        active_nodes = {n for n in self.nodes if n.active}
-        for edge in active_edges:
-            active_nodes.add(edge.source_node)
-            active_nodes.add(edge.dest_node)
-        active_nodes |= required_nodes
-
-        # Build active graph using only edge.active == True
-        G_active = nx.Graph()
-
-        for node in active_nodes:
-            G_active.add_node(node)
-
-        for edge in active_edges:
-            G_active.add_edge(edge.source_node, edge.dest_node)
-
-        # If connected → return True
-        if G_active.number_of_nodes() <= 1:
-            return True
-        if nx.is_connected(G_active):
-            return True
-
-        # Graph is disconnected - find components
-        components = list(nx.connected_components(G_active))
-        if len(components) <= 1:
-            return True
-
-        # Identify focus component (largest component containing required nodes)
-        focus_component_idx = 0
-        max_required_count = 0
-        for idx, comp in enumerate(components):
-            required_in_comp = len(comp & required_nodes)
-            if required_in_comp > max_required_count:
-                max_required_count = required_in_comp
-                focus_component_idx = idx
-
-        # Build cumulative graph from ALL edges
-        G_cumulative = nx.Graph()
-        for edge in self.edges:
-            G_cumulative.add_edge(edge.source_node, edge.dest_node, edge=edge)
-
-        # Local connectors list (edges that WOULD connect components)
-        connectors: Set[Edge] = set()
-
-        # For each disconnected component, find shortest path to focus component
-        focus_comp_nodes = components[focus_component_idx]
-        for idx, comp in enumerate(components):
-            if idx == focus_component_idx:
-                continue
-
-            best_path = None
-            best_path_len = float("inf")
-
-            for src in comp:
-                if src not in G_cumulative:
-                    continue
-                for tgt in focus_comp_nodes:
-                    if src == tgt:
-                        continue
-                    if tgt not in G_cumulative:
-                        continue
-
-                    try:
-                        path = nx.shortest_path(G_cumulative, src, tgt)
-                        if len(path) < best_path_len:
-                            best_path = path
-                            best_path_len = len(path)
-                    except (nx.NetworkXNoPath, nx.NodeNotFound):
-                        continue
-
-            if best_path is None:
-                # No cumulative path exists → return False
-                return False
-
-            # Collect edges along path into local connectors (DO NOT modify)
-            for i in range(len(best_path) - 1):
-                node_a = best_path[i]
-                node_b = best_path[i + 1]
-
-                edge_data = G_cumulative.get_edge_data(node_a, node_b)
-                if edge_data is None:
-                    continue
-
-                edge = edge_data.get("edge")
-                if edge is None:
-                    continue
-
-                if not edge.active:
-                    connectors.add(edge)
-
-        # Build final temporary graph using active edges + connectors
-        G_final = nx.Graph()
-
-        for node in active_nodes:
-            G_final.add_node(node)
-
-        for edge in active_edges:
-            G_final.add_edge(edge.source_node, edge.dest_node)
-
-        for edge in connectors:
-            G_final.add_edge(edge.source_node, edge.dest_node)
-
-        if G_final.number_of_nodes() <= 1:
-            return True
-
-        return nx.is_connected(G_final)
 
     # ==========================================================================
     # UTILITY METHODS
@@ -731,6 +401,69 @@ class Graph:
             return ""
 
         return label
+
+    def deactivate_all_edges(self) -> None:
+        self._activation_ops.deactivate_all_edges()
+
+    def reactivate_memory_edges_within_distance(
+        self,
+        explicit_nodes: Set[Node],
+        max_distance: int,
+        current_sentence: int,
+    ) -> Set[Edge]:
+        return self._activation_ops.reactivate_memory_edges_within_distance(
+            explicit_nodes, max_distance, current_sentence
+        )
+
+    def get_active_nodes(
+        self, score_threshold: int, only_text_based: bool = False
+    ) -> List[Node]:
+        return self._activation_ops.get_active_nodes(score_threshold, only_text_based)
+
+    def decay_inactive_edges(self) -> None:
+        self._activation_ops.decay_inactive_edges()
+
+    def enforce_cumulative_stability(self, explicit_nodes: set) -> None:
+        self._stability_ops.enforce_cumulative_stability(explicit_nodes)
+
+    def enforce_carryover_connectivity(self, carryover_nodes: set) -> None:
+        self._stability_ops.enforce_carryover_connectivity(carryover_nodes)
+
+    def is_active_connected(self, required_nodes: Optional[Set[Node]] = None) -> bool:
+        return self._stability_ops.is_active_connected(required_nodes)
+
+    def is_cumulative_connected(self) -> bool:
+        return self._stability_ops.is_cumulative_connected()
+
+    def get_disconnected_components(
+        self, focus_nodes: Set[Node]
+    ) -> Tuple[List[Set[Node]], int]:
+        return self._stability_ops.get_disconnected_components(focus_nodes)
+
+    def can_connect_via_cumulative(self, required_nodes: Set[Node]) -> bool:
+        return self._stability_ops.can_connect_via_cumulative(required_nodes)
+
+    def reconnect_via_cumulative(self, required_nodes: Set[Node]) -> Set[Edge]:
+        return self._stability_ops.reconnect_via_cumulative(required_nodes)
+
+    def enforce_connectivity(
+        self, required_nodes: Set[Node], allow_reactivation: bool = True
+    ) -> bool:
+        return self._stability_ops.enforce_connectivity(required_nodes, allow_reactivation)
+
+    def set_provenance_gate(
+        self,
+        story_lemmas: Set[str],
+        persona_only_lemmas: Optional[Set[str]] = None,
+    ) -> None:
+        self._provenance_ops.set_provenance_gate(story_lemmas, persona_only_lemmas)
+
+    def sanity_check_provenance(
+        self,
+        story_lemmas: set,
+        persona_only_lemmas: set,
+    ) -> list:
+        return self._provenance_ops.sanity_check_provenance(story_lemmas, persona_only_lemmas)
 
     def __str__(self) -> str:
         return "nodes: {}\n\nedges: {}".format(

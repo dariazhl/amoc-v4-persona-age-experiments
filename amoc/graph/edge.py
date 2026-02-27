@@ -78,6 +78,7 @@ class Edge:
         self.activation_role: Optional[str] = None
 
         self.forced_connection: bool = False
+        self.checkpoint: bool = False
 
     def mark_as_reactivated(self, reset_score: bool = True) -> None:
         self.active = True
@@ -136,6 +137,13 @@ class Edge:
 
     def is_forced_connection(self) -> bool:
         return self.forced_connection
+
+    def is_property_edge(self) -> bool:
+        from amoc.graph.node import NodeType
+        return (
+            self.source_node.node_type == NodeType.PROPERTY
+            or self.dest_node.node_type == NodeType.PROPERTY
+        )
 
     def is_asserted(self) -> bool:
         return self.asserted_this_sentence

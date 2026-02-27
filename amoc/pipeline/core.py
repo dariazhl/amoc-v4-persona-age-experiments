@@ -93,6 +93,7 @@ class AMoCv4:
         single_anchor_hub: bool = True,
         matrix_dir_base: Optional[str] = None,
         allow_multi_edges: bool = False,
+        checkpoint: bool = False,
     ) -> None:
         self.persona = persona_description
         self.story_text = story_text
@@ -132,10 +133,12 @@ class AMoCv4:
         self._recently_deactivated_nodes_for_inference: set[Node] = set()
         self._anchor_nodes: set[Node] = set()
         self._explicit_nodes_current_sentence: set[Node] = set()
+        self._carryover_nodes_current_sentence: set[Node] = set()
         self.strict_reactivate_function = strict_reactivate_function
         self.strict_attachament_constraint = strict_attachament_constraint
         self.single_anchor_hub = single_anchor_hub
         self.allow_multi_edges = allow_multi_edges
+        self.checkpoint = checkpoint
         self._current_sentence_text: str = ""
         self.cumulative_graph = nx.MultiDiGraph()
         self.active_graph = nx.MultiDiGraph()
@@ -233,7 +236,9 @@ class AMoCv4:
         )
         self._inference_ops.set_callbacks(
             append_adjectival_hints_fn=self._append_adjectival_hints,
-            get_sentences_text_based_nodes_fn=lambda sents, create: self.get_senteces_text_based_nodes(sents, create),
+            get_sentences_text_based_nodes_fn=lambda sents, create_unexistent_nodes=True: self.get_senteces_text_based_nodes(
+                sents, create_unexistent_nodes=create_unexistent_nodes
+            ),
         )
         self._linguistic_ops = LinguisticOps(
             graph_ref=self.graph,
@@ -337,7 +342,9 @@ class AMoCv4:
             add_edge_fn=self._add_edge,
             get_nodes_with_active_edges_fn=self._get_nodes_with_active_edges,
             get_node_from_text_fn=self.get_node_from_text,
-            get_sentences_text_based_nodes_fn=lambda sents, create: self.get_senteces_text_based_nodes(sents, create),
+            get_sentences_text_based_nodes_fn=lambda sents, create_unexistent_nodes=True: self.get_senteces_text_based_nodes(
+                sents, create_unexistent_nodes=create_unexistent_nodes
+            ),
             extract_deterministic_structure_fn=self._extract_deterministic_structure,
             infer_new_relationships_step_0_fn=self.infer_new_relationships_step_0,
             add_inferred_relationships_to_graph_step_0_fn=self.add_inferred_relationships_to_graph_step_0,
@@ -364,7 +371,9 @@ class AMoCv4:
             restrict_active_to_current_explicit_fn=self._restrict_active_to_current_explicit,
             get_node_from_new_relationship_fn=self.get_node_from_new_relationship,
             get_phrase_level_concepts_fn=self.get_phrase_level_concepts,
-            get_sentences_text_based_nodes_fn=lambda sents, create: self.get_senteces_text_based_nodes(sents, create),
+            get_sentences_text_based_nodes_fn=lambda sents, create_unexistent_nodes=True: self.get_senteces_text_based_nodes(
+                sents, create_unexistent_nodes=create_unexistent_nodes
+            ),
             infer_new_relationships_fn=self.infer_new_relationships,
             add_inferred_relationships_to_graph_fn=self.add_inferred_relationships_to_graph,
             reactivate_relevant_edges_fn=self.reactivate_relevant_edges,
@@ -385,6 +394,30 @@ class AMoCv4:
         self._projection_bookkeeping_ops.set_callbacks(
             record_sentence_activation_fn=self._record_sentence_activation,
         )
+
+    def _rebind_ops_graph_refs(self) -> None:
+        for ops in [
+            self._connectivity_ops,
+            self._decay_ops,
+            self._text_filter_ops,
+            self._triplet_ops,
+            self._edge_ops,
+            self._node_ops,
+            self._sentence_ops,
+            self._inference_ops,
+            self._linguistic_ops,
+            self._plot_ops,
+            self._activation_ops,
+            self._output_ops,
+            self._relationship_graph_ops,
+            self._init_ops,
+            self._sentence_processing_ops,
+            self._projection_bookkeeping_ops,
+        ]:
+            if hasattr(ops, "_graph"):
+                ops._graph = self.graph
+            if hasattr(ops, "graph"):
+                ops.graph = self.graph
 
     def _classify_relation(self, label: str) -> str:
         return self._text_filter_ops.classify_relation(label)
@@ -745,7 +778,7 @@ class AMoCv4:
         nodes_before_sentence = self._sentence_ops.reset_sentence_state(original_text)
         self._current_sentence_text = original_text
         self._anchor_drop_log: list[tuple[int, str, str, str, str]] = []
-        self._explicit_nodes_current_sentence = set()
+        self._explicit_nodes_current_sentence.clear()
         return nodes_before_sentence
 
     def _handle_first_sentence(
@@ -762,8 +795,10 @@ class AMoCv4:
             nodes_before_sentence=nodes_before_sentence,
         )
         nodes_before, should_skip, explicit_nodes, anchor_nodes = result
-        self._explicit_nodes_current_sentence = explicit_nodes
-        self._anchor_nodes = anchor_nodes
+        self._explicit_nodes_current_sentence.clear()
+        self._explicit_nodes_current_sentence.update(explicit_nodes)
+        self._anchor_nodes.clear()
+        self._anchor_nodes.update(anchor_nodes)
         return (nodes_before, should_skip)
 
     def _handle_nonfirst_sentence(
@@ -782,7 +817,7 @@ class AMoCv4:
             original_text=original_text,
             prev_sentences=prev_sentences,
             nodes_before_sentence=nodes_before_sentence,
-            current_sentence_index=i,
+            current_sentence_index=self._current_sentence_index,
             current_sentence_text=resolved_text,
             explicit_nodes_current_sentence=self._explicit_nodes_current_sentence,
             anchor_nodes=self._anchor_nodes,
@@ -832,7 +867,7 @@ class AMoCv4:
                 self.graph.enforce_carryover_connectivity(
                     getattr(self, "_carryover_nodes_current_sentence", set())
                 )
-                if not self.graph.check_active_connectivity():
+                if not self.graph.is_active_connected():
                     if self._enforce_connectivity(prev_sentences):
                         return (nodes_before_sentence, True)
 
@@ -956,8 +991,11 @@ class AMoCv4:
                 )
 
         self.graph = previous_graph_state
-        self._anchor_nodes = previous_anchor_nodes
-        self._triplet_intro = previous_triplet_intro
+        self._rebind_ops_graph_refs()
+        self._anchor_nodes.clear()
+        self._anchor_nodes.update(previous_anchor_nodes)
+        self._triplet_intro.clear()
+        self._triplet_intro.update(previous_triplet_intro)
         self._per_sentence_view = previous_per_sentence_view
         self._recently_deactivated_nodes_for_inference = (
             previous_recently_deactivated
@@ -1148,6 +1186,9 @@ class AMoCv4:
             )
 
             per_sentence_view = self._build_projection(sentence_id)
+
+            self._carryover_nodes_current_sentence.clear()
+            self._carryover_nodes_current_sentence.update(per_sentence_view.carryover_nodes)
 
             (
                 recently_deactivated_nodes,

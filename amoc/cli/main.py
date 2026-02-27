@@ -189,6 +189,13 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         ),
     )
 
+    p.add_argument(
+        "--checkpoint",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable checkpoint mode for edges (default: disabled).",
+    )
+
     return p.parse_args(argv)
 
 
@@ -291,6 +298,7 @@ def main(argv: List[str]) -> None:
                 story_text=story_text,
                 force_node=True,
                 allow_multi_edges=args.allow_multi_edges,
+                checkpoint=args.checkpoint,
             )
     finally:
         elapsed = time.time() - total_start
