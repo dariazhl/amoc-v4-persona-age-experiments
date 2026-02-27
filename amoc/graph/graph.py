@@ -1,13 +1,22 @@
+"""
+Graph - Pure Topology Module
+
+This module contains ONLY topology logic:
+- Node/edge storage and retrieval
+- Graph structure operations
+- Connectivity checks (pure, non-mutating)
+
+All other logic has been moved to:
+- provenance_ops.py: Provenance gate and sanity checks
+- validation_ops.py: AMoCv4 constraints and ontology validation
+- activation_ops.py: Edge reactivation, decay, scoring
+- plot_filter_ops.py: Edge filtering for visualization
+- stability_ops.py: Cumulative stability enforcement
+"""
+
 from amoc.graph.node import Node
 from amoc.graph.node import NodeType, NodeSource, NodeProvenance, NodeRole
-from amoc.graph.edge import (
-    Edge,
-    RelationClass,
-    Justification,
-    enforce_ontology_invariants,
-    assert_persona_did_not_modify_ontology,
-)
-from collections import deque
+from amoc.graph.edge import Edge
 from typing import List, Set, Dict, Optional, Tuple, Callable
 import re
 import logging
@@ -15,104 +24,49 @@ import networkx as nx
 
 
 class Graph:
-    # ==========================================================================
-    # LOW-INFORMATION EDGE LABELS (Issue B - Node Coagulation Prevention)
-    # ==========================================================================
-    # These labels create high-degree hub clusters and must be throttled.
-    LOW_INFO_LABELS: set[str] = {"has", "relates_to", "is", "involves", "concerns"}
+    """
+    Pure topology graph structure.
+
+    Contains only:
+    - Node/edge storage
+    - Add/remove operations
+    - Connectivity checks (pure, non-mutating)
+    """
 
     # ==========================================================================
-    # FORBIDDEN NODE LEMMAS (Phase 1 - Hard Block Persona & Meta Nodes)
+    # FORBIDDEN NODE LEMMAS (Hard Block)
     # ==========================================================================
-    # Meta-ontological nouns and persona-derived terms that must NEVER become nodes.
-    # These are silently rejected at node admission time.
     FORBIDDEN_NODE_LEMMAS: set[str] = {
-        # Persona-derived terms
-        "student",
-        "persona",
-        # Meta-ontological nouns (from LLM explanations/summaries)
-        "relation",
-        "context",
-        "object",
-        "place",
-        "story",
-        "narrative",
-        "sentence",
-        # Technical graph terms (legacy, kept for compatibility)
-        "edge",
-        "node",
-        "property",
-        "label",
-        "target",
-        "source",
-        "pronoun",
-        "noun",
-        "user",
+        "student", "persona", "relation", "context", "object", "place",
+        "story", "narrative", "sentence", "edge", "node", "property",
+        "label", "target", "source", "pronoun", "noun", "user",
     }
 
-    # Nodes that are NEVER allowed, even if explicit
     NARRATION_ARTIFACT_LEMMAS: set[str] = {
-        "text",
-        "sentence",
-        "paragraph",
-        "mention",
-        "mentions",
-        "narration",
-        "story",
+        "text", "sentence", "paragraph", "mention", "mentions", "narration", "story",
     }
 
     def __init__(self) -> None:
         self.nodes: Set[Node] = set()
         self.edges: Set[Edge] = set()
 
-        # ==========================================================================
-        # PROVENANCE GATE (Issue A - Persona Leakage Prevention)
-        # ==========================================================================
-        # story_lemmas: Set of lemmas from story text (valid for node creation)
-        # persona_only_lemmas: Set of lemmas ONLY in persona (must be blocked)
+        # Provenance gate state (used by add_or_get_node)
         self._story_lemmas: Optional[Set[str]] = None
         self._persona_only_lemmas: Optional[Set[str]] = None
-
-        # ==========================================================================
-        # EDGE BUDGET (Issue B - Node Coagulation Prevention)
-        # ==========================================================================
-        # Per-sentence, per-node, per-label edge counts to prevent hub formation
-        # Structure: {sentence_idx: {node_lemma_tuple: {label: count}}}
-        self._edge_budget: Dict[int, Dict[tuple, Dict[str, int]]] = {}
         self._current_sentence_idx: int = 0
-        # Sentence-scoped lemma gate (for explicit node enforcement)
         self._current_sentence_lemmas: Optional[Set[str]] = None
 
+    # ==========================================================================
+    # NODE OPERATIONS
+    # ==========================================================================
+
     def set_current_sentence_lemmas(self, lemmas: Set[str]) -> None:
-        """
-        Set the lemma set for the current sentence.
-        Used to enforce that explicit nodes must originate from this sentence.
-        """
+        """Set the lemma set for the current sentence."""
         self._current_sentence_lemmas = {l.lower() for l in lemmas}
 
-    def set_provenance_gate(
-        self,
-        story_lemmas: Set[str],
-        persona_only_lemmas: Optional[Set[str]] = None,
-    ) -> None:
-        """
-        Configure the provenance gate for node creation.
-
-        Args:
-            story_lemmas: Set of lemmas from story text (valid for node creation)
-            persona_only_lemmas: Set of lemmas ONLY in persona (must be blocked)
-        """
-        self._story_lemmas = {s.lower() for s in story_lemmas}
-        self._persona_only_lemmas = (
-            {s.lower() for s in persona_only_lemmas} if persona_only_lemmas else set()
-        )
-
     def set_current_sentence(self, sentence_idx: int) -> None:
-        """Set the current sentence index for edge budget tracking."""
+        """Set the current sentence index."""
         self._current_sentence_idx = sentence_idx
-        # Initialize budget for this sentence if not exists
-        if sentence_idx not in self._edge_budget:
-            self._edge_budget[sentence_idx] = {}
 
     def add_or_get_node(
         self,
@@ -128,107 +82,53 @@ class Graph:
         node_role: Optional[NodeRole] = None,
         mark_explicit: bool = True,
     ):
-        """
-        Add a new node or get existing node with matching lemmas.
-
-        PROVENANCE TRACKING (Paper-Aligned):
-        - origin_sentence: The sentence index where this node was created
-        - provenance: How this node was derived (STORY_TEXT or INFERRED_FROM_STORY)
-
-        NODE ROLE:
-        - node_role: Semantic role (ACTOR, OBJECT, PROPERTY, SETTING)
-        - SETTING nodes are locations/environments from prepositional phrases
-
-        PHASE 2 - SENTENCE-SCOPED NODE PROVENANCE:
-        - mark_explicit: If True, marks the node as explicit in origin_sentence
-        - Only set mark_explicit=True if the node appears in the sentence's dependency parse
-        - Carry-over nodes should use mark_explicit=False
-
-        CRITICAL: Nodes must only come from story text, never from persona.
-        Persona influences salience/weights only, never graph content.
-        """
+        """Add a new node or get existing node with matching lemmas."""
         lemmas = [lemma.lower() for lemma in lemmas]
         if not lemmas or not lemmas[0]:
             return None
         primary_lemma = lemmas[0].lower()
 
-        # BLOCK single-character junk
         if len(primary_lemma) <= 1:
             return None
 
-        # BLOCK known garbage tokens (includes vague/generic terms)
         GARBAGE_LEMMAS = {
-            "edge",
-            "node",
-            "relation",
-            "property",
-            "label",
-            "target",
-            "source",
-            "t",
-            # Additional garbage per replication mode
-            "type",
-            "person",
-            "approach",
-            "kind",
-            "thing",
+            "edge", "node", "relation", "property", "label", "target",
+            "source", "t", "type", "person", "approach", "kind", "thing",
         }
 
         if primary_lemma in GARBAGE_LEMMAS:
             return None
-        # EVENT nodes can have non-alphabetic names like "killing_knight_dragon_s0"
-        # Only apply isalpha check to CONCEPT and PROPERTY nodes
-        import re
 
         if node_type != NodeType.EVENT and not re.match(r"^[a-zA-Z]+$", lemmas[0]):
             return None
 
-        # ==========================================================================
-        # PHASE 1: FORBIDDEN LEMMA BLOCKLIST (Hard Block Persona & Meta Nodes)
-        # ==========================================================================
         if any(lemma in self.FORBIDDEN_NODE_LEMMAS for lemma in lemmas):
             return None
 
         if any(lemma in self.NARRATION_ARTIFACT_LEMMAS for lemma in lemmas):
-            logging.debug(f"NARRATION ARTIFACT BLOCKED: {lemmas}")
             return None
 
-        # ==========================================================================
-        # HARD PROVENANCE GATE (Issue A - Persona Leakage Prevention)
-        # ==========================================================================
-        # CRITICAL: This gate MUST block persona-only lemmas BEFORE node creation.
-        # Per AMoC v4 paper: Nodes come from STORY TEXT only, never persona.
-        # GATE 1: Block lemmas that appear ONLY in persona (hard reject)
         if self._persona_only_lemmas and primary_lemma in self._persona_only_lemmas:
-            logging.debug(
-                f"PROVENANCE GATE: Blocked persona-only lemma '{primary_lemma}'"
-            )
             return None
 
-        # GATE 2: For new nodes, require story grounding (unless INFERRED_FROM_STORY)
-        # Allow existing nodes to be retrieved (they were already validated)
         existing_node = self.get_node(lemmas)
         if existing_node is None:
             if self._story_lemmas is not None:
-                primary_lemma = lemmas[0]
                 ed_stem = (
                     primary_lemma[:-2]
                     if primary_lemma.endswith("ed") and len(primary_lemma) > 2
                     else None
                 )
-
                 ing_stem = (
                     primary_lemma[:-3]
                     if primary_lemma.endswith("ing") and len(primary_lemma) > 3
                     else None
                 )
-
                 is_story_grounded = (
                     primary_lemma in self._story_lemmas
                     or (ed_stem and ed_stem in self._story_lemmas)
                     or (ing_stem and ing_stem in self._story_lemmas)
                 )
-
                 is_inferred = provenance == NodeProvenance.INFERRED_FROM_STORY
 
                 if (
@@ -238,7 +138,6 @@ class Graph:
                 ):
                     return None
 
-        # Legacy admit callback (additional filtering if provided)
         if admit is not None:
             admit_kwargs = admit_kwargs or {}
             if not admit(lemma=lemmas[0], node_type=node_type, **admit_kwargs):
@@ -263,30 +162,18 @@ class Graph:
                 node.mark_explicit_in_sentence(origin_sentence)
         else:
             node.add_actual_text(actual_text_l)
-            # Upgrade CONCEPT to PROPERTY if necessary
             if node.node_type != node_type:
                 if node_type == NodeType.PROPERTY:
                     node.node_type = NodeType.PROPERTY
-            # Update role if node exists but had no role and we're providing one
             if node.node_role is None and node_role is not None:
                 node.node_role = node_role
 
-            # ==========================================================================
-            # PHASE 2: Mark existing node as explicit in current sentence
-            # ==========================================================================
-            # Only mark as explicit if:
-            # 1. mark_explicit is True (node appears in sentence's dependency parse)
-            # 2. origin_sentence is provided (we know which sentence we're in)
-            #
-            # INVARIANT: Carry-over nodes remain carry-over unless re-mentioned.
             if mark_explicit and origin_sentence is not None:
-                # Enforce sentence-scoped explicit-node invariant
                 if (
                     self._current_sentence_lemmas is not None
                     and primary_lemma not in self._current_sentence_lemmas
                 ):
-                    return None  # Reject explicit node not present in current sentence
-
+                    return None
                 node.mark_explicit_in_sentence(origin_sentence)
 
         return node
@@ -297,23 +184,14 @@ class Graph:
                 return node
         return None
 
-    def get_edge_by_nodes_and_label(
-        self, source_node: Node, dest_node: Node, label: str
-    ) -> Optional[Edge]:
-        for edge in self.edges:
-            if (
-                edge.source_node == source_node
-                and edge.dest_node == dest_node
-                and edge.label == label
-            ):
-                return edge
-        return None
+    def get_explicit_nodes_for_sentence(self, sentence_id: int):
+        return [
+            node for node in self.nodes if node.is_explicit_in_sentence(sentence_id)
+        ]
 
-    def get_edge(self, edge: Edge) -> Optional[Edge]:
-        for other_edge in self.edges:
-            if edge == other_edge:
-                return other_edge
-        return None
+    # ==========================================================================
+    # EDGE OPERATIONS
+    # ==========================================================================
 
     def add_edge(
         self,
@@ -323,20 +201,17 @@ class Graph:
         edge_visibility: int,
         created_at_sentence: Optional[int] = None,
         *,
-        relation_class: Optional[RelationClass] = None,
-        justification: Optional[Justification] = None,
+        relation_class=None,
+        justification=None,
         persona_influenced: bool = False,
         inferred: bool = False,
     ) -> Optional[Edge]:
-        # Basic sanity checks (these don't block - just return None)
+        """Add an edge to the graph."""
         if source_node == dest_node:
             return None
-        # Safety net: reject edges with empty/whitespace-only labels
         if not label or not isinstance(label, str) or not label.strip():
             return None
-        # ------------------------------------------------------------
-        # Prevent inference from resurrecting decaying nodes
-        # ------------------------------------------------------------
+
         if inferred:
             if (
                 hasattr(source_node, "visibility_score")
@@ -346,80 +221,6 @@ class Graph:
                 and dest_node.visibility_score <= 0
             ):
                 return None
-
-            if created_at_sentence is not None:
-                label_lower = label.lower().strip()
-                source_key = tuple(source_node.lemmas)
-
-                sentence_budget = self._edge_budget.setdefault(created_at_sentence, {})
-                node_budget = sentence_budget.setdefault(source_key, {})
-
-                current_count = node_budget.get(label_lower, 0)
-
-                MAX_PER_LABEL = 3
-
-                # ---------------------------------
-                # SAFE grounding detection
-                # ---------------------------------
-                def _node_degree(node):
-                    return sum(
-                        1
-                        for e in self.edges
-                        if (e.source_node == node or e.dest_node == node)
-                        and e.visibility_score > 0
-                    )
-
-                source_degree = _node_degree(source_node)
-                dest_degree = _node_degree(dest_node)
-
-                grounding_edge = source_degree == 0 or dest_degree == 0
-
-                if not grounding_edge and current_count >= MAX_PER_LABEL:
-                    return None
-
-                node_budget[label_lower] = current_count + 1
-
-        # PROPERTY constraint check (soft - records violation but allows edge)
-        property_node = None
-        concept_node = None
-        if (
-            source_node.node_type == NodeType.PROPERTY
-            and dest_node.node_type == NodeType.CONCEPT
-        ):
-            property_node = source_node
-            concept_node = dest_node
-        elif (
-            dest_node.node_type == NodeType.PROPERTY
-            and source_node.node_type == NodeType.CONCEPT
-        ):
-            property_node = dest_node
-            concept_node = source_node
-
-        property_violation = None
-        if property_node is not None:
-            # Check if this property is already attached to a DIFFERENT concept
-            for existing_edge in property_node.edges:
-                other_node = (
-                    existing_edge.dest_node
-                    if existing_edge.source_node == property_node
-                    else existing_edge.source_node
-                )
-                if (
-                    other_node.node_type == NodeType.CONCEPT
-                    and other_node != concept_node
-                ):
-                    property_violation = "PROPERTY node attached to multiple concepts"
-                    break
-
-        # ==========================================================================
-        # NON-BLOCKING EDGE CREATION
-        # ==========================================================================
-        # Create edge regardless of ontology violations.
-        # Violations are recorded as metadata, NOT used to block creation.
-        if relation_class == RelationClass.CONNECTIVE:
-            inferred = True
-            persona_influenced = False
-            skip_budget = True
 
         edge = Edge(
             source_node,
@@ -434,23 +235,10 @@ class Graph:
             created_at_sentence=created_at_sentence,
         )
 
-        # CENTRALIZED ONTOLOGY DIAGNOSTICS (non-blocking)
-        enforce_ontology_invariants(edge)
-
-        # Record property violation if detected (non-blocking)
-        if property_violation:
-            edge.metadata.setdefault("ontology_violations", []).append(
-                property_violation
-            )
-
-        if self.check_if_similar_edge_exists(edge, edge_visibility):
-            return self.get_edge(edge)
-        # ==========================================================================
-        # CONNECTIVITY CHECK (non-blocking - records violation but allows edge)
-        # ==========================================================================
+        if self._check_similar_edge_exists(edge, edge_visibility):
+            return self._get_similar_edge(edge)
 
         self.edges.add(edge)
-        self._apply_structural_event_supersession(edge)
         if edge not in source_node.edges:
             source_node.edges.append(edge)
         if edge not in dest_node.edges:
@@ -458,513 +246,371 @@ class Graph:
 
         return edge
 
-    def _apply_structural_event_supersession(self, new_edge):
-        """
-        Abstract structural supersession:
-        If a new edge causes a state change between a subject-object pair,
-        remove previous state-preserving edges for that same pair.
-        No lexical assumptions.
-        """
-
-        subject = new_edge.source_node
-        object_ = new_edge.dest_node
-
-        for edge in list(self.edges):
-            if edge is new_edge:
-                continue
-
-            if edge.source_node == subject and edge.dest_node == object_:
-
-                # Structural logic only
-                if getattr(edge, "preserves_state", False) and getattr(
-                    new_edge, "causes_state", False
-                ):
-                    self.remove_edge(edge)
-
-        # Narrative collapse: kill supersedes fight relations
-        # if "kill" in new_edge.label:
-        # for edge in list(self.edges):
-        #     if (
-        #         edge.source_node == new_edge.source_node
-        #         and edge.dest_node == new_edge.dest_node
-        #         and "fight" in edge.label
-        #     ):
-        #         edge.visibility_score = 0
-        #         edge.active = False
-
-    def _would_maintain_connectivity(self, new_edge: Edge) -> bool:
-        """
-        Check if adding this edge would maintain graph connectivity.
-
-        Uses CUMULATIVE structure, not sentence-local activity.
-        For dependent relations, at least one endpoint must already exist
-        in the cumulative memory graph.
-
-        Returns:
-            True if edge can be added without creating isolated component
-            False if edge would create a disconnected component
-        """
-        # If graph is empty, first edge is always allowed
-        if not self.edges:
-            return True
-
-        # Build CUMULATIVE graph structure
-        # - Use ALL edges, not just active ones
-        # - Exclude ATTRIBUTIVE edges (they don't maintain connectivity)
-        # - Activity status is IGNORED - this is a memory check
-        G = nx.Graph()
-        for edge in self.edges:
-            G.add_edge(edge.source_node, edge.dest_node)
-
-        # Check if at least one endpoint already exists in cumulative memory
-        source_connected = new_edge.source_node in G.nodes()
-        dest_connected = new_edge.dest_node in G.nodes()
-
-        # Dependent relations require at least one endpoint to be grounded
-        # Allow inferred edges to introduce at most one new node
-        # If graph is empty, first edge is allowed
-        if G.number_of_nodes() == 0:
-            return True
-
-        # If both endpoints are new and graph already exists,
-        # block creation of isolated component
-        if not source_connected and not dest_connected:
-            return False
-
-        if new_edge.inferred:
-            return True
-
-        if getattr(new_edge, "inferred", False):
-            return True
-
-        # simulate addition and test connectivity
-        G.add_edge(new_edge.source_node, new_edge.dest_node)
-        return nx.is_connected(G)
-
-    def check_if_similar_edge_exists(self, edge: Edge, edge_visibility: int) -> bool:
-        """
-        If an equivalent edge exists, softly reinforce it.
-        DO NOT hard reset visibility (prevents immortal edges).
-        """
-
+    def _check_similar_edge_exists(self, edge: Edge, edge_visibility: int) -> bool:
+        """Check if a similar edge exists and reinforce it."""
         for other_edge in self.edges:
-
             same_nodes = (
                 edge.source_node == other_edge.source_node
                 and edge.dest_node == other_edge.dest_node
             )
-
             if not same_nodes:
                 continue
-
-            is_concept_property_pair = (
-                edge.source_node.node_type == NodeType.CONCEPT
-                and edge.dest_node.node_type == NodeType.PROPERTY
-            ) or (
-                edge.dest_node.node_type == NodeType.CONCEPT
-                and edge.source_node.node_type == NodeType.PROPERTY
-            )
 
             if (
                 edge.label.strip().lower() == other_edge.label.strip().lower()
                 and not edge.inferred
             ):
-                # SOFT REINFORCEMENT (works for both inferred and non-inferred)
                 other_edge.visibility_score = min(
                     edge_visibility, other_edge.visibility_score + 1
                 )
-
                 other_edge.active = True
                 other_edge.mark_as_asserted(reset_score=False)
-
                 return True
 
         return False
 
-    def deactivate_all_edges(self) -> None:
-        """
-        Reset all edges at the start of a new sentence.
-        This implements the "cumulative memory, sentence-local activation" rule.
-        Per AMoC v4 paper: all edges become inactive at sentence start,
-        then selectively activated through assertion or reactivation.
-        Edges remain in memory but are marked inactive until reasserted/reactivated.
-        """
+    def _get_similar_edge(self, edge: Edge) -> Optional[Edge]:
+        """Get a similar existing edge."""
+        for other_edge in self.edges:
+            if (
+                edge.source_node == other_edge.source_node
+                and edge.dest_node == other_edge.dest_node
+                and edge.label.strip().lower() == other_edge.label.strip().lower()
+            ):
+                return other_edge
+        return None
+
+    def get_edge(self, edge: Edge) -> Optional[Edge]:
+        for other_edge in self.edges:
+            if edge == other_edge:
+                return other_edge
+        return None
+
+    def get_edge_by_nodes_and_label(
+        self, source_node: Node, dest_node: Node, label: str
+    ) -> Optional[Edge]:
         for edge in self.edges:
-            edge.reset_for_sentence_start()
+            if (
+                edge.source_node == source_node
+                and edge.dest_node == dest_node
+                and edge.label == label
+            ):
+                return edge
+        return None
 
-    # Maximum number of edges to reactivate per sentence (sparse reactivation)
-    MAX_REACTIVATION_COUNT: int = 6
+    def remove_edge(self, edge: Edge) -> None:
+        if edge in self.edges:
+            self.edges.remove(edge)
+        if edge.source_node and edge in edge.source_node.edges:
+            edge.source_node.edges.remove(edge)
+        if edge.dest_node and edge in edge.dest_node.edges:
+            edge.dest_node.edges.remove(edge)
 
-    def reactivate_memory_edges_within_distance(
-        self,
-        explicit_nodes: Set[Node],
-        max_distance: int,
-        current_sentence: int,
-    ) -> Set[Edge]:
+    # ==========================================================================
+    # SUBGRAPH OPERATIONS
+    # ==========================================================================
 
-        if not explicit_nodes or max_distance < 1:
-            return set()
-
-        # BFS to find candidate edges within distance
-        # CRITICAL (Paper-Aligned): Only CONCEPT nodes participate in BFS
-        # PROPERTY nodes have no independent activation and don't propagate
-        # SETTING nodes (locations/environments) are low-priority context nodes
-        # that should NOT trigger reactivation of other edges
-        # Use nodes connected by visible edges, not active edges
-        memory_nodes = {e.source_node for e in self.edges} | {
-            e.dest_node for e in self.edges
-        }
-
-        concept_seeds = {
-            n
-            for n in explicit_nodes
-            if n.node_type != NodeType.PROPERTY and not n.is_setting()
-        }
-
-        if not concept_seeds:
-            return set()
-
-        reachable_nodes: Dict[Node, int] = {n: 0 for n in concept_seeds}
-        queue: deque = deque(concept_seeds)
-        visited_edges: Set[Edge] = set()
-        candidate_edges: list[tuple[int, Edge]] = []  # (distance, edge)
-
-        while queue:
-            node = queue.popleft()
-            dist = reachable_nodes[node]
-
-            if dist >= max_distance:
-                continue
-
-            for edge in node.edges:
-                if edge in visited_edges:
-                    continue
-                # Structural edges do NOT propagate activation
-                if edge.structural or edge.relation_class == RelationClass.CONNECTIVE:
-                    continue
-                visited_edges.add(edge)
-
-                # Do not reactivate edges that have fully faded from memory
-                # Temporal guard: prevent revival of very old edges
-                # if edge.created_at_sentence is not None:
-                #     if current_sentence - edge.created_at_sentence > 5:
-                #         continue
-                # Do not reactivate edges that have fully faded
-                if edge.visibility_score <= 0:
-                    continue
-
-                # --------------------------------------------------
-                # 1. PROPERTY EDGES (ATTRIBUTIVE)
-                # --------------------------------------------------
-                # Paper-aligned: PROPERTY edges do NOT reactivate
-                if edge.relation_class == RelationClass.ATTRIBUTIVE:
-                    continue
-
-                # Skip edges that are already active (asserted this sentence)
-                if edge.active:
-                    continue
-
-                # Collect as candidate for reactivation
-                candidate_edges.append((dist, edge))
-
-                # Continue BFS to neighbors (for finding more candidates)
-                # CRITICAL: Skip PROPERTY and SETTING nodes in traversal
-                # PROPERTY nodes have no independent activation
-                # SETTING nodes are low-priority context that don't propagate activation
-                neighbor = (
-                    edge.dest_node if edge.source_node == node else edge.source_node
-                )
-                # if (
-                #     neighbor.node_type == NodeType.PROPERTY
-                #     or neighbor.is_setting()
-                #     or (
-                #         neighbor.node_role is not None
-                #         and neighbor.node_role not in {NodeRole.ACTOR, NodeRole.OBJECT}
-                #     )
-                # ):
-                #     continue
-                if neighbor not in reachable_nodes:
-                    reachable_nodes[neighbor] = dist + 1
-                    queue.append(neighbor)
-
-        # SPARSE REACTIVATION: sort by distance and limit to MAX_REACTIVATION_COUNT
-        # Prefer closer edges (smaller distance)
-        candidate_edges.sort(key=lambda x: x[0])
-        reactivated: Set[Edge] = set()
-
-        # Sort by shortest distance first (paper-aligned priority)
-        candidate_edges.sort(key=lambda x: x[0])
-
-        reactivated: Set[Edge] = set()
-
-        for dist, edge in candidate_edges[: self.MAX_REACTIVATION_COUNT]:
-
-            # Paper-aligned reactivation:
-            # - activate edge
-            # - mark as reactivated
-            # - DO NOT fully reset visibility score
-            edge.mark_as_reactivated(reset_score=False)
-            reactivated.add(edge)
-
-        return reactivated
-
-    def decay_inactive_edges(self) -> None:
-        for edge in list(self.edges):
-            if not edge.active:
-                edge.reduce_visibility()
-
-    def get_active_subgraph(
-        self,
-    ) -> Tuple[Set[Node], Set[Edge]]:
-
+    def get_active_subgraph(self) -> Tuple[Set[Node], Set[Edge]]:
+        """Get active nodes and edges."""
         active_edges: Set[Edge] = {
             e for e in self.edges if e.active and e.visibility_score > 0
         }
-
         active_nodes: Set[Node] = {e.source_node for e in active_edges} | {
             e.dest_node for e in active_edges
         }
-
         return active_nodes, active_edges
 
-    def get_active_triplets_with_scores(
-        self,
-    ) -> List[Tuple[str, str, str, bool, int]]:
-        """
-        Get triplets from active edges with their activation scores.
+    # ==========================================================================
+    # GRAPH VIEW BUILDERS (Pure, Non-Mutating)
+    # ==========================================================================
 
-        Returns list of (source_text, label, dest_text, is_active, activation_score)
-        for use in plotting with variable thickness/alpha.
+    def cumulative_graph(self) -> nx.Graph:
         """
-        triplets = []
+        Build a read-only NetworkX graph from ALL edges in cumulative memory.
+
+        This is a snapshot view - modifications to the returned graph
+        do NOT affect the underlying Graph structure.
+        """
+        G = nx.Graph()
         for edge in self.edges:
-            triplets.append(
-                (
-                    edge.source_node.get_text_representer(),
-                    edge.label,
-                    edge.dest_node.get_text_representer(),
-                    edge.active,
-                    edge.activation_score,
-                )
-            )
-        return triplets
+            G.add_edge(edge.source_node, edge.dest_node, edge=edge)
+        return G
 
-    @staticmethod
-    def canonicalize_relation_label(label: str) -> str:
+    def active_graph(self, required_nodes: Optional[Set[Node]] = None) -> nx.Graph:
         """
-        Canonicalize relation labels before edge creation.
-        Removes clear parser artifacts while preserving valid verb phrases.
-
-        Per AMoC v4 paper (Figures 2-4), edge labels should be full verb phrases:
-        - "rode through"
-        - "was kidnapping"
-        - "wanted to free"
-        - "is unfamiliar with"
-
-        This function is CONSERVATIVE - it only removes clear artifacts.
-        The more aggressive normalization happens in _normalize_edge_label().
+        Build a read-only NetworkX graph from active edges only.
         """
-        if not label or not isinstance(label, str):
-            return ""
+        G = nx.Graph()
 
-        # Strip whitespace
-        label = label.strip()
-        if not label:
-            return ""
+        active_nodes = {n for n in self.nodes if n.active}
+        for edge in self.edges:
+            if edge.active:
+                active_nodes.add(edge.source_node)
+                active_nodes.add(edge.dest_node)
+        if required_nodes:
+            active_nodes |= required_nodes
 
-        # Remove common parser prefixes/artifacts (colon-based)
-        prefixes_to_remove = [
-            "nsubj:",
-            "dobj:",
-            "pobj:",
-            "prep:",
-            "amod:",
-            "advmod:",
-            "ROOT:",
-            "VERB:",
-            "NOUN:",
-            "ADJ:",
-            "dep:",
-            "compound:",
-            "agent:",
-            "xcomp:",
-            "ccomp:",
-            "aux:",
-            "auxpass:",
-        ]
-        for prefix in prefixes_to_remove:
-            if label.lower().startswith(prefix.lower()):
-                label = label[len(prefix) :]
+        for node in active_nodes:
+            G.add_node(node)
 
-        # Remove trailing punctuation
-        label = re.sub(r"[^\w\s]+$", "", label)
-        label = label.strip()
+        for edge in self.edges:
+            if edge.active:
+                G.add_edge(edge.source_node, edge.dest_node, edge=edge)
 
-        # Normalize whitespace (but preserve spaces between words)
-        label = re.sub(r"\s+", " ", label)
+        return G
 
-        # CONSERVATIVE: Only reject clearly malformed labels
-        # - Labels with 3+ repeated characters (like "killtt" -> corruption)
-        # - Labels that are pure noise (no vowels in any word)
-        if len(label) > 0:
-            # Detect repeated character corruption
-            if re.search(r"(.)\1{2,}", label):
-                # Clean up repeated trailing consonants: "kidnapp" -> "kidnap"
-                label = re.sub(r"([bcdfghjklmnpqrstvwxyz])\1+$", r"\1", label)
+    # ==========================================================================
+    # CONNECTIVITY CHECKS (Pure, Non-Mutating)
+    # ==========================================================================
 
-            # Check each word for vowel presence (skip very short words)
-            words = label.split()
-            cleaned_words = []
-            for word in words:
-                # Skip words that are too short to check
-                if len(word) <= 2:
-                    cleaned_words.append(word.lower())
-                    continue
-                # Reject words without vowels (corruption)
-                if not re.search(r"[aeiou]", word.lower()):
-                    continue
-                cleaned_words.append(word.lower())
+    def check_active_connectivity(self) -> bool:
+        """
+        Check if the active graph is connected.
+        Returns True if connected (or empty/single node), False if disconnected.
+        """
+        active_nodes = {n for n in self.nodes if n.active}
+        active_edges = [e for e in self.edges if e.active]
 
-            if not cleaned_words:
-                return ""
-            label = " ".join(cleaned_words)
+        # Also include nodes from active edges
+        for edge in active_edges:
+            active_nodes.add(edge.source_node)
+            active_nodes.add(edge.dest_node)
 
-        # Final: lowercase and return
-        label = label.lower().strip()
+        if len(active_nodes) <= 1:
+            return True
 
-        # Minimum length check (allow 2-char verbs like "be", "go", "do")
-        if len(label) < 2:
-            return ""
+        G_active = nx.Graph()
+        for node in active_nodes:
+            G_active.add_node(node)
+        for edge in active_edges:
+            G_active.add_edge(edge.source_node, edge.dest_node)
 
-        return label
+        return nx.is_connected(G_active)
 
-    def bfs_from_activated_nodes(
+    def check_cumulative_connectivity(self) -> bool:
+        """Check if cumulative graph is connected."""
+        G = nx.Graph()
+        for edge in self.edges:
+            G.add_edge(edge.source_node, edge.dest_node)
+        if G.number_of_nodes() <= 1:
+            return True
+        return nx.is_connected(G)
+
+    def get_disconnected_components(
         self,
-        activated_nodes: List[Node],
-        direction: str = "both",
-    ) -> Dict[Node, int]:
+        focus_nodes: Set[Node],
+    ) -> Tuple[List[Set[Node]], int]:
         """
-        Compute shortest-path distances from activated nodes via BFS.
+        Get disconnected components and identify the focus component.
+        """
+        active_edges = [e for e in self.edges if e.active]
+        if not active_edges:
+            return ([], -1)
 
-        Args:
-            activated_nodes: Starting nodes for BFS
-            direction: How to traverse edges:
-                - "both": Follow edges in both directions (default, for distance computation)
-                - "outgoing": Only follow edges where current node is source (A → B)
-                - "incoming": Only follow edges where current node is dest (A ← B)
+        G_active = nx.Graph()
+        for edge in active_edges:
+            G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
+
+        if G_active.number_of_nodes() <= 1:
+            return (
+                ([set(G_active.nodes())], 0)
+                if G_active.number_of_nodes() == 1
+                else ([], -1)
+            )
+
+        components = [set(c) for c in nx.connected_components(G_active)]
+
+        if len(components) <= 1:
+            return (components, 0)
+
+        focus_component_idx = 0
+        for idx, comp in enumerate(components):
+            if any(n in comp for n in focus_nodes):
+                focus_component_idx = idx
+                break
+
+        return (components, focus_component_idx)
+
+    def get_nodes_needing_connection(
+        self,
+        focus_nodes: Set[Node],
+    ) -> List[Tuple[Node, Node]]:
+        """
+        Get pairs of nodes that need edges to restore connectivity.
+        """
+        components, focus_idx = self.get_disconnected_components(focus_nodes)
+
+        if len(components) <= 1:
+            return []
+
+        focus_comp = components[focus_idx]
+        pairs_needing_connection = []
+
+        for idx, comp in enumerate(components):
+            if idx == focus_idx:
+                continue
+
+            isolated_node = None
+            for n in comp:
+                if n.node_type == NodeType.CONCEPT:
+                    isolated_node = n
+                    break
+            if isolated_node is None:
+                isolated_node = next(iter(comp))
+
+            focus_node = None
+            for n in focus_comp:
+                if n in focus_nodes and n.node_type == NodeType.CONCEPT:
+                    focus_node = n
+                    break
+            if focus_node is None:
+                for n in focus_comp:
+                    if n.node_type == NodeType.CONCEPT:
+                        focus_node = n
+                        break
+            if focus_node is None:
+                focus_node = next(iter(focus_comp))
+
+            pairs_needing_connection.append((isolated_node, focus_node))
+
+        return pairs_needing_connection
+
+    def ensure_active_connectivity(
+        self,
+        required_nodes: Set[Node],
+    ) -> bool:
+        """
+        Check if the active graph can be connected using existing edges.
+
+        This is a PURE CHECK that does NOT modify any edges. It determines
+        whether connectivity is achievable by examining paths in the
+        cumulative graph, but does not activate or promote any edges.
 
         Returns:
-            Dict mapping each reachable node to its distance from nearest activated node.
-
-        Per AMoC v4: Activation distance is computed bidirectionally (semantic edges
-        connect concepts regardless of direction). Direction matters for meaning,
-        not for activation propagation.
-
-        CRITICAL (Paper-Aligned):
-        PROPERTY nodes are EXCLUDED from BFS traversal and distance computation.
-        Per paper: PROPERTY nodes have no independent activation and don't propagate
-        activation to/from other nodes. Only CONCEPT nodes participate in BFS.
+            True if graph is connected (or could be connected via existing
+            cumulative edges), False otherwise.
         """
-        distances = {}
-        # Filter out PROPERTY nodes from starting set
-        # Per paper: only CONCEPT nodes can be activation seeds
-        concept_seeds = [
-            node for node in activated_nodes if node.node_type != NodeType.PROPERTY
-        ]
+        active_edges = [e for e in self.edges if e.active]
 
-        queue = deque([(node, 0) for node in concept_seeds])
-        while queue:
-            curr_node, curr_distance = queue.popleft()
-            if curr_node not in distances:
-                distances[curr_node] = curr_distance
-                for edge in curr_node.edges:
-                    if not edge.active:
+        # Build active_nodes from:
+        # 1. Nodes with n.active == True
+        # 2. Nodes connected by active edges
+        # 3. Required nodes (explicit + carryover)
+        active_nodes = {n for n in self.nodes if n.active}
+        for edge in active_edges:
+            active_nodes.add(edge.source_node)
+            active_nodes.add(edge.dest_node)
+        active_nodes |= required_nodes
+
+        # Build active graph using only edge.active == True
+        G_active = nx.Graph()
+
+        for node in active_nodes:
+            G_active.add_node(node)
+
+        for edge in active_edges:
+            G_active.add_edge(edge.source_node, edge.dest_node)
+
+        # If connected → return True
+        if G_active.number_of_nodes() <= 1:
+            return True
+        if nx.is_connected(G_active):
+            return True
+
+        # Graph is disconnected - find components
+        components = list(nx.connected_components(G_active))
+        if len(components) <= 1:
+            return True
+
+        # Identify focus component (largest component containing required nodes)
+        focus_component_idx = 0
+        max_required_count = 0
+        for idx, comp in enumerate(components):
+            required_in_comp = len(comp & required_nodes)
+            if required_in_comp > max_required_count:
+                max_required_count = required_in_comp
+                focus_component_idx = idx
+
+        # Build cumulative graph from ALL edges
+        G_cumulative = nx.Graph()
+        for edge in self.edges:
+            G_cumulative.add_edge(edge.source_node, edge.dest_node, edge=edge)
+
+        # Local connectors list (edges that WOULD connect components)
+        connectors: Set[Edge] = set()
+
+        # For each disconnected component, find shortest path to focus component
+        focus_comp_nodes = components[focus_component_idx]
+        for idx, comp in enumerate(components):
+            if idx == focus_component_idx:
+                continue
+
+            best_path = None
+            best_path_len = float("inf")
+
+            for src in comp:
+                if src not in G_cumulative:
+                    continue
+                for tgt in focus_comp_nodes:
+                    if src == tgt:
+                        continue
+                    if tgt not in G_cumulative:
                         continue
 
-                    # Determine which neighbor to visit based on direction mode
-                    next_node = None
-                    if direction == "both":
-                        # Bidirectional: follow edge regardless of direction
-                        next_node = (
-                            edge.dest_node
-                            if edge.source_node == curr_node
-                            else edge.source_node
-                        )
-                    elif direction == "outgoing":
-                        # Only follow if current node is the source
-                        if edge.source_node == curr_node:
-                            next_node = edge.dest_node
-                    elif direction == "incoming":
-                        # Only follow if current node is the destination
-                        if edge.dest_node == curr_node:
-                            next_node = edge.source_node
+                    try:
+                        path = nx.shortest_path(G_cumulative, src, tgt)
+                        if len(path) < best_path_len:
+                            best_path = path
+                            best_path_len = len(path)
+                    except (nx.NetworkXNoPath, nx.NodeNotFound):
+                        continue
 
-                    if next_node is not None:
-                        queue.append((next_node, curr_distance + 1))
-        return distances
+            if best_path is None:
+                # No cumulative path exists → return False
+                return False
 
-    def set_nodes_score_based_on_distance_from_active_nodes(
-        self, activated_nodes: List[Node]
-    ) -> None:
-        distances_to_activated_nodes = self.bfs_from_activated_nodes(activated_nodes)
+            # Collect edges along path into local connectors (DO NOT modify)
+            for i in range(len(best_path) - 1):
+                node_a = best_path[i]
+                node_b = best_path[i + 1]
 
-        for node in self.nodes:
-            # PROPERTY nodes are distance-agnostic (paper behavior)
-            if node.node_type == NodeType.PROPERTY:
-                continue  # do NOT overwrite score
+                edge_data = G_cumulative.get_edge_data(node_a, node_b)
+                if edge_data is None:
+                    continue
 
-            if node in distances_to_activated_nodes:
-                node.score = distances_to_activated_nodes[node]
-            else:
-                # Instead of killing it (score=100),
-                # gradually increase distance score
-                node.score = min(node.score + 1, 100)
+                edge = edge_data.get("edge")
+                if edge is None:
+                    continue
+
+                if not edge.active:
+                    connectors.add(edge)
+
+        # Build final temporary graph using active edges + connectors
+        G_final = nx.Graph()
+
+        for node in active_nodes:
+            G_final.add_node(node)
+
+        for edge in active_edges:
+            G_final.add_edge(edge.source_node, edge.dest_node)
+
+        for edge in connectors:
+            G_final.add_edge(edge.source_node, edge.dest_node)
+
+        if G_final.number_of_nodes() <= 1:
+            return True
+
+        return nx.is_connected(G_final)
+
+    # ==========================================================================
+    # UTILITY METHODS
+    # ==========================================================================
 
     def get_word_lemma_score(self, word_lemmas: List[str]) -> Optional[float]:
         for node in self.nodes:
             if node.lemmas == word_lemmas:
                 return node.score
         return None
-
-    def get_top_k_nodes(self, nodes: List[Node], k: int) -> List[Node]:
-        return sorted(nodes, key=lambda node: node.score)[:k]
-
-    def get_top_concepts_nodes(self, k: int) -> List[Node]:
-        nodes = [node for node in self.nodes if node.node_type == NodeType.CONCEPT]
-        return self.get_top_k_nodes(nodes, k)
-
-    def get_top_text_based_concepts(self, k: int) -> List[Node]:
-        nodes = [
-            node
-            for node in self.nodes
-            if node.node_type == NodeType.CONCEPT
-            and node.node_source == NodeSource.TEXT_BASED
-        ]
-        return self.get_top_k_nodes(nodes, k)
-
-    def get_active_nodes(
-        self, score_threshold: int, only_text_based: bool = False
-    ) -> List[Node]:
-        """
-        Get nodes within the score threshold (close to active nodes).
-
-        CRITICAL (Paper-Aligned):
-        PROPERTY nodes are EXCLUDED from score-based selection.
-        Per paper: PROPERTY nodes have no independent activation.
-        They only appear in the active graph if they have an active property edge.
-        Score-based selection applies ONLY to CONCEPT nodes.
-        """
-        return [
-            node
-            for node in self.nodes
-            if node.score <= score_threshold
-            and (not only_text_based or node.node_source == NodeSource.TEXT_BASED)
-        ]
-
-    def get_explicit_nodes_for_sentence(self, sentence_id: int):
-        return [
-            node for node in self.nodes if node.is_explicit_in_sentence(sentence_id)
-        ]
 
     def get_nodes_str(self, nodes: List[Node]) -> str:
         nodes_str = ""
@@ -1021,460 +667,70 @@ class Graph:
             s += str(edge) + "\n"
         return s
 
-    # ==========================================================================
-    # CONNECTIVITY ENFORCEMENT LOGIC
-    # ==========================================================================
-    # This section contains all connectivity-related methods, isolated for clarity.
-    #
-    # CONNECTIVITY FLOW:
-    # 1. check_active_connectivity() - Detect if graph is disconnected
-    # 2. get_disconnected_components() - Get components that need connecting
-    # 3. ensure_active_connectivity() - Try to connect using existing edges
-    # 4. If still disconnected -> caller triggers secondary LLM call
-    # ==========================================================================
-
-    def check_active_connectivity(self) -> bool:
-        """
-        Check if the active graph is connected.
-
-        This is the primary method for connectivity detection.
-        Should be called BEFORE plotting to determine if intervention is needed.
-
-        Returns:
-            True if connected (or empty/single node), False if disconnected
-        """
-        active_nodes = {n for n in self.nodes if n.active}
-        active_edges = [e for e in self.edges if e.active]
-
-        if len(active_nodes) <= 1:
-            return True
-
-        G_active = nx.Graph()
-
-        # Add all active nodes explicitly
-        for node in active_nodes:
-            G_active.add_node(node)
-
-        # Add edges between active nodes
-        for edge in active_edges:
-            G_active.add_edge(edge.source_node, edge.dest_node)
-
-        return nx.is_connected(G_active)
-
-    def get_disconnected_components(
+    def get_active_triplets_with_scores(
         self,
-        focus_nodes: Set[Node],
-    ) -> Tuple[List[Set[Node]], int]:
-        """
-        Get disconnected components and identify the focus component.
-
-        Use this to determine which nodes need connecting and to which component.
-        This information can be passed to a secondary LLM call.
-
-        Args:
-            focus_nodes: Nodes that should be in the "main" component
-
-        Returns:
-            Tuple of:
-            - List of connected components (each is a set of nodes)
-            - Index of the focus component (containing focus_nodes)
-
-        If graph is connected, returns ([all_nodes], 0).
-        """
-        active_edges = [e for e in self.edges if e.active]
-        if not active_edges:
-            return ([], -1)
-
-        G_active = nx.Graph()
-        for edge in active_edges:
-            G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
-
-        if G_active.number_of_nodes() <= 1:
-            return (
-                ([set(G_active.nodes())], 0)
-                if G_active.number_of_nodes() == 1
-                else ([], -1)
+    ) -> List[Tuple[str, str, str, bool, int]]:
+        """Get triplets from active edges with their activation scores."""
+        triplets = []
+        for edge in self.edges:
+            triplets.append(
+                (
+                    edge.source_node.get_text_representer(),
+                    edge.label,
+                    edge.dest_node.get_text_representer(),
+                    edge.active,
+                    edge.activation_score,
+                )
             )
+        return triplets
 
-        components = [set(c) for c in nx.connected_components(G_active)]
+    @staticmethod
+    def canonicalize_relation_label(label: str) -> str:
+        """Canonicalize relation labels before edge creation."""
+        if not label or not isinstance(label, str):
+            return ""
 
-        if len(components) <= 1:
-            return (components, 0)
+        label = label.strip()
+        if not label:
+            return ""
 
-        # Find which component contains focus nodes
-        focus_component_idx = 0
-        for idx, comp in enumerate(components):
-            if any(n in comp for n in focus_nodes):
-                focus_component_idx = idx
-                break
+        prefixes_to_remove = [
+            "nsubj:", "dobj:", "pobj:", "prep:", "amod:", "advmod:",
+            "ROOT:", "VERB:", "NOUN:", "ADJ:", "dep:", "compound:",
+            "agent:", "xcomp:", "ccomp:", "aux:", "auxpass:",
+        ]
+        for prefix in prefixes_to_remove:
+            if label.lower().startswith(prefix.lower()):
+                label = label[len(prefix):]
 
-        return (components, focus_component_idx)
+        label = re.sub(r"[^\w\s]+$", "", label)
+        label = label.strip()
+        label = re.sub(r"\s+", " ", label)
 
-    def get_nodes_needing_connection(
-        self,
-        focus_nodes: Set[Node],
-    ) -> List[Tuple[Node, Node]]:
-        """
-        Get pairs of nodes that need edges to restore connectivity.
+        if len(label) > 0:
+            if re.search(r"(.)\1{2,}", label):
+                label = re.sub(r"([bcdfghjklmnpqrstvwxyz])\1+$", r"\1", label)
 
-        For each disconnected component, returns a representative node pair
-        (one node from the component, one from the focus component) that
-        could be connected by a new edge.
-
-        Use this to prepare the secondary LLM call prompt.
-
-        Args:
-            focus_nodes: Nodes that define the "main" component
-
-        Returns:
-            List of (isolated_node, focus_node) pairs that need connecting.
-            Empty list if graph is already connected.
-        """
-        components, focus_idx = self.get_disconnected_components(focus_nodes)
-
-        if len(components) <= 1:
-            return []  # Already connected
-
-        focus_comp = components[focus_idx]
-        pairs_needing_connection = []
-
-        for idx, comp in enumerate(components):
-            if idx == focus_idx:
-                continue
-
-            # Pick a representative node from each side
-            # Prefer CONCEPT nodes over PROPERTY nodes
-            isolated_node = None
-            for n in comp:
-                if n.node_type == NodeType.CONCEPT:
-                    isolated_node = n
-                    break
-            if isolated_node is None:
-                isolated_node = next(iter(comp))
-
-            focus_node = None
-            for n in focus_comp:
-                if n in focus_nodes and n.node_type == NodeType.CONCEPT:
-                    focus_node = n
-                    break
-            if focus_node is None:
-                for n in focus_comp:
-                    if n.node_type == NodeType.CONCEPT:
-                        focus_node = n
-                        break
-            if focus_node is None:
-                focus_node = next(iter(focus_comp))
-
-            pairs_needing_connection.append((isolated_node, focus_node))
-
-        return pairs_needing_connection
-
-    def ensure_active_connectivity(
-        self,
-        required_nodes: Set[Node],
-    ) -> bool:
-        """
-        Ensure the active graph remains connected.
-
-        STEP 1 of connectivity enforcement: Try to connect using EXISTING edges.
-
-        Guarantees: All nodes that are explicit OR carry-over for the current
-        sentence must belong to a single connected component in the active graph.
-        No visible carry-over node may remain isolated.
-
-        If the active graph becomes disconnected:
-        1. Build active nodes from graph memory + required nodes (explicit + carryover)
-        2. Compute connected components of the active graph
-        3. If multiple components exist, find minimum set of existing memory edges
-        that connect them
-        4. Promote those edges to active as "connectors"
-
-        Connector edge constraints (CRITICAL):
-        - Must already exist in the cumulative graph
-        - Must NOT be ATTRIBUTIVE edges
-        - Must NOT be counted as asserted or reactivated
-        - Do NOT increase activation scores
-        - Are NOT eligible for inference
-        - Exist only to preserve structural connectivity
-
-        Args:
-            required_nodes: Set of nodes that MUST be connected (explicit + carryover)
-
-        Returns:
-            True if graph is connected after enforcement, False otherwise.
-            If False, caller should trigger secondary LLM call.
-        """
-        # Base active nodes from graph memory
-        active_nodes = {n for n in self.nodes if n.active}
-
-        # Enforce required nodes (explicit + carryover)
-        active_nodes |= required_nodes
-
-        active_edges = [e for e in self.edges if e.active]
-
-        # Build undirected graph of active edges
-        G_active = nx.Graph()
-
-        # Add ALL active_nodes explicitly
-        for node in active_nodes:
-            G_active.add_node(node)
-
-        # Add edges only if both endpoints are in active_nodes
-        for edge in active_edges:
-            if edge.source_node in active_nodes and edge.dest_node in active_nodes:
-                G_active.add_edge(edge.source_node, edge.dest_node, edge=edge)
-
-        # Check if already connected
-        if G_active.number_of_nodes() <= 1:
-            return True
-        if nx.is_connected(G_active):
-            return True
-
-        # Graph is disconnected - find components
-        components = list(nx.connected_components(G_active))
-        if len(components) <= 1:
-            return True
-
-        # Identify focus component (largest component containing required nodes)
-        focus_component_idx = 0
-        max_required_count = 0
-        for idx, comp in enumerate(components):
-            required_in_comp = len(comp & required_nodes)
-            if required_in_comp > max_required_count:
-                max_required_count = required_in_comp
-                focus_component_idx = idx
-
-        # Build full cumulative graph for finding paths
-        G_cumulative = nx.Graph()
-
-        for edge in self.edges:
-            G_cumulative.add_edge(edge.source_node, edge.dest_node, edge=edge)
-
-        promoted_connectors: Set[Edge] = set()
-
-        # For each non-focus component, find shortest path to focus component
-        focus_comp_nodes = components[focus_component_idx]
-        for idx, comp in enumerate(components):
-            if idx == focus_component_idx:
-                continue
-
-            # Find shortest path in cumulative graph between any node in comp
-            # and any node in focus component
-            best_path = None
-            best_path_len = float("inf")
-
-            for src in comp:
-                # Skip if src not in cumulative graph (only has property edges)
-                if src not in G_cumulative:
+            words = label.split()
+            cleaned_words = []
+            for word in words:
+                if len(word) <= 2:
+                    cleaned_words.append(word.lower())
                     continue
-                for tgt in focus_comp_nodes:
-                    if src == tgt:
-                        continue
-                    # Skip if tgt not in cumulative graph (only has property edges)
-                    if tgt not in G_cumulative:
-                        continue
-
-                    try:
-                        path = nx.shortest_path(G_cumulative, src, tgt)
-                        if len(path) < best_path_len:
-                            best_path = path
-                            best_path_len = len(path)
-                    except (nx.NetworkXNoPath, nx.NodeNotFound):
-                        continue
-
-            if best_path is None:
-                # No cumulative path exists — caller must use LLM fallback
-                continue
-
-            # Promote cumulative edges along path
-            for i in range(len(best_path) - 1):
-                node_a = best_path[i]
-                node_b = best_path[i + 1]
-
-                edge_data = G_cumulative.get_edge_data(node_a, node_b)
-                if edge_data is None:
+                if not re.search(r"[aeiou]", word.lower()):
                     continue
+                cleaned_words.append(word.lower())
 
-                edge = edge_data.get("edge")
-                if edge is None:
-                    continue
+            if not cleaned_words:
+                return ""
+            label = " ".join(cleaned_words)
 
-                if edge.relation_class == RelationClass.ATTRIBUTIVE:
-                    continue
+        label = label.lower().strip()
 
-                if not edge.active:
-                    edge.structural = True
-                    edge.active = True
-                    edge.asserted_this_sentence = False
-                    edge.reactivated_this_sentence = False
-                    promoted_connectors.add(edge)
+        if len(label) < 2:
+            return ""
 
-        # Check final connectivity state
-        G_final = nx.Graph()
-        for node in active_nodes:
-            G_final.add_node(node)
-        for e in self.edges:
-            if (
-                e.active
-                and e.source_node in active_nodes
-                and e.dest_node in active_nodes
-            ):
-                G_final.add_edge(e.source_node, e.dest_node)
-
-        if G_final.number_of_nodes() <= 1:
-            return True
-
-        return nx.is_connected(G_final)
-
-    def get_active_edges_by_role(self) -> dict[str, Set[Edge]]:
-        """
-        Get active edges grouped by their activation role.
-
-        Returns dict with keys:
-        - "asserted": edges asserted this sentence
-        - "reactivated": edges reactivated from memory
-        """
-        result: dict[str, Set[Edge]] = {
-            "asserted": set(),
-            "reactivated": set(),
-        }
-
-        for edge in self.edges:
-            if not edge.active:
-                continue
-            if edge.is_asserted():
-                result["asserted"].add(edge)
-            elif edge.is_reactivated():
-                result["reactivated"].add(edge)
-
-        return result
-
-    def enforce_cumulative_stability(
-        self,
-        explicit_nodes: set,
-    ) -> None:
-        """
-        SAFETY INVARIANT:
-
-        If cumulative graph collapses structurally, replace it
-        with the active subgraph.
-
-        Collapse conditions:
-            1) No explicit nodes active
-            2) All nodes inactive
-            3) Active projection empty
-        """
-
-        # --------------------------------------------------
-        # Compute projection
-        # --------------------------------------------------
-        active_nodes, active_edges = self.get_active_subgraph()
-
-        active_empty = len(active_nodes) == 0
-        explicit_active = any(node.active for node in explicit_nodes)
-        all_inactive = all(not node.active for node in self.nodes)
-
-        # --------------------------------------------------
-        # If stable → do nothing
-        # --------------------------------------------------
-        if explicit_active and not all_inactive and not active_empty:
-            return
-
-        # --------------------------------------------------
-        # Recovery triggered
-        # --------------------------------------------------
-        if active_empty:
-            # Fallback: use last visible edges (visibility > 0)
-            visible_edges = {e for e in self.edges if e.visibility_score > 0}
-
-            visible_nodes = {e.source_node for e in visible_edges} | {
-                e.dest_node for e in visible_edges
-            }
-
-            new_nodes = set(visible_nodes)
-            new_edges = set(visible_edges)
-
-        else:
-            new_nodes = set(active_nodes)
-            new_edges = set(active_edges)
-
-        # --------------------------------------------------
-        # Rebuild adjacency safely
-        # --------------------------------------------------
-        for node in new_nodes:
-            node.edges = []
-
-        for edge in new_edges:
-            edge.source_node.edges.append(edge)
-            edge.dest_node.edges.append(edge)
-
-        # Replace cumulative graph
-        self.nodes = new_nodes
-        self.edges = new_edges
-
-    def enforce_carryover_connectivity(self, carryover_nodes: set) -> None:
-
-        if not carryover_nodes:
-            return
-
-        # Build active edge set
-        active_edges = [e for e in self.edges if e.active and e.visibility_score > 0]
-
-        # Compute active degree
-        degree_map = {}
-
-        for e in active_edges:
-            degree_map[e.source_node] = degree_map.get(e.source_node, 0) + 1
-            degree_map[e.dest_node] = degree_map.get(e.dest_node, 0) + 1
-
-        # Deactivate zero-degree carryover nodes
-        for node in list(carryover_nodes):
-            if degree_map.get(node, 0) == 0:
-                node.active = False
-
-        # --------------------------------------------------
-        # PHASE 2 — Repair disconnected carryover components
-        # --------------------------------------------------
-
-        def build_active_graph():
-            G = nx.Graph()
-            for e in self.edges:
-                if e.active and e.visibility_score > 0:
-                    G.add_edge(e.source_node, e.dest_node)
-            return G
-
-        G = build_active_graph()
-        sub = G.subgraph(carryover_nodes)
-        components = list(nx.connected_components(sub))
-
-        if len(components) <= 1:
-            return
-
-        # Try to reconnect components
-        for comp_a in components:
-            for comp_b in components:
-                if comp_a is comp_b:
-                    continue
-
-                for e in self.edges:
-                    if not (
-                        (e.source_node in comp_a and e.dest_node in comp_b)
-                        or (e.source_node in comp_b and e.dest_node in comp_a)
-                    ):
-                        continue
-
-                    e.active = True
-                    e.visibility_score = max(e.visibility_score, 1)
-                    e.source_node.active = True
-                    e.dest_node.active = True
-
-                    # Recompute components
-                    G = build_active_graph()
-                    sub = G.subgraph(carryover_nodes)
-                    components = list(nx.connected_components(sub))
-
-                    if len(components) <= 1:
-                        return
+        return label
 
     def __str__(self) -> str:
         return "nodes: {}\n\nedges: {}".format(
@@ -1484,377 +740,3 @@ class Graph:
 
     def __repr__(self) -> str:
         return self.__str__()
-
-    # ==========================================================================
-    # AMoCv4 HARD CONSTRAINTS - Surface-relation format enforcement
-    # ==========================================================================
-    FORBIDDEN_EDGE_LABELS = {"agent_of", "target_of", "patient_of", "relation"}
-
-    def validate_amocv4_constraints(self) -> list[str]:
-        """
-        Check AMoCv4 surface-relation format constraints.
-
-        Constraints checked:
-        1. No agent_of, target_of, patient_of, or role-based edges
-        2. All verbs must be represented as direct labeled edges between entities
-        3. All attributes must be represented using the relation 'is'
-
-        Returns:
-            List of violation strings, empty if no violations.
-            NEVER raises or blocks execution.
-        """
-        violations = []
-        for edge in self.edges:
-            if edge.label in self.FORBIDDEN_EDGE_LABELS:
-                violations.append(
-                    f"AMoCv4: Forbidden edge label '{edge.label}': "
-                    f"{edge.source_node.get_text_representer()} -> {edge.dest_node.get_text_representer()}"
-                )
-        return violations
-
-    def sanity_check_readable_triplets(self) -> list[str]:
-        """
-        AMoCv4 sanity check: Every edge must be readable as a simple sentence fragment.
-
-        Returns:
-            List of violation strings, empty if no violations.
-            NEVER raises or blocks execution.
-        """
-        violations = []
-        for edge in self.edges:
-            subj = edge.source_node.get_text_representer()
-            verb = edge.label
-            obj = edge.dest_node.get_text_representer()
-
-            # Basic sanity: all parts must be non-empty
-            if not subj or not verb or not obj:
-                violations.append(
-                    f"AMoCv4: Edge has empty component: '{subj}' --{verb}--> '{obj}'"
-                )
-
-            # Forbidden patterns
-            if verb in self.FORBIDDEN_EDGE_LABELS:
-                violations.append(
-                    f"AMoCv4: Edge uses forbidden label '{verb}': '{subj}' --{verb}--> '{obj}'"
-                )
-
-        return violations
-
-    def sanity_check_provenance(
-        self,
-        story_lemmas: set,
-        persona_only_lemmas: set,
-    ) -> list:
-        """
-        AMoC v4 PROVENANCE SANITY CHECK: Detect potential persona leakage.
-
-        Per AMoC v4 paper: Nodes must come from STORY TEXT only.
-        Persona influences salience (weights), never content (nodes/edges).
-
-        Args:
-            story_lemmas: Set of lemmas from the story text
-            persona_only_lemmas: Set of lemmas unique to persona (not in story)
-
-        Returns:
-            List of warning strings for any detected violations.
-            Empty list if all nodes pass provenance check.
-        """
-        warnings = []
-
-        for node in self.nodes:
-            # Check each lemma in the node
-            for lemma in node.lemmas:
-                lemma_lower = lemma.lower()
-
-                # CRITICAL CHECK: Node lemma appears ONLY in persona
-                if lemma_lower in persona_only_lemmas:
-                    warnings.append(
-                        f"PROVENANCE VIOLATION: Node '{node.get_text_representer()}' "
-                        f"contains lemma '{lemma_lower}' which appears ONLY in persona, "
-                        f"not in story text. Provenance: {node.provenance}"
-                    )
-
-                # SOFT CHECK: Node lemma not found in story
-                # (This might be OK for inferred nodes, but worth flagging)
-                elif lemma_lower not in story_lemmas:
-                    if node.provenance == NodeProvenance.STORY_TEXT:
-                        if any(lemma not in story_lemmas for lemma in node.lemmas):
-                            logging.warning(
-                                "PROVENANCE WARNING: Node '%s' lemma(s) %s not found in story lemma set.",
-                                node.get_text_representer(),
-                                node.lemmas,
-                            )
-        return warnings
-
-    def remove_edge(self, edge: Edge) -> None:
-        if edge in self.edges:
-            self.edges.remove(edge)
-        if edge.source_node and edge in edge.source_node.edges:
-            edge.source_node.edges.remove(edge)
-        if edge.dest_node and edge in edge.dest_node.edges:
-            edge.dest_node.edges.remove(edge)
-
-    def validate_persona_ontology_invariant(self) -> list[str]:
-        """
-        Check that persona did not modify structural ontology.
-
-        Per Recommendation 1: Persona may affect expression (labels),
-        NOT ontology (relation_class, justification).
-
-        Returns:
-            List of violation strings, empty if no violations.
-            NEVER raises or blocks execution.
-        """
-        violations = []
-        for edge in self.edges:
-            # Call the non-blocking version which records to metadata
-            assert_persona_did_not_modify_ontology(edge)
-            # Collect any violations recorded on this edge
-            edge_violations = edge.metadata.get("ontology_violations", [])
-            for v in edge_violations:
-                if "Persona" in v or "REC1" in v:
-                    violations.append(
-                        f"{edge.source_node.get_text_representer()} --{edge.label}--> "
-                        f"{edge.dest_node.get_text_representer()}: {v}"
-                    )
-        return violations
-
-    def validate_event_mediation_invariant(self) -> list[str]:
-        """
-        Check that all EVENTIVE edges are properly mediated by EVENT nodes.
-
-        Per Recommendation 2: EVENTIVE relations must be mediated by EVENT nodes.
-        Direct EVENTIVE edges between non-EVENT nodes are violations.
-
-        Pattern: actor --participates_in--> EVENT --affects--> object
-
-        Returns:
-            List of violation strings, empty if no violations.
-            NEVER raises or blocks execution.
-        """
-        violations = []
-        for edge in self.edges:
-            if edge.relation_class == RelationClass.EVENTIVE:
-                if (
-                    edge.source_node.node_type != NodeType.EVENT
-                    and edge.dest_node.node_type != NodeType.EVENT
-                ):
-                    violations.append(
-                        f"REC2: EVENTIVE edge not mediated: "
-                        f"{edge.source_node.get_text_representer()} --{edge.label}--> "
-                        f"{edge.dest_node.get_text_representer()} "
-                        f"({edge.source_node.node_type} -> {edge.dest_node.node_type})"
-                    )
-
-            # Also check EVENT node attachment constraint
-            is_event_involved = (
-                edge.source_node.node_type == NodeType.EVENT
-                or edge.dest_node.node_type == NodeType.EVENT
-            )
-            if is_event_involved:
-                if edge.relation_class not in {
-                    RelationClass.EVENTIVE,
-                    RelationClass.CONNECTIVE,
-                }:
-                    violations.append(
-                        f"REC2: EVENT node has invalid relation_class {edge.relation_class}: "
-                        f"{edge.source_node.get_text_representer()} --{edge.label}--> "
-                        f"{edge.dest_node.get_text_representer()}"
-                    )
-
-        return violations
-
-    def collect_all_violations(self) -> list[str]:
-        """
-        Collect all ontology violations from all edges.
-
-        Returns:
-            List of all violation strings across all edges.
-            NEVER raises or blocks execution.
-        """
-        violations = []
-        for edge in self.edges:
-            edge_violations = edge.metadata.get("ontology_violations", [])
-            for v in edge_violations:
-                violations.append(
-                    f"{edge.source_node.get_text_representer()} --{edge.label}--> "
-                    f"{edge.dest_node.get_text_representer()}: {v}"
-                )
-        return violations
-
-    # ==========================================================================
-    # PHASE 3: STRUCTURAL DE-COAGULATION (Edge Filtering for Plotting)
-    # ==========================================================================
-    # Not all edges deserve to be plotted. Filter out:
-    # - CONNECTIVE edges (structural, not semantic)
-    # - INFERRED edges (not explicit in text)
-    # - PERSONA_INFLUENCED edges (persona-driven, not story-core)
-    MAX_EDGES_PER_NODE: int = 5  # Soft cap on edges per node for visualization
-
-    def get_edges_for_plotting(
-        self,
-        *,
-        exclude_connective: bool = True,
-        exclude_inferred: bool = True,
-        exclude_persona_influenced: bool = True,
-        active_only: bool = True,
-    ) -> List[Edge]:
-        """
-        Get edges filtered for plotting (Phase 3 - De-Coagulation).
-
-        This method filters edges to prevent visual clutter. It does NOT
-        modify the graph structure - only returns a filtered view.
-
-        Args:
-            exclude_connective: Exclude CONNECTIVE relation_class edges
-            exclude_inferred: Exclude inferred edges (edge.inferred=True)
-            exclude_persona_influenced: Exclude persona-influenced edges
-            active_only: Only include active edges
-
-        Returns:
-            List of edges suitable for plotting.
-            Graph structure is UNCHANGED.
-        """
-        plot_edges = []
-        for edge in self.edges:
-            # Filter by active status
-            if active_only and not edge.active:
-                continue
-
-            # PHASE 3: Exclude CONNECTIVE edges (structural, not semantic)
-            if exclude_connective and edge.relation_class == RelationClass.CONNECTIVE:
-                continue
-
-            # PHASE 3: Exclude INFERRED edges (not explicit in text)
-            if exclude_inferred and edge.inferred:
-                continue
-
-            # PHASE 3: Exclude PERSONA_INFLUENCED edges (persona-driven)
-            if exclude_persona_influenced and edge.persona_influenced:
-                continue
-
-            plot_edges.append(edge)
-
-        return plot_edges
-
-    def get_edges_with_degree_cap(
-        self,
-        edges: List[Edge],
-        max_edges_per_node: Optional[int] = None,
-    ) -> List[Edge]:
-        """
-        Apply degree cap per node for visualization (Phase 3 - De-Coagulation).
-
-        When a node has too many edges, keep only the most important ones:
-        1. Prefer EVENTIVE over ATTRIBUTIVE
-        2. Prefer TEXTUAL justification over IMPLIED
-
-        This is a VISUALIZATION filter only - graph structure is UNCHANGED.
-
-        Args:
-            edges: List of edges to filter
-            max_edges_per_node: Maximum edges per node (default: MAX_EDGES_PER_NODE)
-
-        Returns:
-            Filtered list of edges respecting degree cap.
-        """
-        if max_edges_per_node is None:
-            max_edges_per_node = self.MAX_EDGES_PER_NODE
-
-        # Count edges per node
-        node_edge_count: Dict[Node, List[Edge]] = {}
-        for edge in edges:
-            if edge.source_node not in node_edge_count:
-                node_edge_count[edge.source_node] = []
-            if edge.dest_node not in node_edge_count:
-                node_edge_count[edge.dest_node] = []
-            node_edge_count[edge.source_node].append(edge)
-            node_edge_count[edge.dest_node].append(edge)
-
-        # Sort edges by priority for each node
-        def edge_priority(edge: Edge) -> Tuple[int, int]:
-            """Higher priority = lower number (sorted first)."""
-            # Priority 1: EVENTIVE > STATIVE > ATTRIBUTIVE
-            relation_priority = {
-                RelationClass.EVENTIVE: 0,
-                RelationClass.STATIVE: 1,
-                RelationClass.ATTRIBUTIVE: 2,
-                RelationClass.CONNECTIVE: 3,
-            }
-            rel_score = relation_priority.get(edge.relation_class, 2)
-
-            # Priority 2: TEXTUAL > IMPLIED > CONNECTIVE
-            justification_priority = {
-                Justification.TEXTUAL: 0,
-                Justification.IMPLIED: 1,
-                Justification.CONNECTIVE: 2,
-            }
-            just_score = justification_priority.get(edge.justification, 1)
-
-            return (rel_score, just_score)
-
-        # Keep track of which edges to include
-        edges_to_keep: Set[Edge] = set()
-
-        for node, node_edges in node_edge_count.items():
-            if len(node_edges) <= max_edges_per_node:
-                # Under cap - keep all
-                edges_to_keep.update(node_edges)
-            else:
-                # Over cap - keep best ones
-                sorted_edges = sorted(node_edges, key=edge_priority)
-                edges_to_keep.update(sorted_edges[:max_edges_per_node])
-
-        return [e for e in edges if e in edges_to_keep]
-
-    def get_plot_ready_edges(
-        self,
-        *,
-        active_only: bool = True,
-        apply_degree_cap: bool = True,
-        max_edges_per_node: Optional[int] = None,
-    ) -> List[Edge]:
-        """
-        Get edges ready for plotting with all Phase 3 filters applied.
-
-        Convenience method combining:
-        1. get_edges_for_plotting() - excludes CONNECTIVE, INFERRED, PERSONA_INFLUENCED
-        2. get_edges_with_degree_cap() - applies soft degree cap
-
-        Args:
-            active_only: Only include active edges
-            apply_degree_cap: Whether to apply degree cap
-            max_edges_per_node: Maximum edges per node
-
-        Returns:
-            List of edges ready for plotting.
-            Graph structure is UNCHANGED.
-        """
-        # --- PATCH 4: Debug mode override ---
-        if getattr(self, "_debug_no_filter", False):
-            return list(self.edges)
-
-        # Step 1: Filter out non-semantic edges
-        filtered = self.get_edges_for_plotting(
-            exclude_connective=True,
-            exclude_inferred=True,
-            exclude_persona_influenced=True,
-            active_only=active_only,
-        )
-
-        # Step 2: Apply degree cap if requested
-        if apply_degree_cap:
-            filtered = self.get_edges_with_degree_cap(
-                filtered,
-                max_edges_per_node=max_edges_per_node,
-            )
-
-        return filtered
-
-    def check_cumulative_connectivity(self):
-        G = nx.Graph()
-        for edge in self.edges:
-            G.add_edge(edge.source_node, edge.dest_node)
-        if G.number_of_nodes() <= 1:
-            return True
-        return nx.is_connected(G)
