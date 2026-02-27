@@ -312,27 +312,22 @@ class EdgeOps:
         persona: str = "",
         normalize_edge_label_fn: callable = None,
     ) -> List["Edge"]:
+        """
+        LLM-powered connectivity repair.
+
+        This method is invoked AFTER deterministic repair (StabilityOps) fails.
+        It uses LLM to generate semantically meaningful edge labels.
+
+        Delegates component detection to StabilityOps (canonical authority).
+        """
         if mode == "active":
-            relevant_edges = [e for e in self._graph.edges if e.active]
             protected_nodes = self._get_explicit_nodes() | self._get_carryover_nodes()
-            candidate_nodes = protected_nodes | self._get_nodes_with_active_edges()
         else:
-            relevant_edges = list(self._graph.edges)
-            protected_nodes = set()
-            candidate_nodes = set(self._graph.nodes)
+            protected_nodes = set(self._graph.nodes)
 
-        G = nx.Graph()
-        for node in candidate_nodes:
-            G.add_node(node)
+        # Delegate component detection to StabilityOps (canonical authority)
+        components, _ = self._graph.get_disconnected_components(protected_nodes)
 
-        for e in relevant_edges:
-            if e.source_node in candidate_nodes and e.dest_node in candidate_nodes:
-                G.add_edge(e.source_node, e.dest_node)
-
-        if G.number_of_nodes() <= 1:
-            return []
-
-        components = list(nx.connected_components(G))
         if len(components) <= 1:
             return []
 
@@ -404,14 +399,6 @@ class EdgeOps:
                 return []
 
         return forced_edges
-
-    def _get_nodes_with_active_edges(self) -> set:
-        nodes = set()
-        for edge in self._graph.edges:
-            if edge.active:
-                nodes.add(edge.source_node)
-                nodes.add(edge.dest_node)
-        return nodes
 
     def record_edge_in_graphs(
         self,

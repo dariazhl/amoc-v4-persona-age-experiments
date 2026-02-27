@@ -447,9 +447,14 @@ class Graph:
         return self._stability_ops.reconnect_via_cumulative(required_nodes)
 
     def enforce_connectivity(
-        self, required_nodes: Set[Node], allow_reactivation: bool = True
+        self,
+        required_nodes: Set[Node],
+        allow_reactivation: bool = True,
+        enforce_cumulative: bool = False,
     ) -> bool:
-        return self._stability_ops.enforce_connectivity(required_nodes, allow_reactivation)
+        return self._stability_ops.enforce_connectivity(
+            required_nodes, allow_reactivation, enforce_cumulative
+        )
 
     def set_provenance_gate(
         self,

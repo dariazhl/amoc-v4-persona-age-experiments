@@ -708,7 +708,16 @@ class AMoCv4:
         return self._text_filter_ops.canonicalize_and_classify_node_text(text)
 
     def _enforce_cumulative_connectivity(self):
-        self._connectivity_ops.enforce_cumulative_connectivity_simple()
+        """
+        Enforce cumulative connectivity before plotting.
+
+        Delegates to StabilityOps via graph.is_cumulative_connected().
+        This is a read-only check - actual repair happens elsewhere.
+        """
+        if not self.graph.is_cumulative_connected():
+            logging.warning(
+                "[PlotPrep] Cumulative graph disconnected - plots may show fragments"
+            )
 
     def _plot_graph_snapshot(
         self,

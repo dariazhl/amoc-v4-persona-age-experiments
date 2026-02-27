@@ -31,50 +31,19 @@ class ConnectivityOps:
         self._current_sentence_text = current_sentence_text
 
     def is_active_connected(self) -> bool:
-        active_edges = [e for e in self._graph.edges if e.active]
+        """
+        Delegate to StabilityOps (canonical authority).
 
-        G = nx.Graph()
-
-        active_nodes = self._get_nodes_with_active_edges()
-
-        for node in active_nodes:
-            G.add_node(node)
-
-        for node in self._get_explicit_nodes():
-            G.add_node(node)
-
-        for e in active_edges:
-            G.add_edge(e.source_node, e.dest_node)
-
-        if G.number_of_nodes() <= 1:
-            return True
-
-        return nx.is_connected(G)
+        Includes explicit nodes in the connectivity check.
+        """
+        explicit_nodes = self._get_explicit_nodes()
+        return self._graph.is_active_connected(explicit_nodes)
 
     def is_cumulative_connected(self) -> bool:
-        if not self._graph.nodes:
-            return True
-
-        G = nx.Graph()
-
-        for node in self._graph.nodes:
-            G.add_node(node)
-
-        for e in self._graph.edges:
-            G.add_edge(e.source_node, e.dest_node)
-
-        if G.number_of_nodes() <= 1:
-            return True
-
-        return nx.is_connected(G)
-
-    def _get_nodes_with_active_edges(self) -> set:
-        nodes = set()
-        for edge in self._graph.edges:
-            if edge.active:
-                nodes.add(edge.source_node)
-                nodes.add(edge.dest_node)
-        return nodes
+        """
+        Delegate to StabilityOps (canonical authority).
+        """
+        return self._graph.is_cumulative_connected()
 
     def enforce_connectivity(
         self,
@@ -82,105 +51,65 @@ class ConnectivityOps:
         current_sentence_text: str,
         create_forced_edges_fn: callable,
     ) -> bool:
+        """
+        Pipeline-level connectivity enforcement.
+
+        Strategy (in order):
+        1. Deterministic repair via StabilityOps (reactivate cumulative edges)
+        2. LLM-powered repair (create_forced_edges_fn)
+        3. Fallback "relates_to" edges as last resort
+
+        Returns:
+            True if rollback is needed (connectivity could not be restored)
+        """
         rollback_needed = False
         explicit_nodes = self._get_explicit_nodes()
-        protected_nodes = explicit_nodes | self._get_carryover_nodes()
+        carryover_nodes = self._get_carryover_nodes()
+        required_nodes = explicit_nodes | carryover_nodes
 
-        if not self.is_active_connected():
-            repair_success = False
+        # =====================================================================
+        # PHASE 1: Deterministic repair via StabilityOps (CANONICAL AUTHORITY)
+        # =====================================================================
+        if self._graph.enforce_connectivity(required_nodes, allow_reactivation=True):
+            # Deterministic repair succeeded
+            logging.debug("[ConnectivityOps] Deterministic repair succeeded")
+            return False
 
-            for _ in range(2):
-                create_forced_edges_fn(
-                    story_context=(
-                        " ".join(prev_sentences[:-1]) if len(prev_sentences) > 1 else ""
-                    ),
-                    current_sentence=current_sentence_text,
-                    mode="active",
-                )
-                if self.is_active_connected():
-                    repair_success = True
-                    break
+        logging.debug("[ConnectivityOps] Deterministic repair failed, trying LLM repair")
 
-            if not repair_success:
-                G = nx.Graph()
+        # =====================================================================
+        # PHASE 2: LLM-powered repair
+        # =====================================================================
+        for _ in range(2):
+            create_forced_edges_fn(
+                story_context=(
+                    " ".join(prev_sentences[:-1]) if len(prev_sentences) > 1 else ""
+                ),
+                current_sentence=current_sentence_text,
+                mode="active",
+            )
+            if self.is_active_connected():
+                logging.debug("[ConnectivityOps] LLM repair succeeded")
+                return False
 
-                for node in explicit_nodes:
-                    G.add_node(node)
+        # =====================================================================
+        # PHASE 3: Fallback "relates_to" edges as last resort
+        # =====================================================================
+        logging.debug("[ConnectivityOps] LLM repair failed, trying fallback edges")
 
-                for node in self._get_nodes_with_active_edges():
-                    G.add_node(node)
+        components, _ = self._graph.get_disconnected_components(required_nodes)
 
-                for e in self._graph.edges:
-                    if e.active:
-                        G.add_edge(e.source_node, e.dest_node)
-
-                components = list(nx.connected_components(G))
-
-                if len(components) > 1:
-                    components = sorted(components, key=len, reverse=True)
-                    backbone = set(components[0])
-
-                    for comp in components[1:]:
-                        if not (set(comp) & protected_nodes):
-                            continue
-
-                        node_a = next(iter(backbone))
-                        node_b = next(iter(comp))
-
-                        edge = self._graph.add_edge(
-                            node_a,
-                            node_b,
-                            "relates_to",
-                            self._edge_visibility,
-                            persona_influenced=False,
-                            inferred=False,
-                        )
-
-                        if edge:
-                            edge.active = True
-                            edge.asserted_this_sentence = False
-                            edge.reactivated_this_sentence = False
-                            backbone.update(comp)
-
-                repair_success = self.is_active_connected()
-
-            self._ensure_explicit_nodes_connected(explicit_nodes)
-
-            if not self.is_active_connected():
-                rollback_needed = True
-
-        if not rollback_needed and not self.is_cumulative_connected():
-            self._repair_cumulative_connectivity()
-
-            if not self.is_cumulative_connected():
-                rollback_needed = True
-
-        return rollback_needed
-
-    def _ensure_explicit_nodes_connected(self, explicit_nodes: set) -> None:
-        active_edges = [e for e in self._graph.edges if e.active]
-
-        G_active = nx.Graph()
-
-        for node in explicit_nodes:
-            G_active.add_node(node)
-
-        for e in active_edges:
-            G_active.add_edge(e.source_node, e.dest_node)
-
-        if G_active.number_of_nodes() > 1:
-            components = list(nx.connected_components(G_active))
+        if len(components) > 1:
             components = sorted(components, key=len, reverse=True)
-
             backbone = set(components[0])
 
             for comp in components[1:]:
-                has_explicit = any(n in explicit_nodes for n in comp)
-                if not has_explicit:
+                # Only connect components with protected nodes
+                if not (set(comp) & required_nodes):
                     continue
 
                 node_a = next(iter(backbone))
-                node_b = next(n for n in comp if n in explicit_nodes)
+                node_b = next(iter(comp))
 
                 edge = self._graph.add_edge(
                     node_a,
@@ -197,45 +126,125 @@ class ConnectivityOps:
                     edge.reactivated_this_sentence = False
                     backbone.update(comp)
 
+        # Ensure explicit nodes are connected
+        self._ensure_explicit_nodes_connected(explicit_nodes)
+
+        if not self.is_active_connected():
+            rollback_needed = True
+
+        # Check cumulative connectivity
+        if not rollback_needed and not self.is_cumulative_connected():
+            self._repair_cumulative_connectivity()
+
+            if not self.is_cumulative_connected():
+                rollback_needed = True
+
+        return rollback_needed
+
+    def _ensure_explicit_nodes_connected(self, explicit_nodes: set) -> None:
+        """
+        FALLBACK: Create "relates_to" edges to connect explicit nodes.
+
+        This is invoked ONLY after:
+        1. Deterministic repair (StabilityOps) failed
+        2. LLM-powered repair failed
+
+        Uses StabilityOps for component detection.
+        """
+        # First try deterministic repair
+        if self._graph.enforce_connectivity(explicit_nodes, allow_reactivation=True):
+            return
+
+        # Fall back to creating "relates_to" edges
+        components, _ = self._graph.get_disconnected_components(explicit_nodes)
+
+        if len(components) <= 1:
+            return
+
+        components = sorted(components, key=len, reverse=True)
+        backbone = set(components[0])
+
+        for comp in components[1:]:
+            has_explicit = any(n in explicit_nodes for n in comp)
+            if not has_explicit:
+                continue
+
+            node_a = next(iter(backbone))
+            node_b = next(n for n in comp if n in explicit_nodes)
+
+            edge = self._graph.add_edge(
+                node_a,
+                node_b,
+                "relates_to",
+                self._edge_visibility,
+                persona_influenced=False,
+                inferred=False,
+            )
+
+            if edge:
+                edge.active = True
+                edge.asserted_this_sentence = False
+                edge.reactivated_this_sentence = False
+                backbone.update(comp)
+
     def _repair_cumulative_connectivity(self) -> None:
-        G_full = nx.Graph()
+        """
+        FALLBACK: Create "relates_to" edges to repair cumulative connectivity.
 
-        for node in self._graph.nodes:
-            G_full.add_node(node)
+        Note: Cumulative fragmentation is rare by design (nodes added via edges).
+        This is a last-resort fallback.
+        """
+        if self.is_cumulative_connected():
+            return
 
-        for e in self._graph.edges:
-            G_full.add_edge(e.source_node, e.dest_node)
+        # Build cumulative graph to find components
+        G_full = self._graph.to_networkx()
+
+        if G_full.number_of_nodes() <= 1:
+            return
 
         components = list(nx.connected_components(G_full))
 
-        if len(components) > 1:
-            components = sorted(components, key=len, reverse=True)
-            backbone = set(components[0])
-
-            for comp in components[1:]:
-                node_a = next(iter(backbone))
-                node_b = next(iter(comp))
-
-                edge = self._graph.add_edge(
-                    node_a,
-                    node_b,
-                    "relates_to",
-                    self._edge_visibility,
-                    persona_influenced=False,
-                    inferred=False,
-                )
-
-                if edge:
-                    backbone.update(comp)
-
-    def enforce_cumulative_connectivity_simple(self) -> None:
-        G = nx.Graph()
-
-        for edge in self._graph.edges:
-            G.add_edge(edge.source_node, edge.dest_node)
-
-        if len(G.nodes) == 0:
+        if len(components) <= 1:
             return
+
+        logging.warning(
+            "[ConnectivityOps] Cumulative graph fragmented into %d components",
+            len(components),
+        )
+
+        components = sorted(components, key=len, reverse=True)
+        backbone = set(components[0])
+
+        for comp in components[1:]:
+            node_a = next(iter(backbone))
+            node_b = next(iter(comp))
+
+            edge = self._graph.add_edge(
+                node_a,
+                node_b,
+                "relates_to",
+                self._edge_visibility,
+                persona_influenced=False,
+                inferred=False,
+            )
+
+            if edge:
+                backbone.update(comp)
+
+    def _get_nodes_with_active_edges(self) -> set:
+        """
+        Get all nodes that have at least one active edge.
+
+        Returns:
+            Set of nodes with active edges
+        """
+        nodes = set()
+        for edge in self._graph.edges:
+            if edge.active:
+                nodes.add(edge.source_node)
+                nodes.add(edge.dest_node)
+        return nodes
 
     def validate_sentence_state(self) -> bool:
         if not self.is_active_connected():

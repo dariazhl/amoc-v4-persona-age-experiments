@@ -530,18 +530,24 @@ class SentenceProcessingOps:
         explicit_nodes_current_sentence: set,
         anchor_nodes: set,
     ):
-        filtered_anchors = {
-            n for n in anchor_nodes if n in self._get_nodes_with_active_edges_fn()
-        }
+        """
+        Ensure active graph connectivity.
 
+        Delegates to StabilityOps.enforce_connectivity() (canonical authority).
+        Only logs if deterministic repair fails.
+        """
         carryover = self._carryover_nodes_ref() if callable(self._carryover_nodes_ref) else set()
         required_nodes = explicit_nodes_current_sentence | carryover
 
-        connected = self.graph.can_connect_via_cumulative(required_nodes)
+        # Delegate to canonical authority for deterministic repair
+        connected = self.graph.enforce_connectivity(
+            required_nodes,
+            allow_reactivation=True,
+        )
 
         if not connected:
             logging.debug(
-                "[Connectivity] Graph still disconnected after enforcement — LLM repair needed",
+                "[Connectivity] Deterministic repair failed — LLM repair needed",
             )
 
     def _ensure_explicit_nodes_have_edges(

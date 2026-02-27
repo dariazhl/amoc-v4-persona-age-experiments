@@ -32,6 +32,25 @@ class ActivationOps:
         max_distance: int,
         current_sentence: int,
     ) -> Set["Edge"]:
+        """
+        Reactivate edges within BFS distance of explicit nodes.
+
+        This is a SEMANTIC operation, not a connectivity operation.
+        It reactivates edges based on proximity to current sentence concepts,
+        NOT to ensure graph connectivity.
+
+        IMPORTANT: This method may leave the graph disconnected.
+        StabilityOps.enforce_connectivity() must be called afterward
+        to ensure connectivity invariants hold.
+
+        Args:
+            explicit_nodes: Nodes mentioned in current sentence
+            max_distance: Maximum BFS distance to consider
+            current_sentence: Current sentence index (unused, for signature compat)
+
+        Returns:
+            Set of reactivated edges
+        """
         from amoc.graph.node import NodeType
 
         if not explicit_nodes or max_distance < 1:
