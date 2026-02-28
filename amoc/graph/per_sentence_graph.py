@@ -1,16 +1,3 @@
-"""
-Per-Sentence Graph: A constraint-first, sentence-local graph view.
-
-This module provides a clean abstraction for per-sentence plot construction
-that guarantees:
-1. Only explicit and carry-over nodes appear in the graph
-2. Inactive nodes are completely excluded (nodes, edges, metrics)
-3. Connectivity is maintained by construction, not by repair
-
-The design makes disconnection impossible by encoding all constraints
-directly into the construction rules.
-"""
-
 from __future__ import annotations
 from typing import TYPE_CHECKING, Set, List, Dict, Optional, Tuple, FrozenSet, Callable
 from collections import deque
@@ -28,18 +15,6 @@ from amoc.graph.node import NodeType
 
 @dataclass
 class PerSentenceGraph:
-    """
-    An immutable, sentence-local view of the graph.
-
-    This class enforces the per-sentence invariants:
-    - Only explicit + carry-over nodes are visible
-    - Only edges where BOTH endpoints are visible are included
-    - The graph is guaranteed to be connected (or empty)
-
-    The graph is constructed once and cannot be modified, ensuring
-    that invalid states are unrepresentable.
-    """
-
     sentence_index: int
     explicit_nodes: FrozenSet["Node"]
     carryover_nodes: FrozenSet["Node"]
@@ -66,7 +41,7 @@ class PerSentenceGraph:
         degrees = {n: len(neighbors) for n, neighbors in adjacency.items()}
         object.__setattr__(self, "_node_degrees", degrees)
 
-        # Build NetworkX graph for connectivity queries
+        # Build NetworkX graph for connectivity
         G = nx.Graph()
         for node in self.active_nodes:
             G.add_node(node)
@@ -76,34 +51,27 @@ class PerSentenceGraph:
 
     @property
     def is_connected(self) -> bool:
-        """Check if the per-sentence graph is connected."""
         if self._nx_graph.number_of_nodes() <= 1:
             return True
         return nx.is_connected(self._nx_graph)
 
     @property
     def is_empty(self) -> bool:
-        """Check if the per-sentence graph has no edges."""
         return len(self.active_edges) == 0
 
     def get_node_degree(self, node: "Node") -> int:
-        """Get the degree of a node in the per-sentence graph."""
         return self._node_degrees.get(node, 0)
 
     def get_neighbors(self, node: "Node") -> Set["Node"]:
-        """Get neighbors of a node in the per-sentence graph."""
         return self._adjacency.get(node, set())
 
     def node_is_visible(self, node: "Node") -> bool:
-        """Check if a node is visible in this per-sentence graph."""
         return node in self.active_nodes
 
     def edge_is_visible(self, edge: "Edge") -> bool:
-        """Check if an edge is visible in this per-sentence graph."""
         return edge in self.active_edges
 
     def get_triplets(self) -> List[Tuple[str, str, str]]:
-        """Get all triplets in the per-sentence graph."""
         return [
             (
                 edge.source_node.get_text_representer(),
@@ -114,22 +82,10 @@ class PerSentenceGraph:
         ]
 
     def to_networkx(self) -> nx.Graph:
-        """Return the NetworkX representation (undirected)."""
         return self._nx_graph.copy()
 
 
 class PerSentenceGraphBuilder:
-    """
-    Builder for constructing per-sentence graphs with guaranteed invariants.
-
-    This builder enforces the construction rules that make disconnection
-    impossible:
-    1. Start with explicit nodes (from current sentence)
-    2. Expand to carry-over nodes via BFS on active edges
-    3. Include only edges where BOTH endpoints are active
-    4. New edges must attach to the existing component
-    """
-
     def __init__(
         self,
         cumulative_graph: "Graph",
@@ -147,12 +103,6 @@ class PerSentenceGraphBuilder:
         self._sentence_index: Optional[int] = None
 
     def set_explicit_nodes(self, nodes: List["Node"]) -> "PerSentenceGraphBuilder":
-        """
-        Set the explicit nodes for this sentence.
-
-        Explicit nodes are extracted from the sentence text and form
-        the "seed" from which carry-over nodes are discovered.
-        """
         self._explicit_nodes = set(nodes)
         return self
 
@@ -199,26 +149,12 @@ class PerSentenceGraphBuilder:
         return self
 
     def get_active_nodes(self) -> Set["Node"]:
-        """Get the set of nodes visible in the per-sentence graph."""
         return self._explicit_nodes | self._carryover_nodes
 
     def get_attachable_nodes(self) -> Set["Node"]:
-        """
-        Get nodes that new edges can attach to.
-
-        A new edge is valid only if at least one endpoint is attachable.
-        This guarantees connectivity by construction.
-        """
         return self._explicit_nodes | self._carryover_nodes | set(self.anchor_nodes)
 
     def can_add_edge(self, source: "Node", dest: "Node") -> bool:
-        """
-        Check if an edge can be added while maintaining connectivity.
-
-        An edge is valid if at least one endpoint is in the attachable set
-        (explicit, carry-over, or anchor nodes). This makes disconnection
-        impossible by design.
-        """
         attachable = self.get_attachable_nodes()
         return source in attachable or dest in attachable
 
@@ -231,7 +167,7 @@ class PerSentenceGraphBuilder:
     ) -> Optional[Set["Edge"]]:
 
         if self.repair_callback is None:
-            logging.warning("[PerSentenceGraph] No repair callback provided.")
+            logging.warning("No repair callback provided.")
             return None
 
         try:
@@ -244,7 +180,7 @@ class PerSentenceGraphBuilder:
             )
         except Exception as e:
             logging.warning(
-                "[PerSentenceGraph] Repair callback exception: %s",
+                "Repair callback exception: %s",
                 str(e),
             )
             return None
@@ -258,9 +194,7 @@ class PerSentenceGraphBuilder:
             if e.source_node in active_nodes or e.dest_node in active_nodes:
                 valid_edges.add(e)
 
-        # --------------------------------------------------
         # Prevent duplicate-edge retry loops
-        # --------------------------------------------------
         if valid_edges:
             new_edges = valid_edges - active_edges
             if not new_edges:

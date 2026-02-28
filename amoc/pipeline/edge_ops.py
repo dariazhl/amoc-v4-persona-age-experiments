@@ -11,6 +11,7 @@ from amoc.pipeline.text_filter_ops import TextFilterOps
 if TYPE_CHECKING:
     pass
 
+
 class EdgeOps:
 
     def __init__(
@@ -149,7 +150,10 @@ class EdgeOps:
             if not canon_label:
                 return None
 
-            if self._is_valid_relation_label_fn and not self._is_valid_relation_label_fn(canon_label):
+            if (
+                self._is_valid_relation_label_fn
+                and not self._is_valid_relation_label_fn(canon_label)
+            ):
                 return None
 
             event_node = self._graph.add_or_get_node(
@@ -172,7 +176,9 @@ class EdgeOps:
                 )
             return None
 
-        attachable = self._get_attachable_nodes() if self._get_attachable_nodes else set()
+        attachable = (
+            self._get_attachable_nodes() if self._get_attachable_nodes else set()
+        )
 
         if not bypass_attachment_constraint:
             if source_node not in attachable and dest_node not in attachable:
@@ -181,7 +187,7 @@ class EdgeOps:
         dest_text = dest_node.get_text_representer()
         if dest_text and dest_text.strip().lower() == label.strip().lower():
             logging.warning(
-                "[Guard] Rejected duplicate verb-object edge: %s --%s--> %s",
+                "Rejected duplicate verb-object edge: %s --%s--> %s",
                 source_node.get_text_representer(),
                 label,
                 dest_text,
@@ -211,7 +217,7 @@ class EdgeOps:
 
                     if self._debug:
                         logging.debug(
-                            "[SingleEdge] REPLACED equivalent edge: %s --%s--> %s (was: %s, class: %s)",
+                            "REPLACED equivalent edge: %s --%s--> %s (was: %s, class: %s)",
                             source_node.get_text_representer(),
                             label,
                             dest_node.get_text_representer(),
@@ -313,20 +319,11 @@ class EdgeOps:
         persona: str = "",
         normalize_edge_label_fn: callable = None,
     ) -> List["Edge"]:
-        """
-        LLM-powered connectivity repair.
-
-        This method is invoked AFTER deterministic repair (StabilityOps) fails.
-        It uses LLM to generate semantically meaningful edge labels.
-
-        Delegates component detection to StabilityOps (canonical authority).
-        """
         if mode == "active":
             protected_nodes = self._get_explicit_nodes() | self._get_carryover_nodes()
         else:
             protected_nodes = set(self._graph.nodes)
 
-        # Delegate component detection to StabilityOps (canonical authority)
         components, _ = self._graph.get_disconnected_components(protected_nodes)
 
         if len(components) <= 1:
@@ -497,7 +494,7 @@ class EdgeOps:
                 self._persona,
             )
         except Exception:
-            logging.error("Targeted LLM edge inference failed", exc_info=True)
+            logging.error("LLM edge inference failed", exc_info=True)
             return []
 
         added: List["Edge"] = []

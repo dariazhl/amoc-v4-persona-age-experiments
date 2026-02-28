@@ -1,18 +1,3 @@
-"""
-Stability operations for Graph.
-
-CANONICAL CONNECTIVITY AUTHORITY for the graph layer.
-
-All connectivity logic lives here:
-- Active/cumulative connectivity checks
-- Component detection
-- Path-based reconnection via cumulative edges
-- Carryover connectivity enforcement
-- Cumulative stability enforcement
-
-Pipeline-level connectivity (LLM-powered repair) remains in connectivity_ops.py
-"""
-
 from typing import TYPE_CHECKING, Set, List, Tuple, Optional
 import logging
 import networkx as nx
@@ -24,20 +9,12 @@ if TYPE_CHECKING:
 
 
 class StabilityOps:
-    """
-    Canonical connectivity authority for the graph layer.
-
-    Responsibilities:
-    - Pure structural connectivity checks
-    - Component detection
-    - Deterministic reconnection via existing cumulative edges
-    - Carryover/cumulative stability enforcement
-    """
-
     def __init__(self, graph_ref: "Graph"):
         self._graph = graph_ref
 
-    def _build_active_graph(self, include_nodes: Optional[Set["Node"]] = None) -> nx.Graph:
+    def _build_active_graph(
+        self, include_nodes: Optional[Set["Node"]] = None
+    ) -> nx.Graph:
         G = nx.Graph()
         for e in self._graph.edges:
             if e.active and e.visibility_score > 0:
@@ -100,7 +77,7 @@ class StabilityOps:
             return True
 
         for i, comp_a in enumerate(components):
-            for comp_b in components[i+1:]:
+            for comp_b in components[i + 1 :]:
                 can_connect = False
                 for node_a in comp_a:
                     if node_a not in G_cumulative:
@@ -152,7 +129,9 @@ class StabilityOps:
 
             if best_path:
                 for i in range(len(best_path) - 1):
-                    edge_data = G_cumulative.get_edge_data(best_path[i], best_path[i+1])
+                    edge_data = G_cumulative.get_edge_data(
+                        best_path[i], best_path[i + 1]
+                    )
                     if edge_data:
                         edge = edge_data.get("edge")
                         if edge and not edge.active:
@@ -171,66 +150,23 @@ class StabilityOps:
         allow_reactivation: bool = True,
         enforce_cumulative: bool = False,
     ) -> bool:
-        """
-        CANONICAL CONNECTIVITY ENFORCEMENT.
-
-        This is the ONLY method that performs deterministic connectivity repair
-        in the graph layer. All other modules MUST delegate to this method.
-
-        Strategy:
-        1. Check if active graph is already connected
-        2. If not, attempt to reconnect via cumulative edges (shortest path)
-        3. Optionally enforce cumulative connectivity
-
-        Args:
-            required_nodes: Nodes that MUST be reachable in active graph
-            allow_reactivation: If True, reactivate cumulative edges to repair
-            enforce_cumulative: If True, also ensure cumulative graph is connected
-
-        Returns:
-            True if connectivity was achieved, False if LLM repair needed
-
-        Post-conditions (when returning True):
-            - All required_nodes are reachable via active edges
-            - If enforce_cumulative=True, cumulative graph is connected
-
-        Note on cumulative connectivity:
-            By design, cumulative graph fragmentation is RARE because:
-            1. Nodes are only added via edges (connectivity by construction)
-            2. Edges are never deleted, only deactivated
-            3. enforce_cumulative_stability() prunes to active subset on collapse
-
-            If cumulative fragmentation occurs, it indicates a bug upstream
-            or an edge case requiring LLM-powered repair (not handled here).
-        """
-        # Fast path: already connected
+        #  already connected
         if self.is_active_connected(required_nodes):
             if enforce_cumulative and not self.is_cumulative_connected():
-                # Cumulative fragmentation is exceptional - log and continue
                 # This should not happen in normal operation
-                logging.warning(
-                    "[StabilityOps] Cumulative graph fragmented despite active connectivity"
-                )
+                logging.warning("Cumulative graph fragmented")
             return True
 
         # Attempt deterministic repair via cumulative edge reactivation
         if allow_reactivation:
             reactivated = self.reconnect_via_cumulative(required_nodes)
-            if reactivated:
-                logging.debug(
-                    "[StabilityOps] Reactivated %d edges for connectivity",
-                    len(reactivated),
-                )
 
-        # Check result
         active_connected = self.is_active_connected(required_nodes)
 
         if active_connected and enforce_cumulative:
             cumulative_connected = self.is_cumulative_connected()
             if not cumulative_connected:
-                logging.warning(
-                    "[StabilityOps] Active connected but cumulative fragmented"
-                )
+                logging.warning("Active connected but cumulative fragmented")
 
         return active_connected
 
@@ -238,17 +174,7 @@ class StabilityOps:
         self,
         explicit_nodes: set,
     ) -> None:
-        """
-        SAFETY INVARIANT:
-
-        If cumulative graph collapses structurally, replace it
-        with the active subgraph.
-
-        Collapse conditions:
-            1) No explicit nodes active
-            2) All nodes inactive
-            3) Active projection empty
-        """
+        # connectivity for cumulative graph
         active_nodes, active_edges = self._graph.get_active_subgraph()
 
         active_empty = len(active_nodes) == 0
@@ -283,6 +209,7 @@ class StabilityOps:
         self._graph.edges = new_edges
 
     def enforce_carryover_connectivity(self, carryover_nodes: set) -> None:
+        # carryover nodes get disconnected sometimes - added guard
         if not carryover_nodes:
             return
 

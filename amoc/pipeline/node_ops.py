@@ -1,8 +1,3 @@
-# amoc/pipeline/node_ops.py
-"""
-Node creation and management operations extracted from core.py.
-Internal helper class - not a public API.
-"""
 from typing import TYPE_CHECKING, Optional, List, Set
 import logging
 
@@ -13,11 +8,6 @@ if TYPE_CHECKING:
 
 
 class NodeOps:
-    """
-    Encapsulates all node creation and management logic.
-    Injected with references to parent state - does not own state.
-    """
-
     def __init__(
         self,
         graph_ref: "Graph",
@@ -35,7 +25,6 @@ class NodeOps:
         self._debug = debug
         self._ever_admitted_nodes: Set[str] = set()
         self._layout_depth = 3
-        # Will be set by parent
         self._has_active_attachment_fn = None
         self._canonicalize_and_classify_fn = None
 
@@ -44,13 +33,8 @@ class NodeOps:
         has_active_attachment_fn: callable,
         canonicalize_and_classify_fn: callable,
     ):
-        """Set callback functions from parent."""
         self._has_active_attachment_fn = has_active_attachment_fn
         self._canonicalize_and_classify_fn = canonicalize_and_classify_fn
-
-    # =========================================================
-    # NODE ADMISSION
-    # =========================================================
 
     def admit_node(
         self,
@@ -59,10 +43,6 @@ class NodeOps:
         provenance: str,
         sent: Optional["Span"] = None,
     ) -> bool:
-        """
-        Determine if a node should be admitted to the graph.
-        Returns True if node passes all validation checks.
-        """
         from amoc.graph.node import NodeType
 
         lemma = (lemma or "").lower().strip()
@@ -192,9 +172,7 @@ class NodeOps:
         existing_node = self._graph.get_node([lemma_lower])
         if existing_node is not None:
             if self._debug:
-                logging.debug(
-                    f"PROVENANCE GATE: Graph grounding for '{lemma_lower}'"
-                )
+                logging.debug(f"PROVENANCE GATE: Graph grounding for '{lemma_lower}'")
             return True
 
         candidate_class = get_semantic_class(lemma_lower)
@@ -265,7 +243,9 @@ class NodeOps:
             ):
                 return None
 
-            return self._graph.add_or_get_node(lemmas, canon, inferred_type, node_source)
+            return self._graph.add_or_get_node(
+                lemmas, canon, inferred_type, node_source
+            )
 
         return None
 

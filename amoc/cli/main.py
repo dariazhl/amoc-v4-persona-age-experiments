@@ -13,7 +13,6 @@ multiprocessing.set_start_method("spawn", force=True)
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 os.environ["HF_HOME"] = "/export/projects/nlp/.cache"
 
-# --- AMoC imports ---
 from amoc.config import (
     INPUT_DIR,
     OUTPUT_DIR,
@@ -25,11 +24,6 @@ from amoc.pipeline.runner import process_persona_csv
 from amoc.analysis.statistics import run_statistical_analysis
 from amoc.nlp import load_spacy
 from amoc.nlp.highlights import blue_nodes_from_text
-
-
-# ==========================================
-# CLI ARGUMENTS
-# ==========================================
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
@@ -221,11 +215,6 @@ def load_story_text_from_arg(story_text_arg: str) -> str:
         return text.strip()
 
     return story_text_arg.strip()
-
-
-# ==========================================
-# MAIN
-# ==========================================
 
 
 def main(argv: List[str]) -> None:

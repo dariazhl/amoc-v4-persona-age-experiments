@@ -1,6 +1,8 @@
 from typing import TYPE_CHECKING, Optional, List, Dict, Set, Callable, Tuple
 import re
 import logging
+from amoc.nlp.spacy_utils import extract_prepositional_objects as extract_prep
+from amoc.graph.node import NodeType, NodeSource, NodeProvenance
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
@@ -16,12 +18,14 @@ class LinguisticOps:
         client_ref,
         story_lemmas: Set[str],
         story_text: str = "",
+        persona: str = "",
     ):
         self._graph = graph_ref
         self._spacy_nlp = spacy_nlp
         self._client = client_ref
         self._story_lemmas = story_lemmas
         self._story_text = story_text
+        self._persona = persona
         self._add_edge_fn: Optional[Callable] = None
         self._classify_relation_fn: Optional[Callable] = None
         self._edge_visibility: int = 3
@@ -40,7 +44,13 @@ class LinguisticOps:
         self._edge_visibility = edge_visibility
 
     def resolve_pronouns(self, text: str) -> str:
-        return self._client.resolve_pronouns(text)
+        resolved = self._client.resolve_pronouns(text, self._persona)
+        if not isinstance(resolved, str) or not resolved.strip():
+            return text
+        low = resolved.lower()
+        if "does not mention any pronouns" in low or "no pronouns to replace" in low:
+            return text
+        return resolved
 
     def extract_adjectival_modifiers(self, sent: "Span") -> Dict[str, List[str]]:
         result: Dict[str, List[str]] = {}
@@ -92,17 +102,12 @@ class LinguisticOps:
         self,
         sent: "Span",
     ) -> List[tuple]:
-        from amoc.nlp.spacy_utils import extract_prepositional_objects as extract_prep
         return extract_prep(sent)
 
     def extract_deterministic_structure(
-        self,
-        sent: "Span",
         sentence_nodes: List["Node"],
         sentence_words: List[str],
     ) -> None:
-        from amoc.graph.node import NodeType, NodeSource, NodeProvenance
-
         if not self._add_edge_fn or not self._classify_relation_fn:
             return
 
@@ -207,6 +212,7 @@ class LinguisticOps:
                     continue
 
                 for obj in (c for c in token.children if c.dep_ in {"dobj", "attr"}):
+
                     obj_node = get_node(obj)
 
                     if obj_node:
@@ -238,7 +244,6 @@ class LinguisticOps:
                     if not pobj:
                         continue
 
-                    obj_node = get_node(pobj)
                     if not obj_node:
                         continue
 

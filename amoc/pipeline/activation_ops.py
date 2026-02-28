@@ -1,8 +1,3 @@
-# amoc/pipeline/activation_ops.py
-"""
-Activation and reactivation operations extracted from core.py.
-Internal helper class - not a public API.
-"""
 from typing import TYPE_CHECKING, Optional, List, Set, Dict
 from collections import deque
 
@@ -13,11 +8,6 @@ if TYPE_CHECKING:
 
 
 class ActivationOps:
-    """
-    Encapsulates all activation, decay, and reactivation logic.
-    Injected with references to parent state - does not own state.
-    """
-
     def __init__(
         self,
         graph_ref: "Graph",
@@ -45,29 +35,19 @@ class ActivationOps:
         anchor_nodes: Set["Node"],
         record_edge_fn: callable = None,
     ):
-        """Set mutable state references from parent."""
         self._anchor_nodes = anchor_nodes
         self._record_edge_fn = record_edge_fn
 
     def set_current_sentence(self, idx: int):
-        """Update current sentence index."""
         self._current_sentence_index = idx
 
-    # =========================================================
-    # EDGE DECAY
-    # =========================================================
-
     def apply_global_edge_decay(self) -> None:
-        """Apply global edge decay (Paper Step 4).
-
-        Decay non-asserted, non-reactivated edges that weren't created this sentence.
-        """
         for edge in self._graph.edges:
             # Don't decay edges created this sentence
             if edge.created_at_sentence == self._current_sentence_index:
                 continue
 
-            # Only decay edges not asserted or reactivated this sentence
+            # Only decay edges reactivated this sentence
             if not edge.asserted_this_sentence and not edge.reactivated_this_sentence:
                 edge.reduce_visibility()
 
@@ -75,12 +55,7 @@ class ActivationOps:
                     edge.visibility_score = 0
                     edge.active = False
 
-    # =========================================================
-    # NODE DECAY
-    # =========================================================
-
     def decay_node_activation(self) -> None:
-        """Decay node activation scores and enforce structural invariants."""
         explicit_nodes = self._get_explicit_nodes()
 
         for node in self._graph.nodes:
@@ -93,12 +68,12 @@ class ActivationOps:
             if node.activation_score > 0:
                 node.activation_score -= 1
 
-            # Step 2 — hard cutoff by score
+            # Step 2 — cutoff by score
             if node.activation_score <= 0:
                 node.active = False
                 continue
 
-            # Step 3 — structural invariant: active node must have ≥1 active edge
+            # Step 3 — active node must have ≥1 active edge
             has_active_edge = any(
                 e.active and (e.source_node == node or e.dest_node == node)
                 for e in self._graph.edges
@@ -107,33 +82,28 @@ class ActivationOps:
             if not has_active_edge:
                 node.active = False
 
-    # =========================================================
-    # EDGE REACTIVATION
-    # =========================================================
-
     def reactivate_relevant_edges(
         self,
         active_nodes: List["Node"],
         prev_sentences_text: str,
         newly_added_edges: List["Edge"],
     ) -> None:
-        """Reactivate relevant edges based on current context."""
         edges_text, edges = self._graph.get_edges_str(
             self._graph.nodes, only_active=False
         )
 
-        # Non-strict mode: accumulate salience monotonically
         if not self._strict_reactivate:
             for edge in edges:
                 if edge.is_property_edge():
                     continue
                 edge.mark_as_reactivated(reset_score=False)
                 edge.visibility_score = self._edge_visibility
-                if self._record_edge_fn and (edge.is_asserted() or edge.is_reactivated()):
+                if self._record_edge_fn and (
+                    edge.is_asserted() or edge.is_reactivated()
+                ):
                     self._record_edge_fn(edge, self._current_sentence_index)
             return
 
-        # Strict mode: use LLM to select relevant edges
         raw_indices = self._client.get_relevant_edges(
             edges_text, prev_sentences_text, None
         )
@@ -147,7 +117,7 @@ class ActivationOps:
             if 1 <= i <= len(edges):
                 valid_indices.append(i)
 
-        valid_indices = valid_indices[:self._nr_relevant_edges]
+        valid_indices = valid_indices[: self._nr_relevant_edges]
 
         active_node_set = set(active_nodes)
 
@@ -168,7 +138,7 @@ class ActivationOps:
                 if self._record_edge_fn:
                     self._record_edge_fn(edge, self._current_sentence_index)
 
-        # Apply decay to non-selected edges
+        # Apply decay to edges
         for idx, edge in enumerate(edges, start=1):
             if idx in selected or edge in newly_added_edges:
                 if edge.is_property_edge():
@@ -178,15 +148,11 @@ class ActivationOps:
             else:
                 edge.reduce_visibility()
 
-    # =========================================================
-    # MEMORY EDGE REACTIVATION
-    # =========================================================
-
     def reactivate_memory_edges(
         self,
         current_sentence: int,
     ) -> Set["Edge"]:
-        """Reactivate memory edges within distance from explicit nodes."""
+        # Reactivate memory edges within distance from explicit nodes
         explicit_nodes = self._get_explicit_nodes()
 
         if not explicit_nodes:
@@ -198,12 +164,7 @@ class ActivationOps:
             current_sentence=current_sentence,
         )
 
-    # =========================================================
-    # ACTIVATION PROPAGATION
-    # =========================================================
-
     def propagate_activation_from_edges(self) -> None:
-        """Propagate activation from active edges to their nodes."""
         for edge in self._graph.edges:
             if not edge.active:
                 continue
@@ -216,17 +177,12 @@ class ActivationOps:
             edge.source_node.active = True
             edge.dest_node.active = True
 
-    # =========================================================
-    # SENTENCE ACTIVATION RECORDING
-    # =========================================================
-
     def record_sentence_activation(
         self,
         sentence_idx: int,
         explicit_nodes: Set["Node"],
         carryover_nodes: Set["Node"],
     ) -> dict:
-        """Record activation state for a sentence."""
         active_nodes, active_edges = self._graph.get_active_subgraph()
 
         return {
@@ -239,10 +195,6 @@ class ActivationOps:
             "carryover_nodes": [n.get_text_representer() for n in carryover_nodes],
         }
 
-    # =========================================================
-    # MATRIX RECORDING
-    # =========================================================
-
     def record_sentence_activation_matrix(
         self,
         sentence_id: int,
@@ -252,17 +204,7 @@ class ActivationOps:
         node_token_fn: callable,
         append_record_fn: callable,
     ) -> None:
-        """
-        Record sentence activation to matrix records.
 
-        Args:
-            sentence_id: Current sentence index
-            explicit_nodes: Nodes explicitly mentioned in sentence
-            newly_inferred_nodes: Nodes inferred this sentence
-            max_distance: Max distance for activation propagation
-            node_token_fn: Callable to get token string from node
-            append_record_fn: Callable to append record dict
-        """
         def _to_landscape_score(raw_score: float) -> float:
             # Transform AMoC "distance" style (0=most active) into Landscape style (5=most active).
             val = 5.0 - float(raw_score)
@@ -272,7 +214,6 @@ class ActivationOps:
                 return 5.0
             return val
 
-        # NOTE: NodeType.RELATION filter removed - type no longer exists in AMoCv4
         explicit_set = set(explicit_nodes)
         distances = self.distances_from_sources_active_edges(
             explicit_set, max_distance=max_distance
@@ -281,14 +222,14 @@ class ActivationOps:
         token_to_raw_score: Dict[str, int] = {}
         node_raw_score: Dict["Node", int] = {}
 
-        # Step 2: explicit nodes reset to 0 (non-negotiable)
+        # explicit nodes reset to 0
         for node in explicit_set:
             token = node_token_fn(node)
             if token:
                 token_to_raw_score[token] = 0
                 node_raw_score[node] = 0
 
-        # Step 5: newly inferred nodes start at 1 (never 0)
+        # newly inferred nodes start at 1 (never 0)
         for node in newly_inferred_nodes:
             if node in explicit_set:
                 continue
@@ -297,7 +238,7 @@ class ActivationOps:
                 token_to_raw_score[token] = 1
                 node_raw_score[node] = 1
 
-        # Step 3/4: carried-over nodes within range, score = distance
+        # carried-over nodes within range, score = distance
         for node, dist in distances.items():
             if node in explicit_set:
                 continue
@@ -311,15 +252,18 @@ class ActivationOps:
             token_to_raw_score[token] = dist
             node_raw_score[node] = dist
 
-        # Convert node scores to Landscape scale and record.
+        # Convert node scores to Landscape scale and record
         for token, raw_score in token_to_raw_score.items():
-            append_record_fn({
-                "sentence": sentence_id,
-                "token": token,
-                "score": _to_landscape_score(raw_score),
-            })
+            append_record_fn(
+                {
+                    "sentence": sentence_id,
+                    "token": token,
+                    "score": _to_landscape_score(raw_score),
+                }
+            )
 
-        # Add verb (edge-label) activations: take the max activation of connected nodes minus 0.5.
+        # Add verb activations: take the max activation of connected nodes minus 0.5.
+        # Paper: "Second, in the Landscape Model, verbs are treated as nodes. However, in AMoC v4.0, verbs are primarily found in the edges... Thus, verbs were assigned an activation score with the following procedure: the highest activation score of the nodes linked by the edge that the verb is part of, decayed by 0.5"
         verb_scores: Dict[str, float] = {}
         for edge in self._graph.edges:
             if not edge.active:
@@ -349,18 +293,9 @@ class ActivationOps:
         for token, score in verb_scores.items():
             append_record_fn({"sentence": sentence_id, "token": token, "score": score})
 
-    # =========================================================
-    # DISTANCE CALCULATION
-    # =========================================================
-
     def distances_from_sources_active_edges(
         self, sources: Set["Node"], max_distance: int
     ) -> Dict["Node", int]:
-        """
-        Calculate distances from source nodes through active edges.
-
-        BFS from sources, propagating only through ACTIVE edges with visibility > 1.
-        """
         if not sources:
             return {}
         distances: Dict["Node", int] = {s: 0 for s in sources}
@@ -371,7 +306,6 @@ class ActivationOps:
             if dist >= max_distance:
                 continue
             for edge in node.edges:
-                # Only propagate through ACTIVE semantic edges
                 if not edge.active:
                     continue
 
@@ -381,26 +315,13 @@ class ActivationOps:
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
-                # NOTE: NodeType.RELATION check removed - type no longer exists in AMoCv4
                 if neighbor in distances:
                     continue
                 distances[neighbor] = dist + 1
                 queue.append(neighbor)
         return distances
 
-    # =========================================================
-    # ACTIVE NODE RESTRICTION
-    # =========================================================
-
-    def restrict_active_to_current_explicit(
-        self, explicit_nodes: List["Node"]
-    ) -> None:
-        """
-        Restrict active nodes to those with active edges.
-
-        Explicit nodes stay active only if they have active edges.
-        Non-explicit nodes stay active only if they have active edges.
-        """
+    def restrict_active_to_current_explicit(self, explicit_nodes: List["Node"]) -> None:
         explicit_set = set(explicit_nodes)
 
         for node in self._graph.nodes:

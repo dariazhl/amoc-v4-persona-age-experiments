@@ -20,26 +20,10 @@ if TYPE_CHECKING:
 
 
 class ConnectivityInvariantError(Exception):
-    """Raised when a connectivity invariant is violated."""
     pass
 
 
 def assert_cumulative_connected(graph: "Graph") -> bool:
-    """
-    INV-1: Cumulative graph must be connected (or empty/trivial).
-
-    This invariant ensures that the full memory graph maintains
-    structural integrity across all sentences.
-
-    Args:
-        graph: The graph to check
-
-    Returns:
-        True if invariant holds
-
-    Raises:
-        ConnectivityInvariantError: If invariant is violated
-    """
     if not graph.edges:
         return True  # Empty graph is trivially connected
 
@@ -49,6 +33,7 @@ def assert_cumulative_connected(graph: "Graph") -> bool:
         # Get component count for diagnostics
         G = graph.to_networkx()
         import networkx as nx
+
         components = list(nx.connected_components(G))
 
         raise ConnectivityInvariantError(
@@ -63,22 +48,6 @@ def assert_active_connected(
     graph: "Graph",
     required_nodes: Set["Node"],
 ) -> bool:
-    """
-    INV-2: Active graph must be connected for required nodes.
-
-    This invariant ensures that all nodes required for the current
-    sentence context are reachable via active edges.
-
-    Args:
-        graph: The graph to check
-        required_nodes: Nodes that must be mutually reachable
-
-    Returns:
-        True if invariant holds
-
-    Raises:
-        ConnectivityInvariantError: If invariant is violated
-    """
     if not required_nodes or len(required_nodes) <= 1:
         return True  # Trivially connected
 
@@ -109,17 +78,6 @@ def verify_connectivity_invariants(
     required_nodes: Optional[Set["Node"]] = None,
     context: str = "",
 ) -> Tuple[bool, Optional[str]]:
-    """
-    Verify all connectivity invariants without raising exceptions.
-
-    Args:
-        graph: The graph to check
-        required_nodes: Nodes required for active connectivity check
-        context: Description of when this check is being performed
-
-    Returns:
-        (success, error_message) tuple
-    """
     try:
         assert_cumulative_connected(graph)
 
@@ -135,12 +93,6 @@ def verify_connectivity_invariants(
 
 
 class ConnectivityStressTest:
-    """
-    Stress test scenarios for connectivity verification.
-
-    Each scenario simulates edge cases that could break connectivity.
-    """
-
     def __init__(self, graph: "Graph"):
         self._graph = graph
         self._results: Dict[str, Tuple[bool, Optional[str]]] = {}
@@ -168,41 +120,20 @@ class ConnectivityStressTest:
         return self._results
 
     def _test_high_decay(self) -> bool:
-        """
-        Scenario: High decay - many edges have low visibility.
-
-        Verifies that cumulative connectivity is maintained even when
-        most edges are nearly invisible.
-        """
         # Just verify current state - actual decay is handled by pipeline
         return assert_cumulative_connected(self._graph)
 
     def _test_massive_activation_drop(self) -> bool:
-        """
-        Scenario: Massive activation drop - few active edges.
-
-        Verifies cumulative connectivity when active subgraph is sparse.
-        """
         active_nodes, active_edges = self._graph.get_active_subgraph()
 
         # Cumulative should still be connected regardless of activation
         return assert_cumulative_connected(self._graph)
 
     def _test_carryover_only(self) -> bool:
-        """
-        Scenario: Carryover-only - no explicit nodes in current sentence.
-
-        Verifies connectivity when only carryover nodes are active.
-        """
         # Cumulative invariant should hold
         return assert_cumulative_connected(self._graph)
 
     def _test_single_explicit_node(self) -> bool:
-        """
-        Scenario: Single explicit node.
-
-        Trivially connected - single node is always connected.
-        """
         # Take any node as the "single explicit"
         if self._graph.nodes:
             single_node = next(iter(self._graph.nodes))
@@ -210,11 +141,6 @@ class ConnectivityStressTest:
         return True
 
     def _test_minimal_graph(self) -> bool:
-        """
-        Scenario: Minimal graph (2 nodes, 1 edge).
-
-        Verifies connectivity for smallest non-trivial case.
-        """
         if len(self._graph.edges) >= 1:
             edge = next(iter(self._graph.edges))
             required = {edge.source_node, edge.dest_node}
@@ -226,11 +152,6 @@ class ConnectivityStressTest:
         return assert_cumulative_connected(self._graph)
 
     def _test_empty_graph(self) -> bool:
-        """
-        Scenario: Empty graph.
-
-        Empty graph is trivially connected.
-        """
         if not self._graph.edges and not self._graph.nodes:
             return True
 
@@ -238,7 +159,6 @@ class ConnectivityStressTest:
         return assert_cumulative_connected(self._graph)
 
     def get_summary(self) -> str:
-        """Get a human-readable summary of test results."""
         lines = ["Connectivity Stress Test Results:", "=" * 40]
 
         passed = 0

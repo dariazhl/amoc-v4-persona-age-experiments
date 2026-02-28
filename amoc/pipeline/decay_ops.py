@@ -8,11 +8,6 @@ if TYPE_CHECKING:
 
 
 class DecayOps:
-    """
-    Encapsulates all decay and reactivation logic.
-    Injected with references to parent state - does not own state.
-    """
-
     def __init__(
         self,
         graph_ref: "Graph",
@@ -23,15 +18,7 @@ class DecayOps:
         self._get_explicit_nodes = get_explicit_nodes
         self._max_distance = max_distance
 
-    # =========================================================
-    # EDGE DECAY
-    # =========================================================
-
     def apply_global_edge_decay(self) -> None:
-        """
-        Apply decay to all inactive edges.
-        Paper-aligned: edges not active this sentence lose visibility.
-        """
         for edge in list(self._graph.edges):
             if not edge.active:
                 edge.reduce_visibility()
@@ -41,10 +28,6 @@ class DecayOps:
     # =========================================================
 
     def decay_node_activation(self) -> None:
-        """
-        Decay node activation scores.
-        Explicit nodes are protected from decay.
-        """
         explicit_nodes = self._get_explicit_nodes()
 
         for node in self._graph.nodes:
@@ -54,18 +37,10 @@ class DecayOps:
             if not node.active:
                 node.score = min(node.score + 1, 100)
 
-    # =========================================================
-    # REACTIVATION
-    # =========================================================
-
     def reactivate_relevant_edges(
         self,
         current_sentence: int,
     ) -> Set["Edge"]:
-        """
-        Reactivate memory edges within distance from explicit nodes.
-        Returns set of reactivated edges.
-        """
         explicit_nodes = self._get_explicit_nodes()
 
         if not explicit_nodes:

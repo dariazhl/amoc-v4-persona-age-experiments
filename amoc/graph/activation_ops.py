@@ -8,45 +8,18 @@ if TYPE_CHECKING:
 
 
 class ActivationOps:
-    """
-    Activation operations for Graph.
-
-    Responsibilities:
-    - Active subgraph extraction
-    - Edge reactivation and decay
-    - Edge reinforcement (similar edge detection)
-    - Node scoring based on distance
-    """
-
     MAX_REACTIVATION_COUNT: int = 6
 
     def __init__(self, graph_ref: "Graph"):
         self._graph = graph_ref
 
-    # ==========================================================================
-    # EDGE REINFORCEMENT (moved from Graph)
-    # ==========================================================================
-
+    # Check if a similar edge exists and reinforce it
     def check_and_reinforce_similar_edge(
         self,
         edge: "Edge",
         edge_visibility: int,
     ) -> bool:
-        """
-        Check if a similar edge exists and reinforce it.
 
-        If a similar edge exists (same source, dest, label), reinforce it by:
-        - Incrementing visibility_score (capped at edge_visibility)
-        - Setting active = True
-        - Marking as asserted
-
-        Args:
-            edge: The new edge to check against existing edges
-            edge_visibility: Maximum visibility score cap
-
-        Returns:
-            True if similar edge was found and reinforced, False otherwise
-        """
         for other_edge in self._graph.edges:
             same_nodes = (
                 edge.source_node == other_edge.source_node
@@ -69,15 +42,6 @@ class ActivationOps:
         return False
 
     def get_similar_edge(self, edge: "Edge") -> Optional["Edge"]:
-        """
-        Get a similar existing edge (same source, dest, label).
-
-        Args:
-            edge: The edge to find a similar match for
-
-        Returns:
-            The similar edge if found, None otherwise
-        """
         for other_edge in self._graph.edges:
             if (
                 edge.source_node == other_edge.source_node
@@ -86,10 +50,6 @@ class ActivationOps:
             ):
                 return other_edge
         return None
-
-    # ==========================================================================
-    # ACTIVE SUBGRAPH
-    # ==========================================================================
 
     def get_active_subgraph(self) -> Tuple[Set["Node"], Set["Edge"]]:
         active_edges: Set["Edge"] = {
@@ -100,6 +60,7 @@ class ActivationOps:
         }
         return active_nodes, active_edges
 
+    # issue
     def deactivate_all_edges(self) -> None:
         for edge in self._graph.edges:
             edge.reset_for_sentence_start()
@@ -110,25 +71,6 @@ class ActivationOps:
         max_distance: int,
         current_sentence: int,
     ) -> Set["Edge"]:
-        """
-        Reactivate edges within BFS distance of explicit nodes.
-
-        This is a SEMANTIC operation, not a connectivity operation.
-        It reactivates edges based on proximity to current sentence concepts,
-        NOT to ensure graph connectivity.
-
-        IMPORTANT: This method may leave the graph disconnected.
-        StabilityOps.enforce_connectivity() must be called afterward
-        to ensure connectivity invariants hold.
-
-        Args:
-            explicit_nodes: Nodes mentioned in current sentence
-            max_distance: Maximum BFS distance to consider
-            current_sentence: Current sentence index (unused, for signature compat)
-
-        Returns:
-            Set of reactivated edges
-        """
         from amoc.graph.node import NodeType
 
         if not explicit_nodes or max_distance < 1:
@@ -264,7 +206,9 @@ class ActivationOps:
     def get_top_concepts_nodes(self, k: int) -> List["Node"]:
         from amoc.graph.node import NodeType
 
-        nodes = [node for node in self._graph.nodes if node.node_type == NodeType.CONCEPT]
+        nodes = [
+            node for node in self._graph.nodes if node.node_type == NodeType.CONCEPT
+        ]
         return self.get_top_k_nodes(nodes, k)
 
     def get_top_text_based_concepts(self, k: int) -> List["Node"]:

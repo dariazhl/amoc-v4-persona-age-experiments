@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from amoc.graph.per_sentence_graph import PerSentenceGraph
     from spacy.tokens import Span
 
+
 class SentenceOps:
 
     def __init__(
@@ -136,7 +137,9 @@ class SentenceOps:
             if replace_pronouns and resolve_pronouns_fn:
                 candidate = resolve_pronouns_fn(orig_sent.text)
                 if isinstance(candidate, str) and candidate.strip():
-                    resolved_text = self._clean_resolved_sentence(orig_sent.text, candidate)
+                    resolved_text = self._clean_resolved_sentence(
+                        orig_sent.text, candidate
+                    )
             if resolved_text and resolved_text.strip().startswith("{"):
                 logging.error(
                     "LLM JSON contamination detected — reverting to original sentence."
@@ -155,6 +158,7 @@ class SentenceOps:
         return resolved_sentences, story_lemma_set
 
     def reset_sentence_state(self, original_text: str) -> Set["Node"]:
+        # issue here
         self._graph.deactivate_all_edges()
         self._current_sentence_text = original_text
 
@@ -189,7 +193,11 @@ class SentenceOps:
 
             canonical_node = self._graph.get_node(node.lemmas)
             if node.get_text_representer().lower() in {
-                "has", "is", "was", "were", "be",
+                "has",
+                "is",
+                "was",
+                "were",
+                "be",
             }:
                 continue
 

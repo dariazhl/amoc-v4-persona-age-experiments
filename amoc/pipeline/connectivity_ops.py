@@ -8,6 +8,8 @@ if TYPE_CHECKING:
     from amoc.graph.graph import Graph
     from amoc.graph.node import Node
     from amoc.graph.edge import Edge
+from amoc.prompts.amoc_prompts import FORCED_CONNECTIVITY_EDGE_PROMPT
+
 
 class ConnectivityOps:
     def __init__(
@@ -31,18 +33,10 @@ class ConnectivityOps:
         self._current_sentence_text = current_sentence_text
 
     def is_active_connected(self) -> bool:
-        """
-        Delegate to StabilityOps (canonical authority).
-
-        Includes explicit nodes in the connectivity check.
-        """
         explicit_nodes = self._get_explicit_nodes()
         return self._graph.is_active_connected(explicit_nodes)
 
     def is_cumulative_connected(self) -> bool:
-        """
-        Delegate to StabilityOps (canonical authority).
-        """
         return self._graph.is_cumulative_connected()
 
     def enforce_connectivity(
@@ -51,35 +45,21 @@ class ConnectivityOps:
         current_sentence_text: str,
         create_forced_edges_fn: callable,
     ) -> bool:
-        """
-        Pipeline-level connectivity enforcement.
-
-        Strategy (in order):
-        1. Deterministic repair via StabilityOps (reactivate cumulative edges)
-        2. LLM-powered repair (create_forced_edges_fn)
-        3. Fallback "relates_to" edges as last resort
-
-        Returns:
-            True if rollback is needed (connectivity could not be restored)
-        """
+        # Design:
+        # 1. Deterministic repair via StabilityOps (reactivate cumulative edges)
+        # 2. LLM repair (create_forced_edges_fn)
+        # 3. Fallback "relates_to" edges as last resort
         rollback_needed = False
         explicit_nodes = self._get_explicit_nodes()
         carryover_nodes = self._get_carryover_nodes()
         required_nodes = explicit_nodes | carryover_nodes
-
-        # =====================================================================
-        # PHASE 1: Deterministic repair via StabilityOps (CANONICAL AUTHORITY)
-        # =====================================================================
+        # Deterministic repair
         if self._graph.enforce_connectivity(required_nodes, allow_reactivation=True):
-            # Deterministic repair succeeded
-            logging.debug("[ConnectivityOps] Deterministic repair succeeded")
             return False
 
-        logging.debug("[ConnectivityOps] Deterministic repair failed, trying LLM repair")
+        logging.debug("Deterministic repair failed, trying LLM repair")
 
-        # =====================================================================
-        # PHASE 2: LLM-powered repair
-        # =====================================================================
+        # LLM repair - try twice
         for _ in range(2):
             create_forced_edges_fn(
                 story_context=(
@@ -89,14 +69,11 @@ class ConnectivityOps:
                 mode="active",
             )
             if self.is_active_connected():
-                logging.debug("[ConnectivityOps] LLM repair succeeded")
                 return False
 
-        # =====================================================================
-        # PHASE 3: Fallback "relates_to" edges as last resort
-        # =====================================================================
-        logging.debug("[ConnectivityOps] LLM repair failed, trying fallback edges")
+        logging.debug("LLM repair failed, trying fallback edges")
 
+        # Fallback
         components, _ = self._graph.get_disconnected_components(required_nodes)
 
         if len(components) > 1:
@@ -121,7 +98,6 @@ class ConnectivityOps:
                 )
 
                 if edge:
-                    # edge.active already True from add_edge()
                     edge.asserted_this_sentence = False
                     edge.reactivated_this_sentence = False
                     backbone.update(comp)
@@ -142,20 +118,11 @@ class ConnectivityOps:
         return rollback_needed
 
     def _ensure_explicit_nodes_connected(self, explicit_nodes: set) -> None:
-        """
-        FALLBACK: Create "relates_to" edges to connect explicit nodes.
-
-        This is invoked ONLY after:
-        1. Deterministic repair (StabilityOps) failed
-        2. LLM-powered repair failed
-
-        Uses StabilityOps for component detection.
-        """
-        # First try deterministic repair
+        # deterministic repair
         if self._graph.enforce_connectivity(explicit_nodes, allow_reactivation=True):
             return
 
-        # Fall back to creating "relates_to" edges
+        # Fallback
         components, _ = self._graph.get_disconnected_components(explicit_nodes)
 
         if len(components) <= 1:
@@ -182,18 +149,11 @@ class ConnectivityOps:
             )
 
             if edge:
-                # edge.active already True from add_edge()
                 edge.asserted_this_sentence = False
                 edge.reactivated_this_sentence = False
                 backbone.update(comp)
 
     def _repair_cumulative_connectivity(self) -> None:
-        """
-        FALLBACK: Create "relates_to" edges to repair cumulative connectivity.
-
-        Note: Cumulative fragmentation is rare by design (nodes added via edges).
-        This is a last-resort fallback.
-        """
         if self.is_cumulative_connected():
             return
 
@@ -209,7 +169,7 @@ class ConnectivityOps:
             return
 
         logging.warning(
-            "[ConnectivityOps] Cumulative graph fragmented into %d components",
+            "Cumulative graph fragmented into %d components",
             len(components),
         )
 
@@ -233,12 +193,6 @@ class ConnectivityOps:
                 backbone.update(comp)
 
     def _get_nodes_with_active_edges(self) -> set:
-        """
-        Get all nodes that have at least one active edge.
-
-        Returns:
-            Set of nodes with active edges
-        """
         nodes = set()
         for edge in self._graph.edges:
             if edge.active:
@@ -268,6 +222,7 @@ class ConnectivityOps:
 
         return True
 
+    # Edge case: dangling nodes - illegal state - must be repaired
     def repair_dangling_nodes(
         self,
         per_sentence_view,
@@ -278,7 +233,9 @@ class ConnectivityOps:
         if per_sentence_view is None:
             return False
 
-        active_nodes = set(per_sentence_view.explicit_nodes) | set(per_sentence_view.carryover_nodes)
+        active_nodes = set(per_sentence_view.explicit_nodes) | set(
+            per_sentence_view.carryover_nodes
+        )
 
         dangling_nodes = []
         for node in active_nodes:
@@ -322,17 +279,13 @@ class ConnectivityOps:
                     node_a=node.get_text_representer(),
                     node_b=anchor.get_text_representer(),
                     story_context=(
-                        " ".join(prev_sentences[:-1])
-                        if len(prev_sentences) > 1
-                        else ""
+                        " ".join(prev_sentences[:-1]) if len(prev_sentences) > 1 else ""
                     ),
                     current_sentence=self._current_sentence_text,
                     persona=persona,
                 )
 
-                relation = (
-                    result.get("label") if isinstance(result, dict) else result
-                )
+                relation = result.get("label") if isinstance(result, dict) else result
                 if not relation:
                     continue
 
@@ -347,7 +300,6 @@ class ConnectivityOps:
                 )
 
                 if edge:
-                    # edge.active already True from add_edge()
                     repair_success = True
                     break
 
@@ -362,7 +314,6 @@ class ConnectivityOps:
                 )
 
                 if edge:
-                    # edge.active already True from add_edge()
                     repair_success = True
 
             if not repair_success:
@@ -380,8 +331,6 @@ class ConnectivityOps:
         temperature: float = 0.3,
         forced_pair=None,
     ):
-        from amoc.prompts.amoc_prompts import FORCED_CONNECTIVITY_EDGE_PROMPT
-
         if forced_pair is not None:
             representative, anchor_node = forced_pair
             components = [{representative}, {anchor_node}]
@@ -412,7 +361,7 @@ class ConnectivityOps:
             )
 
             try:
-                # Use canonical wrapper (no persona injection for connectivity repair)
+                # no persona injection for connectivity repair
                 response = self._client.generate_raw(
                     prompt_text=prompt_text,
                     temperature=temperature,
@@ -430,7 +379,7 @@ class ConnectivityOps:
 
             except Exception as e:
                 logging.warning(
-                    "[ConnectivityRepair] JSON extraction failed: %s",
+                    "JSON extraction failed: %s",
                     str(e),
                 )
                 continue

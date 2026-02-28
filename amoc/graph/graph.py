@@ -1,19 +1,3 @@
-"""
-Graph - Pure Topology Module
-
-This module contains ONLY topology logic:
-- Node/edge storage and retrieval
-- Graph structure operations
-- Connectivity checks (pure, non-mutating)
-
-All other logic has been moved to:
-- provenance_ops.py: Provenance gate and sanity checks
-- validation_ops.py: AMoCv4 constraints and ontology validation
-- activation_ops.py: Edge reactivation, decay, scoring
-- plot_filter_ops.py: Edge filtering for visualization
-- stability_ops.py: Cumulative stability enforcement
-"""
-
 from amoc.graph.node import Node
 from amoc.graph.node import NodeType, NodeSource, NodeProvenance, NodeRole
 from amoc.graph.edge import Edge
@@ -26,15 +10,6 @@ import networkx as nx
 
 
 class Graph:
-    """
-    Pure topology graph structure.
-
-    Contains only:
-    - Node/edge storage
-    - Add/remove operations
-    - Delegations to Ops classes for policy logic
-    """
-
     def __init__(self) -> None:
         self.nodes: Set[Node] = set()
         self.edges: Set[Edge] = set()
@@ -48,16 +23,10 @@ class Graph:
         self._stability_ops = StabilityOps(self)
         self._provenance_ops = ProvenanceOps(self)
 
-    # ==========================================================================
-    # NODE OPERATIONS
-    # ==========================================================================
-
     def set_current_sentence_lemmas(self, lemmas: Set[str]) -> None:
-        """Set the lemma set for the current sentence."""
         self._current_sentence_lemmas = {l.lower() for l in lemmas}
 
     def set_current_sentence(self, sentence_idx: int) -> None:
-        """Set the current sentence index."""
         self._current_sentence_idx = sentence_idx
 
     def add_or_get_node(
@@ -137,10 +106,6 @@ class Graph:
             node for node in self.nodes if node.is_explicit_in_sentence(sentence_id)
         ]
 
-    # ==========================================================================
-    # EDGE OPERATIONS
-    # ==========================================================================
-
     def add_edge(
         self,
         source_node: Node,
@@ -154,7 +119,6 @@ class Graph:
         persona_influenced: bool = False,
         inferred: bool = False,
     ) -> Optional[Edge]:
-        """Add an edge to the graph."""
         if source_node == dest_node:
             return None
         if not label or not isinstance(label, str) or not label.strip():
@@ -221,26 +185,14 @@ class Graph:
         if edge.dest_node and edge in edge.dest_node.edges:
             edge.dest_node.edges.remove(edge)
 
-    # ==========================================================================
-    # SUBGRAPH OPERATIONS (delegated to ActivationOps)
-    # ==========================================================================
-
     def get_active_subgraph(self) -> Tuple[Set[Node], Set[Edge]]:
         return self._activation_ops.get_active_subgraph()
-
-    # ==========================================================================
-    # GRAPH VIEW BUILDERS (Pure, Non-Mutating)
-    # ==========================================================================
 
     def to_networkx(self) -> nx.Graph:
         G = nx.Graph()
         for edge in self.edges:
             G.add_edge(edge.source_node, edge.dest_node, edge=edge)
         return G
-
-    # ==========================================================================
-    # UTILITY METHODS
-    # ==========================================================================
 
     def get_word_lemma_score(self, word_lemmas: List[str]) -> Optional[float]:
         for node in self.nodes:
@@ -306,7 +258,6 @@ class Graph:
     def get_active_triplets_with_scores(
         self,
     ) -> List[Tuple[str, str, str, bool, int]]:
-        """Get triplets from active edges with their activation scores."""
         triplets = []
         for edge in self.edges:
             triplets.append(
@@ -386,7 +337,9 @@ class Graph:
         story_lemmas: set,
         persona_only_lemmas: set,
     ) -> list:
-        return self._provenance_ops.sanity_check_provenance(story_lemmas, persona_only_lemmas)
+        return self._provenance_ops.sanity_check_provenance(
+            story_lemmas, persona_only_lemmas
+        )
 
     def __str__(self) -> str:
         return "nodes: {}\n\nedges: {}".format(

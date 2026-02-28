@@ -1,7 +1,3 @@
-"""
-Inference operations extracted from core.py.
-Internal helper class - not a public API.
-"""
 from typing import TYPE_CHECKING, Optional, List, Tuple, Set
 
 if TYPE_CHECKING:
@@ -9,6 +5,7 @@ if TYPE_CHECKING:
     from amoc.graph.node import Node
     from amoc.graph.edge import Edge
     from spacy.tokens import Span
+
 
 class InferenceOps:
 
@@ -45,7 +42,9 @@ class InferenceOps:
             return [], []
 
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
-            self._get_sentences_text_based_nodes_fn([sent], create_unexistent_nodes=False)
+            self._get_sentences_text_based_nodes_fn(
+                [sent], create_unexistent_nodes=False
+            )
         )
 
         nodes_from_text = ""
@@ -76,7 +75,9 @@ class InferenceOps:
                     self._client.generate_new_inferred_relationships_first_sentence(
                         nodes_from_text,
                         object_properties_dict["concepts"][: self._max_new_concepts],
-                        object_properties_dict["properties"][: self._max_new_properties],
+                        object_properties_dict["properties"][
+                            : self._max_new_properties
+                        ],
                         sent.text,
                         self._persona,
                     )
@@ -104,9 +105,11 @@ class InferenceOps:
             )
 
         doc = self._spacy_nlp(text)
-        sent_span = doc[0:len(doc)]
+        sent_span = doc[0 : len(doc)]
         if self._append_adjectival_hints_fn:
-            nodes_from_text = self._append_adjectival_hints_fn(nodes_from_text, sent_span)
+            nodes_from_text = self._append_adjectival_hints_fn(
+                nodes_from_text, sent_span
+            )
 
         object_properties_dict = None
         for _ in range(3):

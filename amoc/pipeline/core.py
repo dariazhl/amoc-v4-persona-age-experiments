@@ -53,19 +53,8 @@ def _sanitize_filename_component(component: str, max_len: int = 80) -> str:
 
 
 class AMoCv4:
-    GENERIC_RELATION_LABELS = {
-        "contains",
-        "includes",
-        "include",
-        "contain",
-        "refers to",
-        "involves",
-        "describes",
-    }
-
     ENFORCE_ATTACHMENT_CONSTRAINT = True
     ACTIVATION_MAX_DISTANCE = 2
-    RELATION_BLACKLIST = {"describes", "is_at_stake"}
 
     def __init__(
         self,
@@ -655,15 +644,6 @@ class AMoCv4:
             cumulative_triplet_records=self._cumulative_triplet_records,
         )
 
-    def _is_generic_relation(self, label: str) -> bool:
-        return self._text_filter_ops.is_generic_relation(label)
-
-    def _is_blacklisted_relation(self, label: str) -> bool:
-        return self._text_filter_ops.is_blacklisted_relation(label)
-
-    def _is_verb_relation(self, label: str) -> bool:
-        return self._text_filter_ops.is_verb_relation(label)
-
     def _canonicalize_edge_direction(
         self, label: str, source_text: str, dest_text: str
     ) -> tuple[str, str, str, bool]:
@@ -707,16 +687,8 @@ class AMoCv4:
         return self._text_filter_ops.canonicalize_and_classify_node_text(text)
 
     def _enforce_cumulative_connectivity(self):
-        """
-        Enforce cumulative connectivity before plotting.
-
-        Delegates to StabilityOps via graph.is_cumulative_connected().
-        This is a read-only check - actual repair happens elsewhere.
-        """
         if not self.graph.is_cumulative_connected():
-            logging.warning(
-                "[PlotPrep] Cumulative graph disconnected - plots may show fragments"
-            )
+            logging.warning("Cumulative graph disconnected - plots may show fragments")
 
     def _plot_graph_snapshot(
         self,
@@ -970,7 +942,7 @@ class AMoCv4:
         previous_recently_deactivated,
         previous_prev_active_nodes,
     ) -> None:
-        logging.error("[ROLLBACK] Sentence invalid — reverting to previous state.")
+        logging.error("Sentence invalid — reverting to previous state.")
 
         if plot_after_each_sentence and hasattr(self, "_previous_active_triplets"):
             try:
@@ -1082,14 +1054,14 @@ class AMoCv4:
         force_node: bool = False,
     ) -> List[Tuple[str, str, str]]:
         logging.info(
-            "[AMoC] Story text (first 200 chars): %s",
+            "Story text: %s",
             self.story_text[:200] if self.story_text else "NONE",
         )
         doc = self.spacy_nlp(self.story_text)
         sentences = list(doc.sents)
-        logging.info("[AMoC] Number of sentences detected by spaCy: %d", len(sentences))
+        logging.info("Number of sentences detected by spaCy: %d", len(sentences))
         for i, sent in enumerate(sentences):
-            logging.info("[AMoC] Sentence %d: %s", i + 1, sent.text.strip()[:100])
+            logging.info("[Sentence %d: %s", i + 1, sent.text.strip()[:100])
 
         self._initialize_run_state()
 

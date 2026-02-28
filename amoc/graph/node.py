@@ -11,27 +11,10 @@ from typing import List, Dict, Set
 class NodeType(Enum):
     CONCEPT = 1
     PROPERTY = 2
-    EVENT = 3  # EVENT/PROCESS mediation nodes (Recommendation 2)
-    # NOTE: EVENT nodes are created for relations with event_level in {EVENT, PROCESS}
-    # They mediate between actor and object: actor --participates_in--> event --affects--> object
+    EVENT = 3  # EVENT/PROCESS mediation nodes
 
 
 class NodeRole(Enum):
-    """
-    Lightweight semantic role for nodes (per AMoC v4 paper alignment).
-
-    This is NOT a new ontology - just a classification hint for:
-    - ACTOR: persons, agents (subjects of actions)
-    - OBJECT: things (direct objects of actions)
-    - PROPERTY: adjectives (attributes)
-    - SETTING: locations, environments (prepositional objects like "forest", "castle")
-
-    SETTING nodes:
-    - Are nouns introduced via prepositional phrases
-    - Have NO agency and do NOT affect inference or lifecycle
-    - Exist only to preserve scene context
-    """
-
     ACTOR = 1  # Persons, agents (typically nsubj)
     OBJECT = 2  # Things (typically dobj)
     PROPERTY = 3  # Adjectives (attributes)
@@ -44,16 +27,8 @@ class NodeSource(Enum):
 
 
 class NodeProvenance(Enum):
-    """
-    Provenance tracking for nodes per AMoC v4 paper alignment.
-
-    CRITICAL: Only STORY_TEXT and INFERRED_FROM_STORY are valid for graph nodes.
-    PERSONA nodes must NEVER be created - persona influences weights only.
-    """
-
     STORY_TEXT = 1  # Node derived from story sentence tokens
     INFERRED_FROM_STORY = 2  # Node inferred by LLM but validated against story
-    # PERSONA = 3            # INVALID - must never be used for nodes
 
 
 class Node:
@@ -75,22 +50,8 @@ class Node:
         self.node_source: NodeSource = node_source
         self.score = score
         self.edges: List["Edge"] = []
-
-        # PROVENANCE TRACKING (Paper-Aligned)
-        # origin_sentence: The sentence index where this node was first created
-        # provenance: How this node was derived (STORY_TEXT or INFERRED_FROM_STORY)
         self.origin_sentence: Optional[int] = origin_sentence
         self.provenance: NodeProvenance = provenance or NodeProvenance.STORY_TEXT
-
-        # ==========================================================================
-        # PHASE 2: SENTENCE-SCOPED NODE PROVENANCE
-        # ==========================================================================
-        # first_seen_sentence: Same as origin_sentence (kept for compatibility)
-        # explicit_sentences: Set of sentences where this node appears in dependency parse
-        #
-        # INVARIANT: A node is explicit in sentence S ONLY if it appears in S's parse.
-        # Carry-over nodes remain carry-over unless explicitly re-mentioned.
-        # Visualization color uses ever_explicit (persistent once explicit).
         self.first_seen_sentence: Optional[int] = origin_sentence
         self.explicit_sentences: Set[int] = (
             {origin_sentence} if origin_sentence is not None else set()
@@ -98,20 +59,11 @@ class Node:
         # ever_explicit: True if the node has ever been explicit in any sentence
         self.ever_explicit: bool = origin_sentence is not None
 
-        # ------------------------------------------------------------------
-        # INVARIANT: If node has origin_sentence, it must be explicit there
-        # ------------------------------------------------------------------
         if self.origin_sentence is not None:
             self.explicit_sentences.add(self.origin_sentence)
             self.ever_explicit = True
 
-        # NODE ROLE: Lightweight semantic role (ACTOR, OBJECT, PROPERTY, SETTING)
-        # SETTING nodes exist for scene context only - they don't affect lifecycle logic
         self.node_role: Optional[NodeRole] = node_role
-
-        # CRITICAL ASSERTION: Nodes must never come from persona
-        # Persona influences salience/weights only, never content
-        # This assertion is a fail-fast guard against persona leakage
 
         if self.node_type == NodeType.PROPERTY and self.node_role is None:
             self.node_role = NodeRole.PROPERTY
@@ -133,53 +85,22 @@ class Node:
             self.actual_texts[actual_text_l] = 1
 
     def is_setting(self) -> bool:
-        """
-        Check if this node is a SETTING (location/environment).
-
-        SETTING nodes exist for scene context only and should NOT:
-        - Participate in lifecycle/deactivation logic
-        - Become hubs or central nodes
-        - Trigger inferred edges by themselves
-        """
         return self.node_role == NodeRole.SETTING
 
     def mark_explicit_in_sentence(self, sentence_id: int) -> None:
-        """
-        Mark this node as explicit in the given sentence.
-
-        PHASE 2: Only call this if the node appears in the sentence's dependency parse.
-        Do NOT infer explicitness from memory, edges, or prior sentences.
-        """
         self.explicit_sentences.add(sentence_id)
         self.ever_explicit = True
 
     def is_explicit_in_sentence(self, sentence_id: int) -> bool:
-        """
-        Check if this node is explicit (not carry-over) in the given sentence.
-
-        Explicitness checks must use ONLY this method.
-        Degree, recency, connectivity, persona must NOT affect this.
-        """
         return sentence_id in self.explicit_sentences
 
     def is_carryover_in_sentence(self, sentence_id: int) -> bool:
-        """
-        Check if this node is carry-over (not explicit) in the given sentence.
-
-        A node is carry-over if it exists but was not mentioned in this sentence's parse.
-        """
         return sentence_id not in self.explicit_sentences
 
     def get_text_representer(self) -> str:
-        """
-        Get the most frequent text representation for this node.
-
-        Per AMoC v4 paper: Node labels are single lowercase lemmas like "country",
-        NEVER "the country". This method strips leading determiners as a safety net.
-        """
         DETERMINERS = {"the", "a", "an"}
         best = max(self.actual_texts, key=self.actual_texts.get)
-        # Safety: strip leading determiners (should already be canonicalized, but ensure)
+        # Safety: strip leading determiners
         words = best.split()
         while words and words[0].lower() in DETERMINERS:
             words.pop(0)
