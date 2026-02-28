@@ -21,7 +21,6 @@ from amoc.graph.activation_ops import ActivationOps
 from amoc.graph.stability_ops import StabilityOps
 from amoc.graph.provenance_ops import ProvenanceOps
 from typing import List, Set, Dict, Optional, Tuple, Callable
-import re
 import logging
 import networkx as nx
 
@@ -184,8 +183,9 @@ class Graph:
             created_at_sentence=created_at_sentence,
         )
 
-        if self._check_similar_edge_exists(edge, edge_visibility):
-            return self._get_similar_edge(edge)
+        # Delegate edge reinforcement to ActivationOps
+        if self._activation_ops.check_and_reinforce_similar_edge(edge, edge_visibility):
+            return self._activation_ops.get_similar_edge(edge)
 
         self.edges.add(edge)
         if edge not in source_node.edges:
@@ -194,40 +194,6 @@ class Graph:
             dest_node.edges.append(edge)
 
         return edge
-
-    def _check_similar_edge_exists(self, edge: Edge, edge_visibility: int) -> bool:
-        """Check if a similar edge exists and reinforce it."""
-        for other_edge in self.edges:
-            same_nodes = (
-                edge.source_node == other_edge.source_node
-                and edge.dest_node == other_edge.dest_node
-            )
-            if not same_nodes:
-                continue
-
-            if (
-                edge.label.strip().lower() == other_edge.label.strip().lower()
-                and not edge.inferred
-            ):
-                other_edge.visibility_score = min(
-                    edge_visibility, other_edge.visibility_score + 1
-                )
-                other_edge.active = True
-                other_edge.mark_as_asserted(reset_score=False)
-                return True
-
-        return False
-
-    def _get_similar_edge(self, edge: Edge) -> Optional[Edge]:
-        """Get a similar existing edge."""
-        for other_edge in self.edges:
-            if (
-                edge.source_node == other_edge.source_node
-                and edge.dest_node == other_edge.dest_node
-                and edge.label.strip().lower() == other_edge.label.strip().lower()
-            ):
-                return other_edge
-        return None
 
     def get_edge(self, edge: Edge) -> Optional[Edge]:
         for other_edge in self.edges:
@@ -353,54 +319,6 @@ class Graph:
                 )
             )
         return triplets
-
-    @staticmethod
-    def canonicalize_relation_label(label: str) -> str:
-        """Canonicalize relation labels before edge creation."""
-        if not label or not isinstance(label, str):
-            return ""
-
-        label = label.strip()
-        if not label:
-            return ""
-
-        prefixes_to_remove = [
-            "nsubj:", "dobj:", "pobj:", "prep:", "amod:", "advmod:",
-            "ROOT:", "VERB:", "NOUN:", "ADJ:", "dep:", "compound:",
-            "agent:", "xcomp:", "ccomp:", "aux:", "auxpass:",
-        ]
-        for prefix in prefixes_to_remove:
-            if label.lower().startswith(prefix.lower()):
-                label = label[len(prefix):]
-
-        label = re.sub(r"[^\w\s]+$", "", label)
-        label = label.strip()
-        label = re.sub(r"\s+", " ", label)
-
-        if len(label) > 0:
-            if re.search(r"(.)\1{2,}", label):
-                label = re.sub(r"([bcdfghjklmnpqrstvwxyz])\1+$", r"\1", label)
-
-            words = label.split()
-            cleaned_words = []
-            for word in words:
-                if len(word) <= 2:
-                    cleaned_words.append(word.lower())
-                    continue
-                if not re.search(r"[aeiou]", word.lower()):
-                    continue
-                cleaned_words.append(word.lower())
-
-            if not cleaned_words:
-                return ""
-            label = " ".join(cleaned_words)
-
-        label = label.lower().strip()
-
-        if len(label) < 2:
-            return ""
-
-        return label
 
     def deactivate_all_edges(self) -> None:
         self._activation_ops.deactivate_all_edges()

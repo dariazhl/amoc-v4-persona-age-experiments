@@ -6,6 +6,7 @@ from amoc.graph.graph import Graph
 from amoc.graph.node import Node, NodeType, NodeSource, NodeProvenance
 from amoc.graph.edge import Edge
 from amoc.nlp.spacy_utils import are_semantically_equivalent, get_semantic_class
+from amoc.pipeline.text_filter_ops import TextFilterOps
 
 if TYPE_CHECKING:
     pass
@@ -116,7 +117,7 @@ class EdgeOps:
             else self._current_sentence_index
         )
 
-        label = Graph.canonicalize_relation_label(label)
+        label = TextFilterOps.canonicalize_relation_label(label)
         if not label:
             return None
 
@@ -144,7 +145,7 @@ class EdgeOps:
         persona_influenced: bool = False,
     ) -> Optional[Edge]:
         if source_node == dest_node:
-            canon_label = Graph.canonicalize_relation_label(label)
+            canon_label = TextFilterOps.canonicalize_relation_label(label)
             if not canon_label:
                 return None
 
@@ -187,7 +188,7 @@ class EdgeOps:
             )
             return None
 
-        label = Graph.canonicalize_relation_label(label)
+        label = TextFilterOps.canonicalize_relation_label(label)
         if not label:
             return None
 
@@ -374,7 +375,7 @@ class EdgeOps:
                 )
 
                 if edge:
-                    edge.active = True
+                    # edge.active already True from add_edge()
                     forced_edges.append(edge)
                     backbone.update(comp)
                     success = True
@@ -390,7 +391,7 @@ class EdgeOps:
                     inferred=False,
                 )
                 if edge:
-                    edge.active = True
+                    # edge.active already True from add_edge()
                     forced_edges.append(edge)
                     backbone.update(comp)
                     success = True

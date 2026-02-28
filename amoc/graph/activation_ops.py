@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Set, Dict, List, Tuple
+from typing import TYPE_CHECKING, Set, Dict, List, Tuple, Optional
 from collections import deque
 
 if TYPE_CHECKING:
@@ -8,10 +8,88 @@ if TYPE_CHECKING:
 
 
 class ActivationOps:
+    """
+    Activation operations for Graph.
+
+    Responsibilities:
+    - Active subgraph extraction
+    - Edge reactivation and decay
+    - Edge reinforcement (similar edge detection)
+    - Node scoring based on distance
+    """
+
     MAX_REACTIVATION_COUNT: int = 6
 
     def __init__(self, graph_ref: "Graph"):
         self._graph = graph_ref
+
+    # ==========================================================================
+    # EDGE REINFORCEMENT (moved from Graph)
+    # ==========================================================================
+
+    def check_and_reinforce_similar_edge(
+        self,
+        edge: "Edge",
+        edge_visibility: int,
+    ) -> bool:
+        """
+        Check if a similar edge exists and reinforce it.
+
+        If a similar edge exists (same source, dest, label), reinforce it by:
+        - Incrementing visibility_score (capped at edge_visibility)
+        - Setting active = True
+        - Marking as asserted
+
+        Args:
+            edge: The new edge to check against existing edges
+            edge_visibility: Maximum visibility score cap
+
+        Returns:
+            True if similar edge was found and reinforced, False otherwise
+        """
+        for other_edge in self._graph.edges:
+            same_nodes = (
+                edge.source_node == other_edge.source_node
+                and edge.dest_node == other_edge.dest_node
+            )
+            if not same_nodes:
+                continue
+
+            if (
+                edge.label.strip().lower() == other_edge.label.strip().lower()
+                and not edge.inferred
+            ):
+                other_edge.visibility_score = min(
+                    edge_visibility, other_edge.visibility_score + 1
+                )
+                other_edge.active = True
+                other_edge.mark_as_asserted(reset_score=False)
+                return True
+
+        return False
+
+    def get_similar_edge(self, edge: "Edge") -> Optional["Edge"]:
+        """
+        Get a similar existing edge (same source, dest, label).
+
+        Args:
+            edge: The edge to find a similar match for
+
+        Returns:
+            The similar edge if found, None otherwise
+        """
+        for other_edge in self._graph.edges:
+            if (
+                edge.source_node == other_edge.source_node
+                and edge.dest_node == other_edge.dest_node
+                and edge.label.strip().lower() == other_edge.label.strip().lower()
+            ):
+                return other_edge
+        return None
+
+    # ==========================================================================
+    # ACTIVE SUBGRAPH
+    # ==========================================================================
 
     def get_active_subgraph(self) -> Tuple[Set["Node"], Set["Edge"]]:
         active_edges: Set["Edge"] = {

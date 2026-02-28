@@ -99,6 +99,33 @@ class VLLMClient:
             logging.exception(f"VLLM runtime error: {e}")
             return "[]"
 
+    # ==========================================================================
+    # CANONICAL LLM GATEWAY
+    # ==========================================================================
+    # All LLM calls in the system MUST go through methods in this class.
+    # Direct calls to self.generate() from outside this class are prohibited.
+
+    def generate_raw(
+        self,
+        prompt_text: str,
+        temperature: float = 0.3,
+    ) -> str:
+        """
+        CANONICAL WRAPPER: Generate response without persona injection.
+
+        Use this for connectivity repair and other cases where persona
+        should NOT influence the response.
+
+        Args:
+            prompt_text: The prompt text to send to the LLM
+            temperature: Sampling temperature (default 0.3)
+
+        Returns:
+            Raw LLM response string (caller handles parsing)
+        """
+        messages = [{"role": "user", "content": prompt_text}]
+        return self.generate(messages, temperature=temperature)
+
     def call_vllm(self, prompt: str, persona: str) -> str:
         # Inject persona into system prompt
         # CRITICAL (AMoC v4 Paper Alignment):

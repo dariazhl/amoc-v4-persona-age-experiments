@@ -9,7 +9,7 @@ import logging
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
     from amoc.graph.node import Node, NodeType, NodeSource, NodeProvenance
-    from spacy.tokens import Span, Token
+    from spacy.tokens import Span
 
 
 class NodeOps:
@@ -351,22 +351,6 @@ class NodeOps:
     def node_token_for_matrix(self, node: "Node") -> str:
         """Get token representation for matrix."""
         return (node.get_text_representer() or "").strip().lower()
-
-    # =========================================================
-    # CONTENT WORD DETECTION
-    # =========================================================
-
-    def is_content_word_and_non_stopword(
-        self,
-        token: "Token",
-        pos_list: List[str] = None,
-    ) -> bool:
-        """Check if token is a content word and not a stopword."""
-        if pos_list is None:
-            pos_list = ["NOUN", "PROPN", "ADJ"]
-        return (token.pos_ in pos_list) and (
-            token.lemma_ not in self._spacy_nlp.Defaults.stop_words
-        )
 
     # =========================================================
     # ATTACHMENT CONSTRAINT

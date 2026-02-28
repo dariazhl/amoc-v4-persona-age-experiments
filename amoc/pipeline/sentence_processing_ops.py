@@ -626,7 +626,7 @@ class SentenceProcessingOps:
                     )
 
                     if edge:
-                        edge.active = True
+                        # edge.active already True from add_edge()
                         edge.asserted_this_sentence = False
                         edge.reactivated_this_sentence = False
 

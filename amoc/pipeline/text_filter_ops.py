@@ -239,12 +239,6 @@ class TextFilterOps:
 
         return canon, self.classify_canonical_node_text(canon)
 
-    def is_node_grounded(self, node: "Node") -> bool:
-        for lemma in node.lemmas:
-            if lemma.lower() in self._story_lemmas:
-                return True
-        return False
-
     def appears_in_story(self, text: str, *, check_graph: bool = False) -> bool:
         if not text:
             return False
@@ -263,15 +257,6 @@ class TextFilterOps:
                 return True
 
         return False
-
-    def is_content_word_and_non_stopword(self, tok) -> bool:
-        if tok.is_stop:
-            return False
-        if tok.pos_ not in {"NOUN", "PROPN", "VERB", "ADJ", "ADV"}:
-            return False
-        if not tok.is_alpha:
-            return False
-        return True
 
     def canonicalize_edge_direction(
         self, label: str, source_text: str, dest_text: str
@@ -324,3 +309,66 @@ class TextFilterOps:
             return (active_label, source_text, dest_text, False)
 
         return (label, source_text, dest_text, False)
+
+    # ==========================================================================
+    # RELATION LABEL CANONICALIZATION (moved from Graph)
+    # ==========================================================================
+
+    @staticmethod
+    def canonicalize_relation_label(label: str) -> str:
+        """
+        Canonicalize relation labels before edge creation.
+
+        Removes dependency prefixes, trailing punctuation, repeated characters,
+        and words without vowels (likely garbage).
+
+        Args:
+            label: Raw relation label
+
+        Returns:
+            Canonicalized label, or empty string if invalid
+        """
+        if not label or not isinstance(label, str):
+            return ""
+
+        label = label.strip()
+        if not label:
+            return ""
+
+        prefixes_to_remove = [
+            "nsubj:", "dobj:", "pobj:", "prep:", "amod:", "advmod:",
+            "ROOT:", "VERB:", "NOUN:", "ADJ:", "dep:", "compound:",
+            "agent:", "xcomp:", "ccomp:", "aux:", "auxpass:",
+        ]
+        for prefix in prefixes_to_remove:
+            if label.lower().startswith(prefix.lower()):
+                label = label[len(prefix):]
+
+        label = re.sub(r"[^\w\s]+$", "", label)
+        label = label.strip()
+        label = re.sub(r"\s+", " ", label)
+
+        if len(label) > 0:
+            if re.search(r"(.)\1{2,}", label):
+                label = re.sub(r"([bcdfghjklmnpqrstvwxyz])\1+$", r"\1", label)
+
+            words = label.split()
+            cleaned_words = []
+            for word in words:
+                if len(word) <= 2:
+                    cleaned_words.append(word.lower())
+                    continue
+                if not re.search(r"[aeiou]", word.lower()):
+                    continue
+                cleaned_words.append(word.lower())
+
+            if not cleaned_words:
+                return ""
+            label = " ".join(cleaned_words)
+
+        label = label.lower().strip()
+
+        if len(label) < 2:
+            return ""
+
+        return label

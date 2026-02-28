@@ -121,7 +121,7 @@ class ConnectivityOps:
                 )
 
                 if edge:
-                    edge.active = True
+                    # edge.active already True from add_edge()
                     edge.asserted_this_sentence = False
                     edge.reactivated_this_sentence = False
                     backbone.update(comp)
@@ -182,7 +182,7 @@ class ConnectivityOps:
             )
 
             if edge:
-                edge.active = True
+                # edge.active already True from add_edge()
                 edge.asserted_this_sentence = False
                 edge.reactivated_this_sentence = False
                 backbone.update(comp)
@@ -347,7 +347,7 @@ class ConnectivityOps:
                 )
 
                 if edge:
-                    edge.active = True
+                    # edge.active already True from add_edge()
                     repair_success = True
                     break
 
@@ -362,7 +362,7 @@ class ConnectivityOps:
                 )
 
                 if edge:
-                    edge.active = True
+                    # edge.active already True from add_edge()
                     repair_success = True
 
             if not repair_success:
@@ -411,11 +411,10 @@ class ConnectivityOps:
                 current_sentence=self._current_sentence_text,
             )
 
-            messages = [{"role": "user", "content": prompt_text}]
-
             try:
-                response = self._client.generate(
-                    messages,
+                # Use canonical wrapper (no persona injection for connectivity repair)
+                response = self._client.generate_raw(
+                    prompt_text=prompt_text,
                     temperature=temperature,
                 )
 

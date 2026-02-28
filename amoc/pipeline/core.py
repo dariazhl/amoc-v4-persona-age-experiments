@@ -3,7 +3,7 @@ import os
 import re
 from typing import List, Tuple, Optional, Iterable
 import pandas as pd
-from spacy.tokens import Span, Token
+from spacy.tokens import Span
 import networkx as nx
 import warnings
 import copy
@@ -20,16 +20,7 @@ from amoc.graph.per_sentence_graph import (
 )
 from amoc.viz.graph_plots import plot_amoc_triplets
 from amoc.llm.vllm_client import VLLMClient
-from amoc.nlp.spacy_utils import (
-    get_concept_lemmas,
-    canonicalize_node_text,
-    get_content_words_from_sent,
-    extract_prepositional_objects,
-    canonicalize_edge_label,
-    is_adverb_token,
-    are_semantically_equivalent,
-    get_semantic_class,
-)
+from amoc.nlp.spacy_utils import get_concept_lemmas
 from collections import deque
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
 from amoc.prompts.amoc_prompts import FORCED_CONNECTIVITY_EDGE_PROMPT
@@ -52,12 +43,14 @@ from amoc.pipeline.relationship_graph_ops import RelationshipGraphOps
 from amoc.pipeline.init_ops import InitOps
 from amoc.pipeline.projection_bookkeeping_ops import ProjectionBookkeepingOps
 
+
 def _sanitize_filename_component(component: str, max_len: int = 80) -> str:
     component = (component or "").replace("\n", " ").strip()
     component = component[:max_len]
     component = re.sub(r"[\\/:*?\"<>|]", "_", component)
     component = re.sub(r"\s+", "_", component)
     return component or "unknown"
+
 
 class AMoCv4:
     GENERIC_RELATION_LABELS = {
@@ -156,7 +149,9 @@ class AMoCv4:
         self._connectivity_ops = ConnectivityOps(
             graph_ref=self.graph,
             get_explicit_nodes=lambda: self._explicit_nodes_current_sentence,
-            get_carryover_nodes=lambda: getattr(self, "_carryover_nodes_current_sentence", set()),
+            get_carryover_nodes=lambda: getattr(
+                self, "_carryover_nodes_current_sentence", set()
+            ),
             edge_visibility=self.edge_visibility,
             client_ref=self.client,
         )
@@ -182,7 +177,9 @@ class AMoCv4:
             client_ref=self.client,
             spacy_nlp=self.spacy_nlp,
             get_explicit_nodes=lambda: self._explicit_nodes_current_sentence,
-            get_carryover_nodes=lambda: getattr(self, "_carryover_nodes_current_sentence", set()),
+            get_carryover_nodes=lambda: getattr(
+                self, "_carryover_nodes_current_sentence", set()
+            ),
             get_attachable_nodes=lambda: self._get_attachable_nodes_for_sentence(),
             edge_visibility=self.edge_visibility,
             allow_multi_edges=self.allow_multi_edges,
@@ -382,7 +379,9 @@ class AMoCv4:
             explicit_nodes_ref=lambda: self._explicit_nodes_current_sentence,
             anchor_nodes_ref=self._anchor_nodes,
             triplet_intro_ref=self._triplet_intro,
-            carryover_nodes_ref=lambda: getattr(self, "_carryover_nodes_current_sentence", set()),
+            carryover_nodes_ref=lambda: getattr(
+                self, "_carryover_nodes_current_sentence", set()
+            ),
             persona=self.persona,
         )
         self._projection_bookkeeping_ops = ProjectionBookkeepingOps(
@@ -779,7 +778,9 @@ class AMoCv4:
             anchor_nodes=self._anchor_nodes,
             triplet_intro=self._triplet_intro,
             per_sentence_view=getattr(self, "_per_sentence_view", None),
-            recently_deactivated=getattr(self, "_recently_deactivated_nodes_for_inference", None),
+            recently_deactivated=getattr(
+                self, "_recently_deactivated_nodes_for_inference", None
+            ),
             prev_active_nodes=getattr(self, "_prev_active_nodes_for_plot", None),
         )
 
@@ -879,6 +880,8 @@ class AMoCv4:
                 if not self.graph.is_active_connected():
                     if self._enforce_connectivity(prev_sentences):
                         return (nodes_before_sentence, True)
+                # NOTE: _enforce_connectivity() call removed here (was duplicate).
+                # Single connectivity enforcement now happens in analyze() at line 1172.
 
             return result
 
@@ -967,13 +970,9 @@ class AMoCv4:
         previous_recently_deactivated,
         previous_prev_active_nodes,
     ) -> None:
-        logging.error(
-            "[ROLLBACK] Sentence invalid — reverting to previous state."
-        )
+        logging.error("[ROLLBACK] Sentence invalid — reverting to previous state.")
 
-        if plot_after_each_sentence and hasattr(
-            self, "_previous_active_triplets"
-        ):
+        if plot_after_each_sentence and hasattr(self, "_previous_active_triplets"):
             try:
                 self._plot_graph_snapshot(
                     sentence_index=i,
@@ -995,9 +994,7 @@ class AMoCv4:
                     property_nodes=[],
                 )
             except Exception as e:
-                logging.warning(
-                    f"[RollbackPlot] Failed to save previous plot: {e}"
-                )
+                logging.warning(f"[RollbackPlot] Failed to save previous plot: {e}")
 
         self.graph = previous_graph_state
         self._rebind_ops_graph_refs()
@@ -1006,9 +1003,7 @@ class AMoCv4:
         self._triplet_intro.clear()
         self._triplet_intro.update(previous_triplet_intro)
         self._per_sentence_view = previous_per_sentence_view
-        self._recently_deactivated_nodes_for_inference = (
-            previous_recently_deactivated
-        )
+        self._recently_deactivated_nodes_for_inference = previous_recently_deactivated
         self._prev_active_nodes_for_plot = previous_prev_active_nodes
         if plot_after_each_sentence and previous_per_sentence_view is not None:
             self._per_sentence_view = previous_per_sentence_view
@@ -1018,8 +1013,7 @@ class AMoCv4:
         original_text: str,
     ) -> None:
         current_nodes = (
-            self._explicit_nodes_current_sentence
-            | self._get_nodes_with_active_edges()
+            self._explicit_nodes_current_sentence | self._get_nodes_with_active_edges()
         )
         for subj, rel, obj in self._reconstruct_semantic_triplets(
             only_active=False, restrict_nodes=current_nodes
@@ -1197,7 +1191,9 @@ class AMoCv4:
             per_sentence_view = self._build_projection(sentence_id)
 
             self._carryover_nodes_current_sentence.clear()
-            self._carryover_nodes_current_sentence.update(per_sentence_view.carryover_nodes)
+            self._carryover_nodes_current_sentence.update(
+                per_sentence_view.carryover_nodes
+            )
 
             (
                 recently_deactivated_nodes,
@@ -1343,19 +1339,6 @@ class AMoCv4:
             curr_sentences_words=curr_sentences_words,
             node_source=node_source,
             create_node=create_node,
-        )
-
-    def is_content_word_and_non_stopword(
-        self,
-        token: Token,
-        pos_list: List[str] = [
-            "NOUN",
-            "PROPN",
-            "ADJ",
-        ],
-    ) -> bool:
-        return (token.pos_ in pos_list) and (
-            token.lemma_ not in self.spacy_nlp.Defaults.stop_words
         )
 
     def get_phrase_level_concepts(self, sent):
