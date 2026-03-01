@@ -227,55 +227,9 @@ class SentenceOps:
             repair_callback=None,
         )
 
-        active_nodes = set(view.explicit_nodes) | set(view.carryover_nodes)
-
-        connected_nodes = set()
-        for e in view.active_edges:
-            connected_nodes.add(e.source_node)
-            connected_nodes.add(e.dest_node)
-
-        if connected_nodes:
-            for node in active_nodes:
-                has_edge = any(
-                    e.active and (e.source_node == node or e.dest_node == node)
-                    for e in view.active_edges
-                )
-
-                if not has_edge:
-                    anchor_candidates = sorted(
-                        connected_nodes,
-                        key=lambda n: sum(
-                            1
-                            for e in self._graph.edges
-                            if e.active and (e.source_node == n or e.dest_node == n)
-                        ),
-                        reverse=True,
-                    )
-
-                    anchor = next((n for n in anchor_candidates if n != node), None)
-
-                    if anchor:
-                        edge = self._graph.add_edge(
-                            anchor,
-                            node,
-                            "relates_to",
-                            self._edge_visibility,
-                            persona_influenced=False,
-                            inferred=False,
-                        )
-                        if edge:
-                            # edge.active already True from add_edge()
-                            edge.asserted_this_sentence = False
-                            edge.reactivated_this_sentence = False
-
-            view = build_per_sentence_graph_fn(
-                cumulative_graph=self._graph,
-                explicit_nodes=admitted_nodes,
-                max_distance=self._max_distance,
-                anchor_nodes=self._anchor_nodes,
-                sentence_index=sentence_index,
-                repair_callback=None,
-            )
+        # NOTE: No "relates_to" fallback edges created here.
+        # ConnectivityOps.enforce_connectivity() is the ONLY authority for fallback edges.
+        # Any connectivity issues will be handled by the caller invoking enforce_connectivity().
 
         self._per_sentence_view = view
         return view

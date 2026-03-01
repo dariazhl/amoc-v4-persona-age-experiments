@@ -630,21 +630,13 @@ class AMoCv4:
 
             if not result[1]:
                 # Apply post-sentence processing (decay, stability)
-                # Connectivity enforcement is handled later in analyze() to avoid
-                # double enforcement
-                needs_connectivity_repair = (
-                    self._sentence_processing_ops.apply_post_sentence_processing(
-                        explicit_nodes=self._explicit_nodes_current_sentence,
-                        carryover_nodes=self._carryover_nodes_current_sentence,
-                        apply_global_edge_decay_fn=lambda: self._activation_ops.apply_global_edge_decay(),
-                        decay_node_activation_fn=lambda: self._activation_ops.decay_node_activation(),
-                    )
+                # Connectivity enforcement is handled by _enforce_connectivity() in analyze()
+                self._sentence_processing_ops.apply_post_sentence_processing(
+                    explicit_nodes=self._explicit_nodes_current_sentence,
+                    carryover_nodes=self._carryover_nodes_current_sentence,
+                    apply_global_edge_decay_fn=lambda: self._activation_ops.apply_global_edge_decay(),
+                    decay_node_activation_fn=lambda: self._activation_ops.decay_node_activation(),
                 )
-                # Note: connectivity repair is deferred to analyze() loop
-                if needs_connectivity_repair:
-                    logging.debug(
-                        "[Connectivity] Post-processing detected disconnected state"
-                    )
 
         return result
 
@@ -866,10 +858,7 @@ class AMoCv4:
             )
             if should_skip_sentence:
                 continue
-            self._per_sentence_view = self._build_per_sentence_view(
-                explicit_nodes=list(self._explicit_nodes_current_sentence),
-                sentence_index=self._current_sentence_index,
-            )
+
             if self.debug:
                 logging.info(
                     "Active graph after sentence %d:\n%s",
@@ -888,6 +877,13 @@ class AMoCv4:
                 )
             )
 
+            # ═══════════════════════════════════════════════════════════════════
+            # SINGLE CONNECTIVITY AUTHORITY: Called ONCE per sentence, BEFORE projection
+            # ConnectivityOps.enforce_connectivity() guarantees:
+            #   - All explicit + carryover nodes connected via active edges
+            #   - Cumulative graph is single component
+            #   - No dangling explicit nodes
+            # ═══════════════════════════════════════════════════════════════════
             rollback_needed = self._enforce_connectivity(prev_sentences)
 
             if rollback_needed:
@@ -907,14 +903,11 @@ class AMoCv4:
                 )
                 continue
 
+            # Build projection AFTER connectivity is guaranteed
             self._per_sentence_view = self._build_projection(sentence_id)
 
-            # Guard against None per_sentence_view before accessing carryover_nodes
+            # Update carryover nodes from projection
             if self._per_sentence_view is not None:
-                self.graph.enforce_carryover_connectivity(
-                    set(self._per_sentence_view.carryover_nodes)
-                )
-
                 self._carryover_nodes_current_sentence.clear()
                 self._carryover_nodes_current_sentence.update(
                     self._per_sentence_view.carryover_nodes
@@ -946,6 +939,13 @@ class AMoCv4:
                     largest_component_only,
                 )
             self._capture_sentence_triplets(original_text)
+
+        # CUMULATIVE CONNECTIVITY GUARANTEE: Ensure cumulative graph is connected
+        if not self._connectivity_ops.is_cumulative_connected():
+            logging.warning(
+                "[Connectivity] Cumulative graph disconnected after sentence loop - repairing"
+            )
+            self._enforce_connectivity(prev_sentences)
 
         return self._finalize_outputs(matrix_suffix)
 

@@ -364,8 +364,7 @@ class EdgeOps:
             node_a = next(iter(backbone))
             node_b = next(iter(comp))
 
-            success = False
-
+            # Try LLM repair (2 attempts)
             for _ in range(2):
                 result = self._client.get_forced_connectivity_edge_label(
                     node_a=node_a.get_text_representer(),
@@ -380,7 +379,9 @@ class EdgeOps:
                     continue
 
                 if normalize_edge_label_fn:
-                    relation = normalize_edge_label_fn(relation) or "relates_to"
+                    relation = normalize_edge_label_fn(relation)
+                    if not relation:
+                        continue
 
                 edge = self._graph.add_edge(
                     node_a,
@@ -391,29 +392,11 @@ class EdgeOps:
                 )
 
                 if edge:
-                    # edge.active already True from add_edge()
                     forced_edges.append(edge)
                     backbone.update(comp)
-                    success = True
                     break
 
-            if not success:
-                edge = self._graph.add_edge(
-                    node_a,
-                    node_b,
-                    "relates_to",
-                    self._edge_visibility,
-                    persona_influenced=False,
-                    inferred=False,
-                )
-                if edge:
-                    # edge.active already True from add_edge()
-                    forced_edges.append(edge)
-                    backbone.update(comp)
-                    success = True
-
-            if not success:
-                return []
+            # NOTE: No "relates_to" fallback here - ConnectivityOps handles that
 
         return forced_edges
 

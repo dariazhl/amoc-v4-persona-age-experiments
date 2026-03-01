@@ -380,10 +380,8 @@ class SentenceProcessingOps:
             anchor_nodes,
         )
 
-        self._ensure_active_connectivity(
-            explicit_nodes_current_sentence,
-            anchor_nodes,
-        )
+        # NOTE: Deterministic connectivity repair removed - ConnectivityOps.enforce_connectivity()
+        # is the single authority, called in core.py after sentence processing completes.
 
         self._ensure_explicit_nodes_have_edges(
             explicit_nodes_current_sentence,
@@ -612,6 +610,12 @@ class SentenceProcessingOps:
         explicit_nodes_current_sentence: set,
         current_sentence_text: str,
     ):
+        """
+        Attempt LLM repair for explicit nodes without active edges.
+
+        NOTE: This method does NOT create "relates_to" fallback edges.
+        ConnectivityOps.enforce_connectivity() is the ONLY authority for fallback edges.
+        """
         active_nodes = self._get_nodes_with_active_edges_fn()
 
         for node in explicit_nodes_current_sentence:
@@ -666,26 +670,7 @@ class SentenceProcessingOps:
                                 edge.mark_as_asserted(reset_score=True)
                                 break
 
-        for node in explicit_nodes_current_sentence:
-            active_nodes = self._get_nodes_with_active_edges_fn()
-            if node not in active_nodes:
-                anchor = next(
-                    (n for n in self._get_nodes_with_active_edges_fn() if n != node),
-                    None,
-                )
-
-                if anchor:
-                    edge = self._add_edge_fn(
-                        anchor,
-                        node,
-                        "relates_to",
-                        self.edge_visibility,
-                    )
-
-                    if edge:
-                        # edge.active already True from add_edge()
-                        edge.asserted_this_sentence = False
-                        edge.reactivated_this_sentence = False
+        # NOTE: No "relates_to" fallback here - ConnectivityOps handles that
 
     def _handle_empty_projection_retry(
         self,
@@ -810,11 +795,14 @@ class SentenceProcessingOps:
         carryover_nodes: set,
         apply_global_edge_decay_fn: callable,
         decay_node_activation_fn: callable,
-    ) -> bool:
+    ) -> None:
+        """
+        Apply decay and stability operations after sentence processing.
+
+        NOTE: Does NOT enforce connectivity - that is handled by
+        ConnectivityOps.enforce_connectivity() as the single authority.
+        """
         apply_global_edge_decay_fn()
         self.graph.enforce_cumulative_stability(set(explicit_nodes))
         decay_node_activation_fn()
-        self.graph.enforce_carryover_connectivity(carryover_nodes)
-
-        # Return whether connectivity repair is needed; caller handles enforcement
-        return not self.graph.is_active_connected()
+        # Carryover connectivity is handled by ConnectivityOps.enforce_connectivity()
