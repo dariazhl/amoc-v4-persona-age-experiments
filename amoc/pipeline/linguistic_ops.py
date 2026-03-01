@@ -224,3 +224,39 @@ class LinguisticOps:
                         conj_node = get_node(conj)
                         if conj_node:
                             assert_edge(subj_node, conj_node, label)
+
+            # -------------------------
+            # ROOT copular with prep: X is PREP Y (e.g., "The book is on the table")
+            # -------------------------
+            if token.dep_ == "ROOT" and token.lemma_ == "be":
+                subj = next(
+                    (c for c in token.children if c.dep_ in {"nsubj", "nsubjpass"}),
+                    None,
+                )
+                if not subj:
+                    continue
+
+                subj_node = get_node(subj)
+                if not subj_node:
+                    continue
+
+                # Handle prepositional phrases attached to "be" ROOT
+                for prep in (c for c in token.children if c.dep_ == "prep"):
+                    pobj = next(
+                        (c for c in prep.children if c.dep_ == "pobj"),
+                        None,
+                    )
+                    if not pobj:
+                        continue
+
+                    obj_node = get_node(pobj)
+                    if not obj_node:
+                        continue
+
+                    label = f"is_{prep.lemma_}"
+                    assert_edge(subj_node, obj_node, label)
+
+                    for conj in (c for c in pobj.children if c.dep_ == "conj"):
+                        conj_node = get_node(conj)
+                        if conj_node:
+                            assert_edge(subj_node, conj_node, label)

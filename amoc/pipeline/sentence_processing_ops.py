@@ -783,18 +783,26 @@ class SentenceProcessingOps:
         # sometimes, the parser returns sentences such as: "Processing sentence 0: answer is: A man very close to Charlemagne wrote most of the things we know about Charlemagne."
         if resolved_text.strip().startswith("{"):
             logging.error("LLM JSON contamination detected — reverting.")
-            return original_text.strip(), sent
+            resolved_text = original_text
 
-        # Strip bad prefix ONLY
+        # Strip bad prefix
         resolved_text = re.sub(
             r"^\s*(processing sentence \d+:)?\s*answer\s+is:\s*",
             "",
             resolved_text,
             flags=re.IGNORECASE,
-        )
+        ).strip()
 
-        # Do NOT rebuild Doc
-        return resolved_text.strip(), sent
+        # rebuild spaCy doc from cleaned text
+        resolved_doc = self.spacy_nlp(resolved_text)
+        sents = list(resolved_doc.sents)
+        if not sents:
+            # Fallback to original if parsing fails
+            fallback_doc = self.spacy_nlp(original_text.strip())
+            fallback_sents = list(fallback_doc.sents)
+            return original_text.strip(), fallback_sents[0] if fallback_sents else sent
+
+        return resolved_text, sents[0]
 
     def apply_post_sentence_processing(
         self,
@@ -802,14 +810,11 @@ class SentenceProcessingOps:
         carryover_nodes: set,
         apply_global_edge_decay_fn: callable,
         decay_node_activation_fn: callable,
-        enforce_connectivity_fn: callable,
-        prev_sentences: list,
     ) -> bool:
         apply_global_edge_decay_fn()
         self.graph.enforce_cumulative_stability(set(explicit_nodes))
         decay_node_activation_fn()
         self.graph.enforce_carryover_connectivity(carryover_nodes)
 
-        if not self.graph.is_active_connected():
-            return enforce_connectivity_fn(prev_sentences)
-        return False
+        # Return whether connectivity repair is needed; caller handles enforcement
+        return not self.graph.is_active_connected()

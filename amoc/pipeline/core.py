@@ -629,16 +629,22 @@ class AMoCv4:
             )
 
             if not result[1]:
-                rollback = self._sentence_processing_ops.apply_post_sentence_processing(
-                    explicit_nodes=self._explicit_nodes_current_sentence,
-                    carryover_nodes=self._carryover_nodes_current_sentence,
-                    apply_global_edge_decay_fn=lambda: self._activation_ops.apply_global_edge_decay(),
-                    decay_node_activation_fn=lambda: self._activation_ops.decay_node_activation(),
-                    enforce_connectivity_fn=self._enforce_connectivity,
-                    prev_sentences=prev_sentences,
+                # Apply post-sentence processing (decay, stability)
+                # Connectivity enforcement is handled later in analyze() to avoid
+                # double enforcement
+                needs_connectivity_repair = (
+                    self._sentence_processing_ops.apply_post_sentence_processing(
+                        explicit_nodes=self._explicit_nodes_current_sentence,
+                        carryover_nodes=self._carryover_nodes_current_sentence,
+                        apply_global_edge_decay_fn=lambda: self._activation_ops.apply_global_edge_decay(),
+                        decay_node_activation_fn=lambda: self._activation_ops.decay_node_activation(),
+                    )
                 )
-                if rollback:
-                    return (nodes_before_sentence, True)
+                # Note: connectivity repair is deferred to analyze() loop
+                if needs_connectivity_repair:
+                    logging.debug(
+                        "[Connectivity] Post-processing detected disconnected state"
+                    )
 
         return result
 
@@ -903,14 +909,22 @@ class AMoCv4:
 
             self._per_sentence_view = self._build_projection(sentence_id)
 
-            self.graph.enforce_carryover_connectivity(
-                set(self._per_sentence_view.carryover_nodes)
-            )
+            # Guard against None per_sentence_view before accessing carryover_nodes
+            if self._per_sentence_view is not None:
+                self.graph.enforce_carryover_connectivity(
+                    set(self._per_sentence_view.carryover_nodes)
+                )
 
-            self._carryover_nodes_current_sentence.clear()
-            self._carryover_nodes_current_sentence.update(
-                self._per_sentence_view.carryover_nodes
-            )
+                self._carryover_nodes_current_sentence.clear()
+                self._carryover_nodes_current_sentence.update(
+                    self._per_sentence_view.carryover_nodes
+                )
+            else:
+                logging.warning(
+                    "[Projection] per_sentence_view is None at sentence %d",
+                    sentence_id,
+                )
+                self._carryover_nodes_current_sentence.clear()
 
             (
                 recently_deactivated_nodes,
