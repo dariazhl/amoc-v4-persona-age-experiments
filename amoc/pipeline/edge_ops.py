@@ -9,7 +9,7 @@ from amoc.nlp.spacy_utils import are_semantically_equivalent, get_semantic_class
 from amoc.pipeline.text_filter_ops import TextFilterOps
 
 if TYPE_CHECKING:
-    pass
+    from amoc.pipeline.core import AMoCv4
 
 
 class EdgeOps:
@@ -71,6 +71,25 @@ class EdgeOps:
     ):
         self._triplet_intro = triplet_intro
         self._persistent_is_edges = persistent_is_edges
+
+    def configure_with_core(self, core: "AMoCv4") -> None:
+        """Configure all callbacks using core's ops and methods.
+
+        This method absorbs wiring responsibility from core._setup_ops_classes().
+        """
+        self.set_inference_callbacks(
+            normalize_endpoint_text_fn=core._normalize_endpoint_text,
+            normalize_edge_label_fn=core._normalize_edge_label,
+            is_valid_relation_label_fn=core._is_valid_relation_label,
+            find_node_by_text_fn=lambda t, c: core._node_ops.find_node_by_text(t, c),
+            add_edge_fn=core._add_edge,
+            classify_relation_fn=core._classify_relation,
+            persona=core.persona,
+        )
+        self.set_state_refs(
+            triplet_intro=core._triplet_intro,
+            persistent_is_edges=core._persistent_is_edges,
+        )
 
     def set_current_sentence(self, idx: int):
         self._current_sentence_index = idx

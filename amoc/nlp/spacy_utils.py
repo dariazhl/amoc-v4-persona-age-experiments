@@ -684,65 +684,47 @@ def get_concept_lemmas(nlp, concept: str) -> List[str]:
 
 
 def canonicalize_node_text(nlp, text: str) -> str:
-    """
-    Canonicalize node text per AMoC v4 paper specification:
-    - Strip determiners (the, a, an) - NEVER part of node labels
-    - Return single lowercase lemma as the canonical node key
-    - Preserve surface form only for proper nouns
-
-    Per paper Figures 2-4: Nodes are single lemmas like "country", not "the country"
-    """
     if not isinstance(text, str):
         text = str(text)
+
     text = text.strip()
     if not text:
         return text
 
-    # Parse:
-    # - underscores/hyphens used as "word separators"
-    # - punctuation-wrapped tokens
     text = text.replace("_", " ").replace("-", " ")
     text = text.replace("&", " and ")
     text = re.sub(r"\s+", " ", text).strip()
 
     doc = nlp(text)
-    if len(doc) == 0:
-        return text
+    if not doc:
+        return text.lower()
 
-    # CRITICAL FIX: Filter out determiners (DET) first - per AMoC paper requirement
-    # Node labels are NEVER "the country", always just "country"
     content_tokens = [
         t for t in doc if getattr(t, "is_alpha", False) and t.pos_ != "DET"
     ]
 
     if not content_tokens:
-        # Fallback: if no content tokens, try to get any alpha token
-        alpha_tokens = [t for t in doc if getattr(t, "is_alpha", False)]
-        if not alpha_tokens:
-            root = doc[:].root
-            return (
-                (root.lemma_ if getattr(root, "lemma_", None) else text).strip().lower()
-            )
-        content_tokens = alpha_tokens
+        content_tokens = [t for t in doc if getattr(t, "is_alpha", False)]
+        if not content_tokens:
+            return text.lower()
 
     root = doc[:].root
 
-    # Prefer nouns over adjectives for node label
     noun_tokens = [t for t in content_tokens if t.pos_ in {"NOUN", "PROPN"}]
     if noun_tokens:
         chosen = root if root in noun_tokens else noun_tokens[-1]
     else:
-        # Adjectives become PROPERTY nodes
         adj_tokens = [t for t in content_tokens if t.pos_ == "ADJ"]
         if adj_tokens:
             chosen = root if root in adj_tokens else adj_tokens[-1]
         else:
             chosen = content_tokens[0]
 
-    # Preserve surface form for proper nouns; otherwise use lemma lowercased.
-    # Per AMoC paper: all node labels are lowercase lemmas
+    # --- FIXED LOGIC ---
     if chosen.pos_ == "PROPN":
         return chosen.text.strip()
+
+    # ADJ / VERB / fallback
     return (chosen.lemma_ or chosen.text).strip().lower()
 
 

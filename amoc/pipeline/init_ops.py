@@ -1,7 +1,10 @@
 import logging
-from typing import List, Optional, Set
+from typing import TYPE_CHECKING, List, Optional, Set
 
 from amoc.graph.node import NodeType, NodeSource
+
+if TYPE_CHECKING:
+    from amoc.pipeline.core import AMoCv4
 
 
 class InitOps:
@@ -67,18 +70,55 @@ class InitOps:
         self._get_sentences_text_based_nodes_fn = get_sentences_text_based_nodes_fn
         self._extract_deterministic_structure_fn = extract_deterministic_structure_fn
         self._infer_new_relationships_step_0_fn = infer_new_relationships_step_0_fn
-        self._add_inferred_relationships_to_graph_step_0_fn = add_inferred_relationships_to_graph_step_0_fn
-        self._restrict_active_to_current_explicit_fn = restrict_active_to_current_explicit_fn
+        self._add_inferred_relationships_to_graph_step_0_fn = (
+            add_inferred_relationships_to_graph_step_0_fn
+        )
+        self._restrict_active_to_current_explicit_fn = (
+            restrict_active_to_current_explicit_fn
+        )
 
     def set_state_refs(self, explicit_nodes_ref, persona: str):
         self._explicit_nodes_ref = explicit_nodes_ref
         self.persona = persona
 
+    def configure_with_core(self, core: "AMoCv4") -> None:
+        self.set_callbacks(
+            normalize_endpoint_text_fn=core._normalize_endpoint_text,
+            normalize_edge_label_fn=core._normalize_edge_label,
+            is_valid_relation_label_fn=core._is_valid_relation_label,
+            passes_attachment_constraint_fn=core._passes_attachment_constraint,
+            canonicalize_edge_direction_fn=core._canonicalize_edge_direction,
+            classify_relation_fn=core._classify_relation,
+            add_edge_fn=core._add_edge,
+            get_nodes_with_active_edges_fn=core._get_active_edge_nodes,
+            get_node_from_text_fn=core.get_node_from_text,
+            get_sentences_text_based_nodes_fn=core._get_sentences_nodes,
+            extract_deterministic_structure_fn=lambda s, n, w: (
+                core._linguistic_ops.set_sentence_context(
+                    core._current_sentence_index, core.edge_visibility
+                ),
+                core._linguistic_ops.extract_deterministic_structure(s, n, w),
+            )[-1],
+            infer_new_relationships_step_0_fn=core.infer_new_relationships_step_0,
+            add_inferred_relationships_to_graph_step_0_fn=core.add_inferred_relationships_to_graph_step_0,
+            restrict_active_to_current_explicit_fn=lambda en: (
+                core._activation_ops.restrict_active_to_current_explicit(en)
+            ),
+        )
+        self.set_state_refs(
+            explicit_nodes_ref=core._get_explicit_nodes,
+            persona=core.persona,
+        )
+
     def init_graph(self, sent) -> None:
-        explicit_nodes = self._explicit_nodes_ref() if callable(self._explicit_nodes_ref) else set()
+        explicit_nodes = (
+            self._explicit_nodes_ref() if callable(self._explicit_nodes_ref) else set()
+        )
 
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
-            self._get_sentences_text_based_nodes_fn([sent], create_unexistent_nodes=True)
+            self._get_sentences_text_based_nodes_fn(
+                [sent], create_unexistent_nodes=True
+            )
         )
 
         self._extract_deterministic_structure_fn(
@@ -109,8 +149,12 @@ class InitOps:
             ):
                 continue
 
-            norm_subj = self._normalize_endpoint_text_fn(relationship[0], is_subject=True)
-            norm_obj = self._normalize_endpoint_text_fn(relationship[2], is_subject=False)
+            norm_subj = self._normalize_endpoint_text_fn(
+                relationship[0], is_subject=True
+            )
+            norm_obj = self._normalize_endpoint_text_fn(
+                relationship[2], is_subject=False
+            )
             if norm_subj is None or norm_obj is None:
                 continue
 
@@ -301,6 +345,16 @@ class InitOps:
 
         explicit_nodes_current_sentence = set(explicit_nodes_current_sentence)
 
+        # anchor selection - anchors are subjects inside the current sentence
+        # anchor_nodes = set()
+
+        # for token in sent:
+        #     if token.dep_ in {"nsubj", "nsubjpass"}:
+        #         lemma = token.lemma_.lower()
+        #         for node in explicit_nodes_current_sentence:
+        #             if lemma in node.lemmas:
+        #                 anchor_nodes.add(node)
+
         anchor_nodes = {
             n
             for n in explicit_nodes_current_sentence
@@ -326,4 +380,9 @@ class InitOps:
             list(explicit_nodes_current_sentence)
         )
 
-        return (nodes_before_sentence, False, explicit_nodes_current_sentence, anchor_nodes)
+        return (
+            nodes_before_sentence,
+            False,
+            explicit_nodes_current_sentence,
+            anchor_nodes,
+        )

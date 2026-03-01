@@ -51,6 +51,10 @@ class SentenceOps:
         self._current_sentence_index = idx
         self._current_sentence_text = text
 
+    def configure_graph_for_sentence(self, idx: int, lemmas: Set[str]) -> None:
+        self._graph.set_current_sentence(idx)
+        self._graph.set_current_sentence_lemmas(lemmas)
+
     def snapshot_sentence_state(
         self,
         anchor_nodes: Set["Node"],
@@ -336,3 +340,36 @@ class SentenceOps:
 
             if node not in self._graph.nodes:
                 self._graph.nodes.add(node)
+
+    def extract_sentence_lemmas(self, text: str) -> Set[str]:
+        return {w.lower() for w in re.findall(r"[a-zA-Z]+", text)}
+
+    def cleanup_anchor_nodes(self, anchor_nodes: Set["Node"]) -> Set["Node"]:
+        return {n for n in anchor_nodes if n in self._graph.nodes}
+
+    def restore_state_from_snapshot(
+        self,
+        snapshot: Tuple,
+        anchor_nodes: Set["Node"],
+        triplet_intro: dict,
+    ) -> Tuple["Graph", "PerSentenceGraph", Set["Node"], Set["Node"]]:
+        (
+            previous_graph_state,
+            previous_anchor_nodes,
+            previous_triplet_intro,
+            previous_per_sentence_view,
+            previous_recently_deactivated,
+            previous_prev_active_nodes,
+        ) = snapshot
+
+        anchor_nodes.clear()
+        anchor_nodes.update(previous_anchor_nodes)
+        triplet_intro.clear()
+        triplet_intro.update(previous_triplet_intro)
+
+        return (
+            previous_graph_state,
+            previous_per_sentence_view,
+            previous_recently_deactivated,
+            previous_prev_active_nodes,
+        )

@@ -67,6 +67,23 @@ class ProvenanceOps:
 
         return (True, None)
 
+    def passes_length_policy(
+        self,
+        lemma: str,
+        node_type: Optional["NodeType"] = None,
+        provenance: Optional["NodeProvenance"] = None,
+    ) -> bool:
+        if not lemma:
+            return False
+
+        lemma_lower = lemma.lower()
+
+        # TIER 1: Absolute floor - single char always rejected
+        if len(lemma_lower) <= 1:
+            return False
+
+        return True
+
     def is_story_grounded(self, lemma: str) -> bool:
         if self._graph._story_lemmas is None:
             return True

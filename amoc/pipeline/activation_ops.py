@@ -340,3 +340,8 @@ class ActivationOps:
                 for e in self._graph.edges
             )
             node.active = has_active_edge
+
+    def has_active_attachment(self, lemma: str) -> bool:
+        active_nodes = {n for n in self._graph.nodes if n.active}
+        active_nodes |= self._get_explicit_nodes()
+        return any(lemma in n.lemmas for n in active_nodes)

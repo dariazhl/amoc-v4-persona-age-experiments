@@ -1,7 +1,11 @@
 import logging
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from amoc.graph.node import NodeType, NodeSource, NodeProvenance
+from amoc.nlp.spacy_utils import get_concept_lemmas
+
+if TYPE_CHECKING:
+    from amoc.pipeline.core import AMoCv4
 
 
 class RelationshipGraphOps:
@@ -63,7 +67,9 @@ class RelationshipGraphOps:
         self._admit_node_fn = admit_node_fn
         self._passes_attachment_constraint_fn = passes_attachment_constraint_fn
         self._canonicalize_edge_direction_fn = canonicalize_edge_direction_fn
-        self._canonicalize_and_classify_node_text_fn = canonicalize_and_classify_node_text_fn
+        self._canonicalize_and_classify_node_text_fn = (
+            canonicalize_and_classify_node_text_fn
+        )
         self._classify_relation_fn = classify_relation_fn
         self._add_edge_fn = add_edge_fn
         self._get_nodes_with_active_edges_fn = get_nodes_with_active_edges_fn
@@ -74,6 +80,36 @@ class RelationshipGraphOps:
 
     def set_state_refs(self, explicit_nodes_ref):
         self._explicit_nodes_ref = explicit_nodes_ref
+
+    def configure_with_core(self, core: "AMoCv4") -> None:
+        self.set_callbacks(
+            normalize_endpoint_text_fn=core._normalize_endpoint_text,
+            normalize_edge_label_fn=core._normalize_edge_label,
+            is_valid_relation_label_fn=core._is_valid_relation_label,
+            validate_node_provenance_fn=lambda l, t=None, allow_bootstrap=False: (
+                core._node_ops.validate_node_provenance(
+                    l, t, allow_bootstrap=allow_bootstrap
+                )
+            ),
+            admit_node_fn=lambda l, nt, p, s=None: core._node_ops.admit_node(
+                l, nt, p, s
+            ),
+            passes_attachment_constraint_fn=core._passes_attachment_constraint,
+            canonicalize_edge_direction_fn=core._canonicalize_edge_direction,
+            canonicalize_and_classify_node_text_fn=lambda t: (
+                core._text_filter_ops.canonicalize_and_classify_node_text(t)
+            ),
+            classify_relation_fn=core._classify_relation,
+            add_edge_fn=core._add_edge,
+            get_nodes_with_active_edges_fn=core._get_active_edge_nodes,
+            get_node_from_text_fn=core.get_node_from_text,
+            get_node_from_new_relationship_fn=core.get_node_from_new_relationship,
+            get_concept_lemmas_fn=lambda text: get_concept_lemmas(core.spacy_nlp, text),
+            appears_in_story_fn=lambda t, check_graph=False: (
+                core._text_filter_ops.appears_in_story(t, check_graph=check_graph)
+            ),
+        )
+        self.set_state_refs(explicit_nodes_ref=core._get_explicit_nodes)
 
     def set_current_sentence(self, sentence_index: int):
         self._current_sentence_index = sentence_index
@@ -87,7 +123,9 @@ class RelationshipGraphOps:
         current_sentence_text_based_nodes: List,
         current_sentence_text_based_words: List[str],
     ) -> None:
-        explicit_nodes = self._explicit_nodes_ref() if callable(self._explicit_nodes_ref) else set()
+        explicit_nodes = (
+            self._explicit_nodes_ref() if callable(self._explicit_nodes_ref) else set()
+        )
 
         for relationship in inferred_relationships:
             if len(relationship) != 3:
@@ -101,8 +139,12 @@ class RelationshipGraphOps:
             ):
                 continue
 
-            norm_subj = self._normalize_endpoint_text_fn(relationship[0], is_subject=True)
-            norm_obj = self._normalize_endpoint_text_fn(relationship[2], is_subject=False)
+            norm_subj = self._normalize_endpoint_text_fn(
+                relationship[0], is_subject=True
+            )
+            norm_obj = self._normalize_endpoint_text_fn(
+                relationship[2], is_subject=False
+            )
             if norm_subj is None or norm_obj is None:
                 continue
 
@@ -149,8 +191,12 @@ class RelationshipGraphOps:
                 if not (source_active or dest_active):
                     continue
 
-            subj, subj_type = self._canonicalize_and_classify_node_text_fn(relationship[0])
-            obj, obj_type = self._canonicalize_and_classify_node_text_fn(relationship[2])
+            subj, subj_type = self._canonicalize_and_classify_node_text_fn(
+                relationship[0]
+            )
+            obj, obj_type = self._canonicalize_and_classify_node_text_fn(
+                relationship[2]
+            )
             if subj_type is None or obj_type is None:
                 continue
 
@@ -251,7 +297,9 @@ class RelationshipGraphOps:
         active_graph_nodes: List,
         added_edges: List,
     ) -> None:
-        explicit_nodes = self._explicit_nodes_ref() if callable(self._explicit_nodes_ref) else set()
+        explicit_nodes = (
+            self._explicit_nodes_ref() if callable(self._explicit_nodes_ref) else set()
+        )
 
         for relationship in inferred_relationships:
             if len(relationship) != 3:
@@ -265,8 +313,12 @@ class RelationshipGraphOps:
             ):
                 continue
 
-            norm_subj = self._normalize_endpoint_text_fn(relationship[0], is_subject=True)
-            norm_obj = self._normalize_endpoint_text_fn(relationship[2], is_subject=False)
+            norm_subj = self._normalize_endpoint_text_fn(
+                relationship[0], is_subject=True
+            )
+            norm_obj = self._normalize_endpoint_text_fn(
+                relationship[2], is_subject=False
+            )
 
             if norm_subj is None or norm_obj is None:
                 continue
@@ -281,8 +333,12 @@ class RelationshipGraphOps:
             ):
                 continue
 
-            subj, subj_type = self._canonicalize_and_classify_node_text_fn(relationship[0])
-            obj, obj_type = self._canonicalize_and_classify_node_text_fn(relationship[2])
+            subj, subj_type = self._canonicalize_and_classify_node_text_fn(
+                relationship[0]
+            )
+            obj, obj_type = self._canonicalize_and_classify_node_text_fn(
+                relationship[2]
+            )
 
             if subj_type is None or obj_type is None:
                 continue
@@ -315,8 +371,7 @@ class RelationshipGraphOps:
                 if not self._validate_node_provenance_fn(
                     subj,
                     allow_bootstrap=(
-                        dest_node is not None
-                        and dest_node in explicit_nodes
+                        dest_node is not None and dest_node in explicit_nodes
                     ),
                 ):
                     continue

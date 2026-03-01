@@ -2,9 +2,8 @@ import logging
 from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
 from amoc.graph.node import Node, NodeSource
+from amoc.graph.per_sentence_graph import PerSentenceGraph
 
-if TYPE_CHECKING:
-    from amoc.graph.per_sentence_graph import PerSentenceGraph
 
 class ProjectionBookkeepingOps:
 
@@ -39,6 +38,15 @@ class ProjectionBookkeepingOps:
 
     def get_recently_deactivated_nodes(self) -> Set[Node]:
         return self._recently_deactivated_nodes_for_inference
+
+    def compute_newly_inferred_nodes(
+        self, nodes_before_sentence: Set[Node]
+    ) -> Set[Node]:
+        return {
+            n
+            for n in (set(self.graph.nodes) - nodes_before_sentence)
+            if n.node_source == NodeSource.INFERENCE_BASED
+        }
 
     def post_projection_bookkeeping(
         self,
@@ -144,6 +152,7 @@ class ProjectionBookkeepingOps:
         explicit_nodes_current_sentence: Set[Node],
         previous_active_triplets: List,
     ) -> Optional["PerSentenceGraph"]:
+
         explicit_nodes_strict = list(explicit_nodes_current_sentence)
 
         if (

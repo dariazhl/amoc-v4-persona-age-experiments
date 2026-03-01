@@ -1,10 +1,13 @@
 import logging
 import copy
 import re
-from typing import List, Optional, Tuple, Set
+from typing import TYPE_CHECKING, List, Optional, Tuple, Set
 import networkx as nx
 
 from amoc.graph.node import NodeType, NodeSource, NodeProvenance
+
+if TYPE_CHECKING:
+    from amoc.pipeline.core import AMoCv4
 
 
 class SentenceProcessingOps:
@@ -90,14 +93,20 @@ class SentenceProcessingOps:
         self._extract_adjectival_modifiers_fn = extract_adjectival_modifiers_fn
         self._append_adjectival_hints_fn = append_adjectival_hints_fn
         self._extract_deterministic_structure_fn = extract_deterministic_structure_fn
-        self._infer_edges_to_recently_deactivated_fn = infer_edges_to_recently_deactivated_fn
+        self._infer_edges_to_recently_deactivated_fn = (
+            infer_edges_to_recently_deactivated_fn
+        )
         self._propagate_activation_from_edges_fn = propagate_activation_from_edges_fn
-        self._restrict_active_to_current_explicit_fn = restrict_active_to_current_explicit_fn
+        self._restrict_active_to_current_explicit_fn = (
+            restrict_active_to_current_explicit_fn
+        )
         self._get_node_from_new_relationship_fn = get_node_from_new_relationship_fn
         self._get_phrase_level_concepts_fn = get_phrase_level_concepts_fn
         self._get_sentences_text_based_nodes_fn = get_sentences_text_based_nodes_fn
         self._infer_new_relationships_fn = infer_new_relationships_fn
-        self._add_inferred_relationships_to_graph_fn = add_inferred_relationships_to_graph_fn
+        self._add_inferred_relationships_to_graph_fn = (
+            add_inferred_relationships_to_graph_fn
+        )
         self._reactivate_relevant_edges_fn = reactivate_relevant_edges_fn
 
     def set_state_refs(
@@ -113,6 +122,50 @@ class SentenceProcessingOps:
         self._triplet_intro_ref = triplet_intro_ref
         self._carryover_nodes_ref = carryover_nodes_ref
         self.persona = persona
+
+    def configure_with_core(self, core: "AMoCv4") -> None:
+        self.set_callbacks(
+            normalize_endpoint_text_fn=core._normalize_endpoint_text,
+            normalize_edge_label_fn=core._normalize_edge_label,
+            is_valid_relation_label_fn=core._is_valid_relation_label,
+            passes_attachment_constraint_fn=core._passes_attachment_constraint,
+            canonicalize_edge_direction_fn=core._canonicalize_edge_direction,
+            classify_relation_fn=core._classify_relation,
+            add_edge_fn=core._add_edge,
+            get_nodes_with_active_edges_fn=core._get_active_edge_nodes,
+            extract_adjectival_modifiers_fn=lambda s: (
+                core._linguistic_ops.extract_adjectival_modifiers(s)
+            ),
+            append_adjectival_hints_fn=lambda n, s: (
+                core._linguistic_ops.append_adjectival_hints(n, s)
+            ),
+            extract_deterministic_structure_fn=lambda s, n, w: (
+                core._linguistic_ops.set_sentence_context(
+                    core._current_sentence_index, core.edge_visibility
+                ),
+                core._linguistic_ops.extract_deterministic_structure(s, n, w),
+            )[-1],
+            infer_edges_to_recently_deactivated_fn=core._infer_edges_to_recently_deactivated,
+            propagate_activation_from_edges_fn=lambda: (
+                core._activation_ops.propagate_activation_from_edges()
+            ),
+            restrict_active_to_current_explicit_fn=lambda en: (
+                core._activation_ops.restrict_active_to_current_explicit(en)
+            ),
+            get_node_from_new_relationship_fn=core.get_node_from_new_relationship,
+            get_phrase_level_concepts_fn=core.get_phrase_level_concepts,
+            get_sentences_text_based_nodes_fn=core._get_sentences_nodes,
+            infer_new_relationships_fn=core.infer_new_relationships,
+            add_inferred_relationships_to_graph_fn=core.add_inferred_relationships_to_graph,
+            reactivate_relevant_edges_fn=core.reactivate_relevant_edges,
+        )
+        self.set_state_refs(
+            explicit_nodes_ref=core._get_explicit_nodes,
+            anchor_nodes_ref=core._anchor_nodes,
+            triplet_intro_ref=core._triplet_intro,
+            carryover_nodes_ref=core._get_carryover_nodes,
+            persona=core.persona,
+        )
 
     def handle_nonfirst_sentence(
         self,
@@ -536,7 +589,11 @@ class SentenceProcessingOps:
         Delegates to StabilityOps.enforce_connectivity() (canonical authority).
         Only logs if deterministic repair fails.
         """
-        carryover = self._carryover_nodes_ref() if callable(self._carryover_nodes_ref) else set()
+        carryover = (
+            self._carryover_nodes_ref()
+            if callable(self._carryover_nodes_ref)
+            else set()
+        )
         required_nodes = explicit_nodes_current_sentence | carryover
 
         # Delegate to canonical authority for deterministic repair
@@ -718,4 +775,41 @@ class SentenceProcessingOps:
                 logging.error("[Invariant] Retry failed. Hard revert triggered.")
                 return True
 
+        return False
+
+    def sanitize_json_contamination(
+        self, resolved_text: str, original_text: str, sent
+    ) -> tuple:
+        # sometimes, the parser returns sentences such as: "Processing sentence 0: answer is: A man very close to Charlemagne wrote most of the things we know about Charlemagne."
+        if resolved_text.strip().startswith("{"):
+            logging.error("LLM JSON contamination detected — reverting.")
+            return original_text.strip(), sent
+
+        # Strip bad prefix ONLY
+        resolved_text = re.sub(
+            r"^\s*(processing sentence \d+:)?\s*answer\s+is:\s*",
+            "",
+            resolved_text,
+            flags=re.IGNORECASE,
+        )
+
+        # Do NOT rebuild Doc
+        return resolved_text.strip(), sent
+
+    def apply_post_sentence_processing(
+        self,
+        explicit_nodes: set,
+        carryover_nodes: set,
+        apply_global_edge_decay_fn: callable,
+        decay_node_activation_fn: callable,
+        enforce_connectivity_fn: callable,
+        prev_sentences: list,
+    ) -> bool:
+        apply_global_edge_decay_fn()
+        self.graph.enforce_cumulative_stability(set(explicit_nodes))
+        decay_node_activation_fn()
+        self.graph.enforce_carryover_connectivity(carryover_nodes)
+
+        if not self.graph.is_active_connected():
+            return enforce_connectivity_fn(prev_sentences)
         return False

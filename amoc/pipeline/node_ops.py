@@ -50,7 +50,8 @@ class NodeOps:
         if not lemma:
             return False
 
-        if len(lemma) < 4 and lemma not in self._story_lemmas:
+        # Delegate length policy to canonical authority (ProvenanceOps)
+        if not self._graph._provenance_ops.passes_length_policy(lemma):
             return False
 
         # Hard provenance guard

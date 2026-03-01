@@ -62,8 +62,42 @@ class TextFilterOps:
     def is_verb_relation(self, label: str) -> bool:
         if not label:
             return False
+
         doc = self._spacy_nlp(label)
-        return any(tok.pos_ in {"VERB", "AUX"} for tok in doc if tok.is_alpha)
+        has_verb = False
+        has_copula = False
+        has_adj_after_copula = False
+        prev_was_copula = False
+
+        for tok in doc:
+            if not getattr(tok, "is_alpha", False):
+                continue
+
+            pos = tok.pos_
+            lemma = tok.lemma_.lower()
+
+            if pos in {"VERB", "AUX"}:
+                has_verb = True
+                if lemma in {"be", "is", "was", "were", "been", "being", "am", "are"}:
+                    has_copula = True
+                    prev_was_copula = True
+                else:
+                    prev_was_copula = False
+
+            elif pos == "ADJ":
+                if prev_was_copula or has_copula:
+                    has_adj_after_copula = True
+                prev_was_copula = False
+
+            elif pos in {"NOUN", "PROPN", "ADP", "PART", "ADV"}:
+                prev_was_copula = False
+
+        if has_verb:
+            return True
+        if has_copula and has_adj_after_copula:
+            return True
+
+        return False
 
     def classify_relation(self, label: str) -> str:
         label = (label or "").strip().lower()

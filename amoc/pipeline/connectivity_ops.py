@@ -400,3 +400,7 @@ class ConnectivityOps:
                 edges_created.add(edge)
 
         return edges_created if edges_created else None
+
+    def warn_if_cumulative_disconnected(self) -> None:
+        if not self.is_cumulative_connected():
+            logging.warning("Cumulative graph disconnected - plots may show fragments")

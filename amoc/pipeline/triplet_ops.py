@@ -61,9 +61,7 @@ class TripletOps:
             )
         return triplets
 
-    def graph_to_triplets(
-        self, graph: nx.MultiDiGraph
-    ) -> List[Tuple[str, str, str]]:
+    def graph_to_triplets(self, graph: nx.MultiDiGraph) -> List[Tuple[str, str, str]]:
         """Convert NetworkX MultiDiGraph to triplet list."""
         triplets = []
         for u, v, data in graph.edges(data=True):
@@ -71,9 +69,7 @@ class TripletOps:
             triplets.append((u, label, v))
         return triplets
 
-    def cumulative_triplets_upto(
-        self, sentence_idx: int
-    ) -> List[Tuple[str, str, str]]:
+    def cumulative_triplets_upto(self, sentence_idx: int) -> List[Tuple[str, str, str]]:
         """
         Get cumulative triplets up to a given sentence index.
         """
@@ -211,3 +207,48 @@ class TripletOps:
             for (s, r, o) in triplets
             if s in active_names and o in active_names
         ]
+
+    # =========================================================
+    # SENTENCE TRIPLET CAPTURE
+    # =========================================================
+
+    def capture_sentence_triplets(
+        self,
+        original_text: str,
+        current_sentence_index: int,
+        explicit_nodes: Set["Node"],
+        nodes_with_active_edges: Set["Node"],
+        sentence_triplets: List,
+        anchor_drop_log: Optional[List] = None,
+    ) -> None:
+        current_nodes = explicit_nodes | nodes_with_active_edges
+        for subj, rel, obj in self.reconstruct_semantic_triplets(
+            only_active=False, restrict_nodes=current_nodes
+        ):
+            sentence_triplets.append(
+                (
+                    current_sentence_index,
+                    original_text,
+                    subj,
+                    rel,
+                    obj,
+                    True,
+                    True,
+                    self._triplet_intro.get((subj, rel, obj), -1),
+                )
+            )
+
+        if anchor_drop_log:
+            for sent_idx, sent_text, subj, rel, obj in anchor_drop_log:
+                sentence_triplets.append(
+                    (
+                        sent_idx,
+                        sent_text,
+                        subj,
+                        rel,
+                        obj,
+                        False,
+                        False,
+                        -1,
+                    )
+                )
