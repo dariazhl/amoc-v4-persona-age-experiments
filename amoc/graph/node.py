@@ -11,7 +11,6 @@ from typing import List, Dict, Set
 class NodeType(Enum):
     CONCEPT = 1
     PROPERTY = 2
-    EVENT = 3  # EVENT/PROCESS mediation nodes
 
 
 class NodeRole(Enum):

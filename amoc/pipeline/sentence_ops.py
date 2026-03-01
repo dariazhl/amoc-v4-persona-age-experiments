@@ -238,8 +238,6 @@ class SentenceOps:
         self,
         get_nodes_with_active_edges_fn: callable,
     ) -> Set["Node"]:
-        from amoc.graph.node import NodeType
-
         if self._per_sentence_view is not None:
             return (
                 set(self._per_sentence_view.explicit_nodes)
@@ -247,25 +245,11 @@ class SentenceOps:
                 | set(self._per_sentence_view.anchor_nodes)
             )
 
-        attachable = (
+        return (
             self._explicit_nodes_current_sentence
             | self._anchor_nodes
             | get_nodes_with_active_edges_fn()
         )
-
-        for edge in self._graph.edges:
-            if (
-                edge.source_node in attachable
-                and edge.dest_node.node_type == NodeType.EVENT
-            ):
-                attachable.add(edge.dest_node)
-            if (
-                edge.dest_node in attachable
-                and edge.source_node.node_type == NodeType.EVENT
-            ):
-                attachable.add(edge.source_node)
-
-        return attachable
 
     def compute_explicit_nodes(
         self,

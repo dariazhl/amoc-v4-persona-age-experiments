@@ -32,6 +32,9 @@ class ConnectivityOps:
         self._story_text = story_text
         self._current_sentence_text = current_sentence_text
 
+    def set_anchor_nodes(self, anchor_nodes: set) -> None:
+        self._anchor_nodes = anchor_nodes
+
     def is_active_connected(self) -> bool:
         explicit_nodes = self._get_explicit_nodes()
         return self._graph.is_active_connected(explicit_nodes)
@@ -66,7 +69,9 @@ class ConnectivityOps:
             if self.is_active_connected() and self.is_cumulative_connected():
                 return False
 
-        logging.debug("[Connectivity] Deterministic repair insufficient, trying LLM repair")
+        logging.debug(
+            "[Connectivity] Deterministic repair insufficient, trying LLM repair"
+        )
 
         # PHASE 2: LLM repair - try twice
         for attempt in range(2):
@@ -78,7 +83,9 @@ class ConnectivityOps:
                 mode="active",
             )
             if self.is_active_connected():
-                logging.debug("[Connectivity] LLM repair succeeded on attempt %d", attempt + 1)
+                logging.debug(
+                    "[Connectivity] LLM repair succeeded on attempt %d", attempt + 1
+                )
                 break
 
         # Check if LLM repair was sufficient
@@ -93,7 +100,9 @@ class ConnectivityOps:
 
         # Verify active connectivity
         if not self.is_active_connected():
-            logging.error("[Connectivity] Active graph still disconnected after all repairs")
+            logging.error(
+                "[Connectivity] Active graph still disconnected after all repairs"
+            )
             return True  # rollback required
 
         # Verify and repair cumulative connectivity
@@ -101,7 +110,9 @@ class ConnectivityOps:
             self._apply_cumulative_fallback()
 
             if not self.is_cumulative_connected():
-                logging.error("[Connectivity] Cumulative graph still disconnected after all repairs")
+                logging.error(
+                    "[Connectivity] Cumulative graph still disconnected after all repairs"
+                )
                 return True  # rollback required
 
         return False
@@ -110,30 +121,72 @@ class ConnectivityOps:
         """
         Apply "relates_to" fallback edges to connect disconnected components.
 
-        INTERNAL: Called only by enforce_connectivity().
-        Connects smallest components to largest component.
+        DETERMINISTIC backbone selection priority:
+            1. Anchor node inside largest component (sorted by text for stability)
+            2. Highest-degree active node (ties broken by text)
+            3. Lexicographically smallest node label (final fallback)
+
+        DETERMINISTIC small component node selection:
+            1. Explicit node in component (sorted by text)
+            2. Highest-degree node (ties broken by text)
+            3. Lexicographically smallest node label
         """
         components, _ = self._graph.get_disconnected_components(required_nodes)
 
         if len(components) <= 1:
             return
 
-        # Sort by size: largest first
+        # Sort components by size (largest first)
         components = sorted(components, key=len, reverse=True)
-        largest = set(components[0])
+        largest_component = set(components[0])
 
-        # Connect smallest → largest (as per spec)
+        # Helper: deterministic node sorting key (degree DESC, then text ASC)
+        def node_sort_key(n):
+            degree = sum(
+                1
+                for e in self._graph.edges
+                if e.active and (e.source_node == n or e.dest_node == n)
+            )
+            return (-degree, n.get_text_representer())
+
+        # --- Select stable backbone node (DETERMINISTIC) ---
+        anchor_nodes = getattr(self, "_anchor_nodes", set())
+
+        # 1️⃣ Prefer anchor node inside largest component
+        anchor_candidates = sorted(
+            [n for n in largest_component if n in anchor_nodes],
+            key=lambda n: n.get_text_representer(),
+        )
+        if anchor_candidates:
+            backbone_node = anchor_candidates[0]
+        else:
+            # 2️⃣ Prefer highest-degree active node (deterministic tie-break)
+            backbone_node = min(largest_component, key=node_sort_key)
+
+        # --- Connect smaller components to backbone ---
         for comp in sorted(components[1:], key=len):
-            # Only connect components with required nodes
-            if not (set(comp) & required_nodes):
+            comp_set = set(comp)
+
+            if not (comp_set & required_nodes):
                 continue
 
-            node_small = next(iter(comp))
-            node_large = next(iter(largest))
+            # Select node from small component (DETERMINISTIC)
+            explicit_nodes = self._get_explicit_nodes()
+
+            # 1️⃣ Prefer explicit nodes (sorted by text)
+            explicit_in_comp = sorted(
+                [n for n in comp_set if n in explicit_nodes],
+                key=lambda n: n.get_text_representer(),
+            )
+            if explicit_in_comp:
+                node_small = explicit_in_comp[0]
+            else:
+                # 2️⃣ Highest-degree, then lexicographic fallback
+                node_small = min(comp_set, key=node_sort_key)
 
             edge = self._graph.add_edge(
                 node_small,
-                node_large,
+                backbone_node,
                 "relates_to",
                 self._edge_visibility,
                 persona_influenced=False,
@@ -143,11 +196,11 @@ class ConnectivityOps:
             if edge:
                 edge.asserted_this_sentence = False
                 edge.reactivated_this_sentence = False
-                largest.update(comp)
+                largest_component.update(comp_set)
                 logging.debug(
                     "[Connectivity] Created fallback edge: %s -[relates_to]-> %s",
                     node_small.get_text_representer(),
-                    node_large.get_text_representer(),
+                    backbone_node.get_text_representer(),
                 )
 
     def _apply_cumulative_fallback(self) -> None:
@@ -155,6 +208,7 @@ class ConnectivityOps:
         Apply "relates_to" fallback edges to repair cumulative graph connectivity.
 
         INTERNAL: Called only by enforce_connectivity().
+        DETERMINISTIC: Uses lexicographic sorting for stable node selection.
         """
         G_full = self._graph.to_networkx()
 
@@ -178,10 +232,13 @@ class ConnectivityOps:
         components = sorted(components, key=len, reverse=True)
         largest = set(components[0])
 
+        # DETERMINISTIC: Select backbone from largest component (lexicographically smallest)
+        node_large_name = min(largest)
+
         # Connect smallest → largest
         for comp in sorted(components[1:], key=len):
-            node_small_name = next(iter(comp))
-            node_large_name = next(iter(largest))
+            # DETERMINISTIC: Select from small component (lexicographically smallest)
+            node_small_name = min(comp)
 
             node_small = name_to_node.get(node_small_name)
             node_large = name_to_node.get(node_large_name)
@@ -357,6 +414,9 @@ class ConnectivityOps:
         temperature: float = 0.3,
         forced_pair=None,
     ):
+        """
+        DETERMINISTIC: Uses degree-based + lexicographic ordering for stable selection.
+        """
         if forced_pair is not None:
             representative, anchor_node = forced_pair
             components = [{representative}, {anchor_node}]
@@ -367,17 +427,30 @@ class ConnectivityOps:
         sorted_components = sorted(components, key=len, reverse=True)
         main_component = sorted_components[0]
 
+        # Helper for deterministic node selection (degree DESC, text ASC)
+        def node_sort_key(n):
+            degree = sum(
+                1 for e in active_edges if e.source_node == n or e.dest_node == n
+            )
+            return (-degree, n.get_text_representer())
+
+        # DETERMINISTIC: Select anchor from main component
+        anchor_node = min(
+            [n for n in main_component if n in active_nodes],
+            key=node_sort_key,
+            default=None,
+        )
+        if anchor_node is None:
+            return None
+
         edges_created = set()
 
         for comp in sorted_components[1:]:
-
-            representative = next(iter(comp))
-            anchor_node = next(iter(main_component))
-
-            if representative not in active_nodes:
+            # DETERMINISTIC: Select representative from small component
+            candidates = [n for n in comp if n in active_nodes]
+            if not candidates:
                 continue
-            if anchor_node not in active_nodes:
-                continue
+            representative = min(candidates, key=node_sort_key)
 
             prompt_text = FORCED_CONNECTIVITY_EDGE_PROMPT.format(
                 node_a=representative.get_text_representer(),

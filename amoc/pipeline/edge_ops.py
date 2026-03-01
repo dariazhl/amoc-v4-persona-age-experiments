@@ -3,7 +3,7 @@ import logging
 import networkx as nx
 
 from amoc.graph.graph import Graph
-from amoc.graph.node import Node, NodeType, NodeSource, NodeProvenance
+from amoc.graph.node import Node, NodeType, NodeSource
 from amoc.graph.edge import Edge
 from amoc.nlp.spacy_utils import are_semantically_equivalent, get_semantic_class
 from amoc.pipeline.text_filter_ops import TextFilterOps
@@ -159,40 +159,12 @@ class EdgeOps:
         edge_forget: int,
         created_at_sentence: Optional[int] = None,
         bypass_attachment_constraint: bool = False,
-        skip_event_mediation: bool = False,
         relation_class=None,
         justification=None,
         persona_influenced: bool = False,
     ) -> Optional[Edge]:
+        # Reject self-loops - S-V-O triplets require distinct subject and object
         if source_node == dest_node:
-            canon_label = TextFilterOps.canonicalize_relation_label(label)
-            if not canon_label:
-                return None
-
-            if (
-                self._is_valid_relation_label_fn
-                and not self._is_valid_relation_label_fn(canon_label)
-            ):
-                return None
-
-            event_node = self._graph.add_or_get_node(
-                [canon_label],
-                canon_label,
-                NodeType.EVENT,
-                NodeSource.TEXT_BASED,
-                provenance=NodeProvenance.STORY_TEXT,
-            )
-            if event_node:
-                return self.add_edge(
-                    source_node,
-                    event_node,
-                    canon_label,
-                    edge_forget,
-                    created_at_sentence=created_at_sentence,
-                    bypass_attachment_constraint=bypass_attachment_constraint,
-                    skip_event_mediation=skip_event_mediation,
-                    persona_influenced=persona_influenced,
-                )
             return None
 
         attachable = (

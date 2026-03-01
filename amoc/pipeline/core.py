@@ -440,7 +440,6 @@ class AMoCv4:
         edge_forget: int,
         created_at_sentence: Optional[int] = None,
         bypass_attachment_constraint: bool = False,
-        skip_event_mediation: bool = False,
         relation_class=None,
         justification=None,
         persona_influenced: bool = False,
@@ -453,7 +452,6 @@ class AMoCv4:
             edge_forget=edge_forget,
             created_at_sentence=created_at_sentence,
             bypass_attachment_constraint=bypass_attachment_constraint,
-            skip_event_mediation=skip_event_mediation,
             relation_class=relation_class,
             justification=justification,
             persona_influenced=persona_influenced,
@@ -884,6 +882,7 @@ class AMoCv4:
             #   - Cumulative graph is single component
             #   - No dangling explicit nodes
             # ═══════════════════════════════════════════════════════════════════
+            self._connectivity_ops.set_anchor_nodes(self._anchor_nodes)
             rollback_needed = self._enforce_connectivity(prev_sentences)
 
             if rollback_needed:
