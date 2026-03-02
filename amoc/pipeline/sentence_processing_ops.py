@@ -37,7 +37,6 @@ class SentenceProcessingOps:
         self._classify_relation_fn = None
         self._add_edge_fn = None
         self._get_nodes_with_active_edges_fn = None
-        self._extract_adjectival_modifiers_fn = None
         self._append_adjectival_hints_fn = None
         self._extract_deterministic_structure_fn = None
         self._infer_edges_to_recently_deactivated_fn = None
@@ -68,7 +67,6 @@ class SentenceProcessingOps:
         classify_relation_fn,
         add_edge_fn,
         get_nodes_with_active_edges_fn,
-        extract_adjectival_modifiers_fn,
         append_adjectival_hints_fn,
         extract_deterministic_structure_fn,
         infer_edges_to_recently_deactivated_fn,
@@ -89,7 +87,6 @@ class SentenceProcessingOps:
         self._classify_relation_fn = classify_relation_fn
         self._add_edge_fn = add_edge_fn
         self._get_nodes_with_active_edges_fn = get_nodes_with_active_edges_fn
-        self._extract_adjectival_modifiers_fn = extract_adjectival_modifiers_fn
         self._append_adjectival_hints_fn = append_adjectival_hints_fn
         self._extract_deterministic_structure_fn = extract_deterministic_structure_fn
         self._infer_edges_to_recently_deactivated_fn = (
@@ -132,9 +129,6 @@ class SentenceProcessingOps:
             classify_relation_fn=core._classify_relation,
             add_edge_fn=core._add_edge,
             get_nodes_with_active_edges_fn=core._get_active_edge_nodes,
-            extract_adjectival_modifiers_fn=lambda s: (
-                core._linguistic_ops.extract_adjectival_modifiers(s)
-            ),
             append_adjectival_hints_fn=lambda n, s: (
                 core._linguistic_ops.append_adjectival_hints(n, s)
             ),
@@ -242,8 +236,6 @@ class SentenceProcessingOps:
         active_nodes_edges_text, _ = self.graph.get_edges_str(
             graph_active_nodes, only_text_based=True
         )
-
-        adjectival_properties = self._extract_adjectival_modifiers_fn(sent)
 
         nodes_from_text = ""
         for idx, node in enumerate(current_sentence_text_based_nodes):
@@ -365,12 +357,12 @@ class SentenceProcessingOps:
             | {
                 n
                 for n in explicit_nodes_current_sentence
-                if n.node_type == NodeType.CONCEPT and not n.is_setting()
+                if n.node_type == NodeType.CONCEPT
             }
             | {
                 n
                 for n in self._get_nodes_with_active_edges_fn()
-                if n.node_type == NodeType.CONCEPT and not n.is_setting()
+                if n.node_type == NodeType.CONCEPT
             }
         )
 

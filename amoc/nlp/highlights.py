@@ -5,6 +5,7 @@ from typing import List
 from amoc.nlp.spacy_utils import canonicalize_node_text
 
 
+# extract blue nodes for new texts
 def blue_nodes_from_text(text: str, nlp, min_len: int = 2) -> List[str]:
     if not text:
         return []

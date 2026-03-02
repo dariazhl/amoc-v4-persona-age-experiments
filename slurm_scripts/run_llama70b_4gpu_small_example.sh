@@ -12,30 +12,22 @@
 
 set -euo pipefail
 
-# =========================
-# Paths
-# =========================
+
 PROJECT_ROOT="/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments"
 CHUNKS_DIR="${PROJECT_ROOT}/personas_dfs/personas_refined_age/chunks"
-# Optional story file (may be empty)
 STORY_FILE="${1:-}"
 
-# =========================
-# vLLM / CUDA SAFETY
-# =========================
+
 export HF_HOME="/export/projects/nlp/.cache"
 export TRANSFORMERS_CACHE="$HF_HOME"
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 
-# vLLM stability (CRITICAL)
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export NCCL_DEBUG=warn
 export NCCL_P2P_DISABLE=1
 export NCCL_IB_DISABLE=1
 
-# =========================
-# Chunk selection
-# =========================
+
 mapfile -t CHUNK_FILES < <(ls "${CHUNKS_DIR}"/*.csv | sort)
 NUM_CHUNKS=${#CHUNK_FILES[@]}
 
@@ -62,9 +54,6 @@ if [[ -n "${STORY_FILE}" ]]; then
     STORY_ARG="--story-text ${STORY_FILE}"
 fi
 
-# =========================
-# Run AMoC
-# =========================
 bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
     --models "meta-llama/Llama-3.3-70B-Instruct" \
     --tp 4 \

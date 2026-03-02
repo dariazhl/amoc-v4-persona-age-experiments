@@ -1,17 +1,16 @@
 from typing import TYPE_CHECKING, Optional, List, Set
 import logging
+from amoc.nlp.spacy_utils import (
+    get_concept_lemmas,
+    canonicalize_node_text,
+    get_content_words_from_sent,
+)
+from amoc.graph.node import NodeType, NodeSource, NodeProvenance
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
-    from amoc.graph.node import Node, NodeType, NodeSource, NodeProvenance
+    from amoc.graph.node import Node
     from spacy.tokens import Span
-    from amoc.nlp.spacy_utils import (
-        get_concept_lemmas,
-        canonicalize_node_text,
-        get_concept_lemmas,
-        get_semantic_class,
-        get_content_words_from_sent,
-    )
 
 
 class NodeOps:
@@ -166,21 +165,6 @@ class NodeOps:
             if self._debug:
                 logging.debug(f"Graph grounding for '{lemma_lower}'")
             return True
-
-        candidate_class = get_semantic_class(lemma_lower)
-        if candidate_class is not None:
-            for node in self._graph.get_active_nodes(
-                self._max_distance,
-                only_text_based=False,
-            ):
-                node_class = get_semantic_class(node.get_text_representer())
-                if node_class == candidate_class:
-                    if self._debug:
-                        logging.debug(
-                            f"Semantic-class grounding "
-                            f"'{lemma_lower}' via class '{candidate_class}'"
-                        )
-                    return True
 
         # Bootstrap path
         if allow_bootstrap:
@@ -370,14 +354,6 @@ class NodeOps:
                     if lemma in META_LEMMAS:
                         continue
 
-                    node_role = None
-                    if word.dep_ in {"nsubj", "nsubjpass"}:
-                        node_role = NodeRole.ACTOR
-                    elif word.dep_ in {"pobj", "obl"}:
-                        node_role = NodeRole.SETTING
-                    else:
-                        node_role = NodeRole.OBJECT
-
                     node = self._graph.get_node([lemma])
 
                     if node is None and create_unexistent_nodes:
@@ -387,7 +363,6 @@ class NodeOps:
                             NodeType.CONCEPT,
                             NodeSource.TEXT_BASED,
                             provenance=NodeProvenance.STORY_TEXT,
-                            node_role=node_role,
                             origin_sentence=current_sentence_index,
                             mark_explicit=False,
                         )

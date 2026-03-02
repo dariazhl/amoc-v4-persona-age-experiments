@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Optional, List, Tuple, Set
+from typing import TYPE_CHECKING, Optional, List, Tuple
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
@@ -146,11 +146,3 @@ class InferenceOps:
             except:
                 continue
         return [], []
-
-    def passes_attachment_constraint(
-        self,
-        source_node: "Node",
-        dest_node: "Node",
-        attachable_nodes: Set["Node"],
-    ) -> bool:
-        return source_node in attachable_nodes or dest_node in attachable_nodes

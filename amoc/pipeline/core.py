@@ -12,7 +12,6 @@ from amoc.graph.per_sentence_graph import PerSentenceGraph, build_per_sentence_g
 from amoc.llm.vllm_client import VLLMClient
 
 from amoc.pipeline.connectivity_ops import ConnectivityOps
-from amoc.pipeline.decay_ops import DecayOps
 from amoc.pipeline.text_filter_ops import TextFilterOps
 from amoc.pipeline.triplet_ops import TripletOps
 from amoc.pipeline.edge_ops import EdgeOps
@@ -124,11 +123,6 @@ class AMoCv4:
             get_carryover_nodes=self._get_carryover_nodes,
             edge_visibility=self.edge_visibility,
             client_ref=self.client,
-        )
-        self._decay_ops = DecayOps(
-            graph_ref=self.graph,
-            get_explicit_nodes=self._get_explicit_nodes,
-            max_distance=self.max_distance_from_active_nodes,
         )
         self._text_filter_ops = TextFilterOps(
             spacy_nlp=self.spacy_nlp,

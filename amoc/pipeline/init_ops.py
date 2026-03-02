@@ -354,7 +354,7 @@ class InitOps:
         anchor_nodes = {
             n
             for n in explicit_nodes_current_sentence
-            if n.node_type == NodeType.CONCEPT and not n.is_setting()
+            if n.node_type == NodeType.CONCEPT
         }
 
         inferred_concept_relationships, inferred_property_relationships = (

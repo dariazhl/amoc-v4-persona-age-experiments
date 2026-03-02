@@ -1,13 +1,10 @@
-from typing import TYPE_CHECKING, Optional, List, Dict, Set, Callable, Tuple
-import re
-import logging
-from amoc.nlp.spacy_utils import extract_prepositional_objects as extract_prep
+from typing import TYPE_CHECKING, Optional, List, Set, Callable
 from amoc.graph.node import NodeType, NodeSource, NodeProvenance
-from amoc.nlp.spacy_utils import canonicalize_node_text
+from amoc.nlp.spacy_utils import canonicalize_node_text, extract_adjectival_modifiers
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
-    from amoc.graph.node import Node, NodeType, NodeSource, NodeProvenance
+    from amoc.graph.node import Node
     from spacy.tokens import Span
 
 
@@ -56,57 +53,19 @@ class LinguisticOps:
             return text
         return resolved
 
-    def extract_adjectival_modifiers(self, sent: "Span") -> Dict[str, List[str]]:
-        result: Dict[str, List[str]] = {}
-
-        for token in sent:
-            if token.pos_ == "ADJ" and token.dep_ in {"amod", "acomp", "attr"}:
-                head = token.head
-                if head.pos_ in {"NOUN", "PROPN"}:
-                    head_lemma = head.lemma_.lower()
-                    adj_lemma = token.lemma_.lower()
-
-                    if head_lemma not in result:
-                        result[head_lemma] = []
-
-                    if adj_lemma not in result[head_lemma]:
-                        result[head_lemma].append(adj_lemma)
-
-        return result
-
     def append_adjectival_hints(
         self,
         nodes_from_text: str,
         sent: "Span",
     ) -> str:
-        adj_mods = self.extract_adjectival_modifiers(sent)
+        adj_mods = extract_adjectival_modifiers(sent)
 
-        for head, adjs in adj_mods.items():
-            for adj in adjs:
-                nodes_from_text += f" - ({adj}, PROPERTY) [describes {head}]\n"
+        for mod in adj_mods:
+            nodes_from_text += (
+                f" - ({mod['adjective']}, PROPERTY) [describes {mod['head_noun']}]\n"
+            )
 
         return nodes_from_text
-
-    def get_content_words_from_sentence(
-        self,
-        sent: "Span",
-        pos_filter: Optional[Set[str]] = None,
-    ) -> List[str]:
-        if pos_filter is None:
-            pos_filter = {"NOUN", "PROPN", "VERB", "ADJ"}
-
-        words = []
-        for token in sent:
-            if token.pos_ in pos_filter and not token.is_stop:
-                words.append(token.lemma_.lower())
-
-        return words
-
-    def extract_prepositional_objects(
-        self,
-        sent: "Span",
-    ) -> List[tuple]:
-        return extract_prep(sent)
 
     def extract_deterministic_structure(
         self,
@@ -133,7 +92,8 @@ class LinguisticOps:
                 edge.mark_as_asserted(reset_score=True)
 
         for token in sent:
-            # Copular: X is ADJ
+            # knight (nsubj) ← is (be) → brave (acomp)
+            # knight - is - brave
             if token.dep_ in {"acomp", "attr"} and (
                 token.pos_ == "ADJ" or (token.pos_ == "VERB" and token.tag_ == "VBN")
             ):
@@ -164,7 +124,8 @@ class LinguisticOps:
                 if subj_node and prop_node:
                     assert_edge(subj_node, prop_node, "is")
 
-            # Adjectival modifier
+            # Adjectival modifier: dark (amod) → forest (NOUN)
+            # forest - is - dark
             if token.dep_ == "amod" and token.pos_ == "ADJ":
                 head_node = get_node(token.head)
                 prop_node = get_node(token)
@@ -173,6 +134,8 @@ class LinguisticOps:
                     assert_edge(head_node, prop_node, "is")
 
             # Verb SVO
+            # knight (nsubj) → kills (VERB) → dragon (dobj)
+            # knight - kill - dragon
             if token.pos_ == "VERB" and token.lemma_ != "be":
 
                 subj = next(
@@ -218,9 +181,8 @@ class LinguisticOps:
                         if conj_node:
                             assert_edge(subj_node, conj_node, label)
 
-            # -------------------------
-            # ROOT copular with prep: X is PREP Y (e.g., "The book is on the table")
-            # -------------------------
+            # ROOT copular with prep
+            # knight -- ride_through --> forest
             if token.dep_ == "ROOT" and token.lemma_ == "be":
                 subj = next(
                     (c for c in token.children if c.dep_ in {"nsubj", "nsubjpass"}),
@@ -234,6 +196,8 @@ class LinguisticOps:
                     continue
 
                 # Handle prepositional phrases attached to "be" ROOT
+                # book (nsubj) ← is (ROOT, be) → on (prep) → table (pobj)
+                # book --> is_on --> table
                 for prep in (c for c in token.children if c.dep_ == "prep"):
                     pobj = next(
                         (c for c in prep.children if c.dep_ == "pobj"),

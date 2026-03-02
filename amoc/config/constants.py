@@ -2,6 +2,9 @@ MAX_DISTANCE_FROM_ACTIVE_NODES = 2
 MAX_NEW_CONCEPTS = 3
 MAX_NEW_PROPERTIES = 3
 CONTEXT_LENGTH = 1
+# edge_visibility defines edge lifespan within the active graph
+# Edges decay over time and become inactive when visibility reaches zero
+# This is essential for building the active per-sentence graph
 EDGE_VISIBILITY = 2
 NR_RELEVANT_EDGES = 15
 DEBUG = False

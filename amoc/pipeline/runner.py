@@ -2,7 +2,6 @@ import os
 import time
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -11,6 +10,7 @@ from amoc.pipeline import AgeAwareAMoCEngine
 from amoc.llm.vllm_client import VLLMClient
 from amoc.config.constants import DEBUG
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
+from datetime import datetime
 from amoc.pipeline.io import (
     robust_read_persona_csv,
     get_checkpoint_path,
@@ -194,22 +194,29 @@ def process_persona_csv(
         )
         final_output_path = output_dir / final_output_filename
 
-        ckpt_path = get_checkpoint_path(
-            output_dir=str(output_dir),
-            short_filename=short_filename,
-            model_name=model_name,
-        )
-
-        ckpt = load_checkpoint(ckpt_path)
-        processed_indices = set(ckpt.get("processed_indices", []))
-        failures = ckpt.get("failures", [])
-        personas_processed = ckpt.get("personas_processed", 0)
+        if checkpoint:
+            ckpt_path = get_checkpoint_path(
+                output_dir=str(output_dir),
+                short_filename=short_filename,
+                model_name=model_name,
+            )
+            ckpt = load_checkpoint(ckpt_path)
+            processed_indices = set(ckpt.get("processed_indices", []))
+            failures = ckpt.get("failures", [])
+            personas_processed = ckpt.get("personas_processed", 0)
+        else:
+            ckpt_path = None
+            ckpt = {}
+            processed_indices = set()
+            failures = []
+            personas_processed = 0
 
         print(f"[Model] {model_name}")
         print(f"  → Cumulative Output: {cumulative_output_path}")
         print(f"  → Per-sentence Output: {sentence_output_path}")
         print(f"  → Final active Output: {final_output_path}")
-        print(f"  → Checkpoint: {ckpt_path}")
+        if checkpoint:
+            print(f"  → Checkpoint: {ckpt_path}")
 
         if not cumulative_output_path.exists():
             pd.DataFrame([], columns=CSV_HEADERS).to_csv(
@@ -229,7 +236,7 @@ def process_persona_csv(
 
         try:
             for idx, (row_idx, row) in enumerate(df.iterrows(), start=1):
-                if row_idx in processed_indices:
+                if checkpoint and row_idx in processed_indices:
                     continue
 
                 persona_text = str(row["persona_text"])
@@ -254,7 +261,7 @@ def process_persona_csv(
                         matrix_dir_base=str(output_dir),
                         force_node=force_node,
                         allow_multi_edges=allow_multi_edges,
-                        checkpoint=checkpoint,
+                        checkpoint=False,
                     )
 
                     records = []
@@ -510,9 +517,10 @@ def process_persona_csv(
                     personas_processed += 1
                     processed_indices.add(row_idx)
 
-                    ckpt["personas_processed"] = personas_processed
-                    ckpt["processed_indices"] = sorted(processed_indices)
-                    save_checkpoint(ckpt_path, ckpt)
+                    if checkpoint:
+                        ckpt["personas_processed"] = personas_processed
+                        ckpt["processed_indices"] = sorted(processed_indices)
+                        save_checkpoint(ckpt_path, ckpt)
 
                     if plot_final_graph and records:
                         # Use cumulative graph for final plot to show full memory
@@ -547,22 +555,22 @@ def process_persona_csv(
                         f"Failure idx={row_idx}, model={model_name}",
                         exc_info=True,
                     )
-                    failures.append(
-                        {
-                            "row_index": int(row_idx),
-                            "persona_snippet": persona_text[:80],
-                            "error": str(e),
-                            "time": datetime.utcnow().isoformat(),
-                        }
-                    )
-                    ckpt["failures"] = failures
-                    save_checkpoint(ckpt_path, ckpt)
-
+                    if checkpoint:
+                        failures.append(
+                            {
+                                "row_index": int(row_idx),
+                                "persona_snippet": persona_text[:80],
+                                "error": str(e),
+                                "time": datetime.utcnow().isoformat(),
+                            }
+                        )
+                        ckpt["failures"] = failures
+                        save_checkpoint(ckpt_path, ckpt)
         finally:
-            ckpt["elapsed_seconds"] = time.time() - start_model_time
-            ckpt["failures"] = failures
-            save_checkpoint(ckpt_path, ckpt)
-
+            if checkpoint:
+                ckpt["elapsed_seconds"] = time.time() - start_model_time
+                ckpt["failures"] = failures
+                save_checkpoint(ckpt_path, ckpt)
             print(
                 f"[Model] {model_name}: processed {personas_processed} "
                 f"personas from {short_filename}"

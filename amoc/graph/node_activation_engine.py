@@ -13,42 +13,27 @@ class NodeActivationEngine:
     def __init__(self, graph_ref: "Graph"):
         self._graph = graph_ref
 
-    # Check if a similar edge exists and reinforce it
-    def check_and_reinforce_similar_edge(
+    def find_and_reinforce_similar_edge(
         self,
         edge: "Edge",
         edge_visibility: int,
-    ) -> bool:
+    ) -> Optional["Edge"]:
+        if edge.inferred:
+            return None
 
-        for other_edge in self._graph.edges:
-            same_nodes = (
-                edge.source_node == other_edge.source_node
-                and edge.dest_node == other_edge.dest_node
-            )
-            if not same_nodes:
-                continue
-
-            if (
-                edge.label.strip().lower() == other_edge.label.strip().lower()
-                and not edge.inferred
-            ):
-                other_edge.visibility_score = min(
-                    edge_visibility, other_edge.visibility_score + 1
-                )
-                other_edge.active = True
-                other_edge.mark_as_asserted(reset_score=False)
-                return True
-
-        return False
-
-    def get_similar_edge(self, edge: "Edge") -> Optional["Edge"]:
         for other_edge in self._graph.edges:
             if (
                 edge.source_node == other_edge.source_node
                 and edge.dest_node == other_edge.dest_node
                 and edge.label.strip().lower() == other_edge.label.strip().lower()
             ):
+                other_edge.visibility_score = min(
+                    edge_visibility, other_edge.visibility_score + 1
+                )
+                other_edge.active = True
+                other_edge.mark_as_asserted(reset_score=False)
                 return other_edge
+
         return None
 
     def get_active_subgraph(self) -> Tuple[Set["Node"], Set["Edge"]]:
@@ -76,11 +61,7 @@ class NodeActivationEngine:
         if not explicit_nodes or max_distance < 1:
             return set()
 
-        concept_seeds = {
-            n
-            for n in explicit_nodes
-            if n.node_type != NodeType.PROPERTY and not n.is_setting()
-        }
+        concept_seeds = {n for n in explicit_nodes if n.node_type != NodeType.PROPERTY}
 
         if not concept_seeds:
             return set()
@@ -199,25 +180,3 @@ class NodeActivationEngine:
             if node.score <= score_threshold
             and (not only_text_based or node.node_source == NodeSource.TEXT_BASED)
         ]
-
-    def get_top_k_nodes(self, nodes: List["Node"], k: int) -> List["Node"]:
-        return sorted(nodes, key=lambda node: node.score)[:k]
-
-    def get_top_concepts_nodes(self, k: int) -> List["Node"]:
-        from amoc.graph.node import NodeType
-
-        nodes = [
-            node for node in self._graph.nodes if node.node_type == NodeType.CONCEPT
-        ]
-        return self.get_top_k_nodes(nodes, k)
-
-    def get_top_text_based_concepts(self, k: int) -> List["Node"]:
-        from amoc.graph.node import NodeType, NodeSource
-
-        nodes = [
-            node
-            for node in self._graph.nodes
-            if node.node_type == NodeType.CONCEPT
-            and node.node_source == NodeSource.TEXT_BASED
-        ]
-        return self.get_top_k_nodes(nodes, k)

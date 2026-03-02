@@ -95,6 +95,13 @@ class ConnectivityOps:
 
         return False
 
+    @staticmethod
+    def _node_sort_key(node, edge_pool):
+        degree = sum(
+            1 for e in edge_pool if e.source_node == node or e.dest_node == node
+        )
+        return (-degree, node.get_text_representer())
+
     def _apply_relates_to_fallback(self, required_nodes: set) -> None:
         components, _ = self._graph.get_disconnected_components(required_nodes)
 
@@ -105,14 +112,7 @@ class ConnectivityOps:
         components = sorted(components, key=len, reverse=True)
         largest_component = set(components[0])
 
-        # Helper: deterministic node sorting key (degree DESC, then text ASC)
-        def node_sort_key(n):
-            degree = sum(
-                1
-                for e in self._graph.edges
-                if e.active and (e.source_node == n or e.dest_node == n)
-            )
-            return (-degree, n.get_text_representer())
+        active_edge_pool = [e for e in self._graph.edges if e.active]
 
         anchor_nodes = getattr(self, "_anchor_nodes", set())
 
@@ -124,7 +124,7 @@ class ConnectivityOps:
             backbone_node = anchor_candidates[0]
         else:
 
-            backbone_node = min(largest_component, key=node_sort_key)
+            backbone_node = min(largest_component, key=lambda n: self._node_sort_key(n, active_edge_pool))
 
         for comp in sorted(components[1:], key=len):
             comp_set = set(comp)
@@ -141,7 +141,7 @@ class ConnectivityOps:
             if explicit_in_comp:
                 node_small = explicit_in_comp[0]
             else:
-                node_small = min(comp_set, key=node_sort_key)
+                node_small = min(comp_set, key=lambda n: self._node_sort_key(n, active_edge_pool))
 
             edge = self._graph.add_edge(
                 node_small,
@@ -363,17 +363,10 @@ class ConnectivityOps:
         sorted_components = sorted(components, key=len, reverse=True)
         main_component = sorted_components[0]
 
-        # Helper for deterministic node selection (degree DESC, text ASC)
-        def node_sort_key(n):
-            degree = sum(
-                1 for e in active_edges if e.source_node == n or e.dest_node == n
-            )
-            return (-degree, n.get_text_representer())
-
         # DETERMINISTIC: Select anchor from main component
         anchor_node = min(
             [n for n in main_component if n in active_nodes],
-            key=node_sort_key,
+            key=lambda n: self._node_sort_key(n, active_edges),
             default=None,
         )
         if anchor_node is None:
@@ -386,7 +379,7 @@ class ConnectivityOps:
             candidates = [n for n in comp if n in active_nodes]
             if not candidates:
                 continue
-            representative = min(candidates, key=node_sort_key)
+            representative = min(candidates, key=lambda n: self._node_sort_key(n, active_edges))
 
             prompt_text = FORCED_CONNECTIVITY_EDGE_PROMPT.format(
                 node_a=representative.get_text_representer(),

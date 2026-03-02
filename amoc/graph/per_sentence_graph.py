@@ -18,7 +18,7 @@ class PerSentenceGraph:
     sentence_index: int
     explicit_nodes: FrozenSet[Node]
     carryover_nodes: FrozenSet[Node]
-    active_nodes: FrozenSet[Node]  # explicit ∪ carryover
+    active_nodes: FrozenSet[Node]  # explicit AND carryover
     active_edges: FrozenSet[Edge]
     anchor_nodes: FrozenSet[Node]
 

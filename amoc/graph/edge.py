@@ -51,7 +51,6 @@ class Edge:
         activation_score: Optional[int] = None,
         relation_class=None,
         justification=None,
-        eventive_role=None,
     ) -> None:
         self.source_node: "Node" = source_node
         self.dest_node: "Node" = dest_node
@@ -140,6 +139,7 @@ class Edge:
 
     def is_property_edge(self) -> bool:
         from amoc.graph.node import NodeType
+
         return (
             self.source_node.node_type == NodeType.PROPERTY
             or self.dest_node.node_type == NodeType.PROPERTY

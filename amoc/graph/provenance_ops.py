@@ -84,30 +84,6 @@ class ProvenanceOps:
 
         return True
 
-    def is_story_grounded(self, lemma: str) -> bool:
-        if self._graph._story_lemmas is None:
-            return True
-
-        lemma_lower = lemma.lower()
-
-        ed_stem = (
-            lemma_lower[:-2]
-            if lemma_lower.endswith("ed") and len(lemma_lower) > 2
-            else None
-        )
-
-        ing_stem = (
-            lemma_lower[:-3]
-            if lemma_lower.endswith("ing") and len(lemma_lower) > 3
-            else None
-        )
-
-        return (
-            lemma_lower in self._graph._story_lemmas
-            or (ed_stem and ed_stem in self._graph._story_lemmas)
-            or (ing_stem and ing_stem in self._graph._story_lemmas)
-        )
-
     def validate_explicit_marking(self, primary_lemma: str) -> bool:
         if self._graph._current_sentence_lemmas is None:
             return True

@@ -196,14 +196,6 @@ class SentenceOps:
                 continue
 
             canonical_node = self._graph.get_node(node.lemmas)
-            if node.get_text_representer().lower() in {
-                "has",
-                "is",
-                "was",
-                "were",
-                "be",
-            }:
-                continue
 
             if canonical_node is None:
                 canonical_node = self._graph.add_or_get_node(

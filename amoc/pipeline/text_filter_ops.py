@@ -7,7 +7,7 @@ import re
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
-    from amoc.graph.node import Node, NodeType
+    from amoc.graph.node import Node
 
 
 class TextFilterOps:
@@ -50,6 +50,7 @@ class TextFilterOps:
         return result
 
     def is_valid_relation_label(self, label: str) -> bool:
+        # verbs cannot become nodes
         label = (label or "").strip()
         if not label:
             return False

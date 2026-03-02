@@ -13,18 +13,12 @@ class NodeType(Enum):
     PROPERTY = 2
 
 
-class NodeRole(Enum):
-    ACTOR = 1
-    OBJECT = 2
-    PROPERTY = 3
-    SETTING = 4
-
-
 class NodeSource(Enum):
     TEXT_BASED = 1
     INFERENCE_BASED = 2
 
 
+# DUPLICATE - SAME AS ABOVE
 class NodeProvenance(Enum):
     STORY_TEXT = 1
     INFERRED_FROM_STORY = 2
@@ -40,7 +34,6 @@ class Node:
         score: int,
         origin_sentence: Optional[int] = None,
         provenance: Optional[NodeProvenance] = None,
-        node_role: Optional[NodeRole] = None,
     ) -> None:
         self.lemmas: List[str] = [lemma.lower() for lemma in lemmas]
         actual_text_l = (actual_text or "").lower()
@@ -62,11 +55,6 @@ class Node:
             self.explicit_sentences.add(self.origin_sentence)
             self.ever_explicit = True
 
-        self.node_role: Optional[NodeRole] = node_role
-
-        if self.node_type == NodeType.PROPERTY and self.node_role is None:
-            self.node_role = NodeRole.PROPERTY
-
         self.activation_score: int = 0
         self.active: bool = False
 
@@ -82,9 +70,6 @@ class Node:
             self.actual_texts[actual_text_l] += 1
         else:
             self.actual_texts[actual_text_l] = 1
-
-    def is_setting(self) -> bool:
-        return self.node_role == NodeRole.SETTING
 
     def mark_explicit_in_sentence(self, sentence_id: int) -> None:
         self.explicit_sentences.add(sentence_id)

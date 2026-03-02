@@ -1,5 +1,5 @@
 from amoc.graph.node import Node
-from amoc.graph.node import NodeType, NodeSource, NodeProvenance, NodeRole
+from amoc.graph.node import NodeType, NodeSource, NodeProvenance
 from amoc.graph.edge import Edge
 from amoc.graph.node_activation_engine import NodeActivationEngine
 from amoc.graph.stability_ops import StabilityOps
@@ -40,7 +40,6 @@ class Graph:
         admit_kwargs: dict | None = None,
         origin_sentence: Optional[int] = None,
         provenance: Optional[NodeProvenance] = None,
-        node_role: Optional[NodeRole] = None,
         mark_explicit: bool = True,
     ):
         lemmas = [lemma.lower() for lemma in lemmas]
@@ -75,7 +74,6 @@ class Graph:
                 0,
                 origin_sentence=origin_sentence,
                 provenance=provenance or NodeProvenance.STORY_TEXT,
-                node_role=node_role,
             )
             self.nodes.add(node)
             if mark_explicit and origin_sentence is not None:
@@ -85,8 +83,6 @@ class Graph:
             if node.node_type != node_type:
                 if node_type == NodeType.PROPERTY:
                     node.node_type = NodeType.PROPERTY
-            if node.node_role is None and node_role is not None:
-                node.node_role = node_role
 
             if mark_explicit and origin_sentence is not None:
                 if not self._provenance_ops.validate_explicit_marking(primary_lemma):
@@ -147,8 +143,11 @@ class Graph:
             created_at_sentence=created_at_sentence,
         )
 
-        if self._activation_ops.check_and_reinforce_similar_edge(edge, edge_visibility):
-            return self._activation_ops.get_similar_edge(edge)
+        existing = self._activation_ops.find_and_reinforce_similar_edge(
+            edge, edge_visibility
+        )
+        if existing is not None:
+            return existing
 
         self.edges.add(edge)
         if edge not in source_node.edges:
@@ -253,22 +252,6 @@ class Graph:
         for edge in edges:
             s += str(edge) + "\n"
         return s
-
-    def get_active_triplets_with_scores(
-        self,
-    ) -> List[Tuple[str, str, str, bool, int]]:
-        triplets = []
-        for edge in self.edges:
-            triplets.append(
-                (
-                    edge.source_node.get_text_representer(),
-                    edge.label,
-                    edge.dest_node.get_text_representer(),
-                    edge.active,
-                    edge.activation_score,
-                )
-            )
-        return triplets
 
     def deactivate_all_edges(self) -> None:
         self._activation_ops.deactivate_all_edges()

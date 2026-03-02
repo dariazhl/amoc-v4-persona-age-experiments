@@ -73,13 +73,6 @@ class TripletOps:
                 )
         return triplets
 
-    def edge_key(self, edge: "Edge") -> Tuple[str, str, str]:
-        return (
-            edge.source_node.get_text_representer(),
-            edge.label.lower().strip(),
-            edge.dest_node.get_text_representer(),
-        )
-
     def get_edge_activation_scores(self) -> Dict[Tuple[str, str, str], int]:
         scores = {}
         for edge in self._graph.edges:
@@ -92,27 +85,6 @@ class TripletOps:
             # Also add 2-tuple key for compatibility
             scores[(key[0], key[1])] = edge.activation_score
         return scores
-
-    def record_edge_in_graphs(
-        self,
-        edge: "Edge",
-        sentence_idx: Optional[int],
-    ) -> None:
-        src = edge.source_node.get_text_representer()
-        dst = edge.dest_node.get_text_representer()
-        label = edge.label
-
-        # Add to cumulative graph
-        self._cumulative_graph.add_edge(src, dst, label=label)
-
-        # Track introduction sentence
-        key = (src, label, dst)
-        if key not in self._triplet_intro and sentence_idx is not None:
-            self._triplet_intro[key] = sentence_idx
-
-        # Add to active graph if edge is active
-        if edge.active:
-            self._active_graph.add_edge(src, dst, label=label)
 
     def reconstruct_semantic_triplets(
         self,

@@ -5,7 +5,6 @@ import networkx as nx
 from amoc.graph.graph import Graph
 from amoc.graph.node import Node, NodeType, NodeSource
 from amoc.graph.edge import Edge
-from amoc.nlp.spacy_utils import are_semantically_equivalent, get_semantic_class
 from amoc.pipeline.text_filter_ops import TextFilterOps
 
 if TYPE_CHECKING:
@@ -196,7 +195,7 @@ class EdgeOps:
             if existing_edge is not None:
                 old_label = existing_edge.label
 
-                if are_semantically_equivalent(old_label, label):
+                if old_label.strip().lower() == label.strip().lower():
                     existing_edge.label = label
                     existing_edge.visibility_score = edge_forget
                     existing_edge.created_at_sentence = use_sentence
@@ -204,14 +203,11 @@ class EdgeOps:
 
                     if self._debug:
                         logging.debug(
-                            "REPLACED equivalent edge: %s --%s--> %s (was: %s, class: %s)",
+                            "REPLACED equivalent edge: %s --%s--> %s (was: %s)",
                             source_node.get_text_representer(),
                             label,
                             dest_node.get_text_representer(),
                             old_label,
-                            get_semantic_class(
-                                label.split("_")[0] if "_" in label else label
-                            ),
                         )
 
                     trip_id = (
