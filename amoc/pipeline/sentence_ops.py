@@ -232,11 +232,7 @@ class SentenceOps:
                 | set(self._per_sentence_view.anchor_nodes)
             )
 
-        return (
-            self._explicit_nodes_current_sentence
-            | self._anchor_nodes
-            | get_nodes_with_active_edges_fn()
-        )
+        return self._explicit_nodes_current_sentence | get_nodes_with_active_edges_fn()
 
     def compute_explicit_nodes(
         self,
@@ -268,9 +264,6 @@ class SentenceOps:
 
     def extract_sentence_lemmas(self, text: str) -> Set[str]:
         return {w.lower() for w in re.findall(r"[a-zA-Z]+", text)}
-
-    def cleanup_anchor_nodes(self, anchor_nodes: Set["Node"]) -> Set["Node"]:
-        return {n for n in anchor_nodes if n in self._graph.nodes}
 
     def restore_state_from_snapshot(
         self,

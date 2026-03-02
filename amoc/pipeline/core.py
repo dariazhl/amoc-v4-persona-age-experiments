@@ -330,9 +330,6 @@ class AMoCv4:
             if hasattr(ops, "graph"):
                 ops.graph = self.graph
 
-    def init_graph(self, sent: Span) -> None:
-        self._init_ops.init_graph(sent)
-
     def repair_connectivity_callback(
         self,
         components,
@@ -849,17 +846,28 @@ class AMoCv4:
             if should_skip_sentence:
                 continue
 
-            if self._anchor_nodes:
-                cleaned = self._sentence_ops.cleanup_anchor_nodes(self._anchor_nodes)
-                self._anchor_nodes.clear()
-                self._anchor_nodes.update(cleaned)
-
             sentence_id = i + 1
             newly_inferred_nodes = (
                 self._projection_bookkeeping_ops.compute_newly_inferred_nodes(
                     nodes_before_sentence
                 )
             )
+
+            # introducing anchors
+            explicit_concepts = {
+                n
+                for n in self._explicit_nodes_current_sentence
+                if n.node_type == NodeType.CONCEPT
+            }
+
+            active_concepts = {
+                n
+                for n in self._get_active_edge_nodes()
+                if n.node_type == NodeType.CONCEPT
+            }
+
+            self._anchor_nodes.clear()
+            self._anchor_nodes.update(explicit_concepts | active_concepts)
 
             # CONNECTIVITY
             self._connectivity_ops.set_anchor_nodes(self._anchor_nodes)

@@ -340,24 +340,21 @@ class SentenceProcessingOps:
         )
         self._propagate_activation_from_edges_fn()
 
+        new_anchors = {
+            n
+            for n in explicit_nodes_current_sentence
+            if n.node_type == NodeType.CONCEPT
+        } | {
+            n
+            for n in self._get_nodes_with_active_edges_fn()
+            if n.node_type == NodeType.CONCEPT
+        }
+
         anchor_nodes.clear()
-        anchor_nodes.update(
-            anchor_nodes
-            | {
-                n
-                for n in explicit_nodes_current_sentence
-                if n.node_type == NodeType.CONCEPT
-            }
-            | {
-                n
-                for n in self._get_nodes_with_active_edges_fn()
-                if n.node_type == NodeType.CONCEPT
-            }
-        )
+        anchor_nodes.update(new_anchors)
 
         self._handle_single_explicit_bridge(
             explicit_nodes_current_sentence,
-            anchor_nodes,
         )
 
         self._ensure_explicit_nodes_have_edges(
@@ -386,6 +383,28 @@ class SentenceProcessingOps:
 
         return (nodes_before_sentence, should_skip)
 
+    def _normalize_relationship(self, relationship):
+        # Normalize LLM output into (subj, rel, obj)
+        if not relationship:
+            return None
+
+        if isinstance(relationship, dict):
+            subj = relationship.get("subject") or relationship.get("head")
+            rel = relationship.get("relation") or relationship.get("predicate")
+            obj = relationship.get("object") or relationship.get("tail")
+            if subj and rel and obj:
+                return str(subj), str(rel), str(obj)
+            return None
+
+        if isinstance(relationship, (list, tuple)):
+            if len(relationship) == 3:
+                return relationship
+            if len(relationship) == 4:
+                subj, rel, _, obj = relationship
+                return subj, rel, obj
+
+        return None
+
     def _process_llm_relationships(
         self,
         new_relationships,
@@ -395,41 +414,21 @@ class SentenceProcessingOps:
         sentence_lemma_keys,
         explicit_nodes_current_sentence,
     ) -> list:
+
         added_edges = []
 
-        for idx, relationship in enumerate(new_relationships):
-            if relationship is None or isinstance(relationship, (int, float, bool)):
-                continue
+        normalized = []
+        for rel in new_relationships or []:
+            triple = self._normalize_relationship(rel)
+            if triple:
+                normalized.append(triple)
 
-            if isinstance(relationship, dict):
-                subj = relationship.get("subject") or relationship.get("head")
-                rel = relationship.get("relation") or relationship.get("predicate")
-                obj = relationship.get("object") or relationship.get("tail")
-                if not (subj and rel and obj):
-                    continue
-                relationship = (str(subj), str(rel), str(obj))
+        for subj, rel, obj in normalized:
 
-            if not isinstance(relationship, (list, tuple)):
-                continue
+            subj = self._normalize_endpoint_text_fn(subj, is_subject=True)
+            obj = self._normalize_endpoint_text_fn(obj, is_subject=False)
 
-            if isinstance(relationship, (list, tuple)) and len(relationship) == 4:
-                subj, rel, _, obj = relationship
-                relationship = (subj, rel, obj)
-
-            if len(relationship) != 3:
-                continue
-
-            subj, rel, obj = relationship
-
-            subj = self._normalize_endpoint_text_fn(subj, is_subject=True) or None
-            obj = self._normalize_endpoint_text_fn(obj, is_subject=False) or None
-            if subj is None or obj is None:
-                continue
-            if not subj or not obj:
-                continue
-            if subj == obj:
-                continue
-            if not isinstance(subj, str) or not isinstance(obj, str):
+            if not subj or not obj or subj == obj:
                 continue
 
             if not self._passes_attachment_constraint_fn(
@@ -460,21 +459,22 @@ class SentenceProcessingOps:
                 create_node=False,
             )
 
-            edge_label = rel.replace("(edge)", "").strip()
-            edge_label = self._normalize_edge_label_fn(edge_label)
-            if not self._is_valid_relation_label_fn(edge_label):
-                continue
-            if source_node is None or dest_node is None:
+            if not source_node or not dest_node:
                 continue
 
-            canon_label, canon_src, canon_dst, was_swapped = (
-                self._canonicalize_edge_direction_fn(
-                    edge_label,
-                    source_node.get_text_representer(),
-                    dest_node.get_text_representer(),
-                )
+            edge_label = self._normalize_edge_label_fn(
+                rel.replace("(edge)", "").strip()
             )
-            if was_swapped:
+            if not self._is_valid_relation_label_fn(edge_label):
+                continue
+
+            canon_label, _, _, swapped = self._canonicalize_edge_direction_fn(
+                edge_label,
+                source_node.get_text_representer(),
+                dest_node.get_text_representer(),
+            )
+
+            if swapped:
                 source_node, dest_node = dest_node, source_node
                 edge_label = canon_label
 
@@ -483,32 +483,13 @@ class SentenceProcessingOps:
             if tuple(dest_node.lemmas) in sentence_lemma_keys:
                 dest_node.node_source = NodeSource.TEXT_BASED
 
-            if source_node is None:
-                source_node = self._get_node_from_new_relationship_fn(
-                    subj,
-                    graph_active_nodes,
-                    current_sentence_text_based_nodes,
-                    current_sentence_text_based_words,
-                    node_source=NodeSource.TEXT_BASED,
-                    create_node=True,
-                )
-
-            if dest_node is None:
-                dest_node = self._get_node_from_new_relationship_fn(
-                    obj,
-                    graph_active_nodes,
-                    current_sentence_text_based_nodes,
-                    current_sentence_text_based_words,
-                    node_source=NodeSource.TEXT_BASED,
-                    create_node=True,
-                )
-
             edge = self._add_edge_fn(
                 source_node,
                 dest_node,
                 edge_label,
                 self.edge_visibility,
             )
+
             if edge:
                 added_edges.append(edge)
 
@@ -517,15 +498,18 @@ class SentenceProcessingOps:
     def _handle_single_explicit_bridge(
         self,
         explicit_nodes_current_sentence: set,
-        anchor_nodes: set,
     ):
         if len(explicit_nodes_current_sentence) == 1:
             node = next(iter(explicit_nodes_current_sentence))
 
-            if node not in self._get_nodes_with_active_edges_fn():
-                anchor = next(iter(anchor_nodes), None)
+            active_nodes = self._get_nodes_with_active_edges_fn()
+            if node not in active_nodes and active_nodes:
+                anchor = min(
+                    active_nodes,
+                    key=lambda n: n.get_text_representer(),
+                )
 
-                if anchor and anchor != node:
+                if anchor != node:
                     edge = self._add_edge_fn(
                         anchor,
                         node,
@@ -552,7 +536,6 @@ class SentenceProcessingOps:
             required_nodes,
             allow_reactivation=True,
         )
-
 
     def _ensure_explicit_nodes_have_edges(
         self,

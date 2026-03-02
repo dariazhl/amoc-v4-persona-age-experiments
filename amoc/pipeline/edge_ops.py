@@ -458,8 +458,6 @@ class EdgeOps:
 
         added: List["Edge"] = []
         for idx, relationship in enumerate(new_relationships):
-            if relationship is None or isinstance(relationship, (int, float, bool)):
-                continue
             if isinstance(relationship, dict):
                 subj = relationship.get("subject") or relationship.get("head")
                 rel = relationship.get("relation") or relationship.get("predicate")

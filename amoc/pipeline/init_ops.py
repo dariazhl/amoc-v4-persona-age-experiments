@@ -341,20 +341,10 @@ class InitOps:
 
         explicit_nodes_current_sentence = set(explicit_nodes_current_sentence)
 
-        # anchor selection - anchors are subjects inside the current sentence
-        # anchor_nodes = set()
-
-        # for token in sent:
-        #     if token.dep_ in {"nsubj", "nsubjpass"}:
-        #         lemma = token.lemma_.lower()
-        #         for node in explicit_nodes_current_sentence:
-        #             if lemma in node.lemmas:
-        #                 anchor_nodes.add(node)
-
         anchor_nodes = {
             n
-            for n in explicit_nodes_current_sentence
-            if n.node_type == NodeType.CONCEPT
+            for n in anchor_nodes
+            if n in graph.nodes and n.active and any(e.active for e in n.edges)
         }
 
         inferred_concept_relationships, inferred_property_relationships = (

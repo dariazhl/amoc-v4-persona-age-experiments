@@ -27,6 +27,7 @@ class ConnectivityOps:
         self._client = client_ref
         self._story_text: str = ""
         self._current_sentence_text: str = ""
+        self._anchor_nodes: set = set()
 
     def set_context(self, story_text: str, current_sentence_text: str):
         self._story_text = story_text
@@ -109,17 +110,24 @@ class ConnectivityOps:
 
         active_edge_pool = [e for e in self._graph.edges if e.active]
 
-        anchor_nodes = getattr(self, "_anchor_nodes", set())
+        active_nodes = self._get_nodes_with_active_edges()
 
         anchor_candidates = sorted(
-            [n for n in largest_component if n in anchor_nodes],
+            [
+                n
+                for n in largest_component
+                if n in self._anchor_nodes and n in self._get_nodes_with_active_edges()
+            ],
             key=lambda n: n.get_text_representer(),
         )
+
         if anchor_candidates:
             backbone_node = anchor_candidates[0]
         else:
-
-            backbone_node = min(largest_component, key=lambda n: self._node_sort_key(n, active_edge_pool))
+            backbone_node = min(
+                largest_component,
+                key=lambda n: self._node_sort_key(n, active_edge_pool),
+            )
 
         for comp in sorted(components[1:], key=len):
             comp_set = set(comp)
@@ -136,7 +144,9 @@ class ConnectivityOps:
             if explicit_in_comp:
                 node_small = explicit_in_comp[0]
             else:
-                node_small = min(comp_set, key=lambda n: self._node_sort_key(n, active_edge_pool))
+                node_small = min(
+                    comp_set, key=lambda n: self._node_sort_key(n, active_edge_pool)
+                )
 
             edge = self._graph.add_edge(
                 node_small,
@@ -349,7 +359,9 @@ class ConnectivityOps:
             candidates = [n for n in comp if n in active_nodes]
             if not candidates:
                 continue
-            representative = min(candidates, key=lambda n: self._node_sort_key(n, active_edges))
+            representative = min(
+                candidates, key=lambda n: self._node_sort_key(n, active_edges)
+            )
 
             prompt_text = FORCED_CONNECTIVITY_EDGE_PROMPT.format(
                 node_a=representative.get_text_representer(),
@@ -365,21 +377,20 @@ class ConnectivityOps:
                     temperature=temperature,
                 )
 
-                match = re.search(r"\{.*?\}", response, re.DOTALL)
-                if not match:
+                if not response:
                     continue
 
-                match = re.search(r"\{.*\}", response, re.DOTALL)
-                if not match:
-                    continue
-                data = json.loads(match.group())
+                response = response.strip()
+
+                # Expect direct JSON
+                data = json.loads(response)
                 label = data.get("label")
 
+            except json.JSONDecodeError:
+                logging.warning("Connectivity repair returned invalid JSON")
+                continue
             except Exception as e:
-                logging.warning(
-                    "JSON extraction failed: %s",
-                    str(e),
-                )
+                logging.warning("Connectivity repair failed: %s", str(e))
                 continue
 
             if not label:
