@@ -417,21 +417,6 @@ class PlotOps:
                 inferred_nodes=inferred_nodes_for_plot,
             )
 
-            if triplets:
-                logging.info(
-                    "Plot: Saved sentence %d graph to %s", sentence_index, saved_path
-                )
-            elif explicit_nodes:
-                logging.info(
-                    "Plot: Saved sentence %d graph explicit nodes only to %s",
-                    sentence_index,
-                    saved_path,
-                )
-            else:
-                logging.info(
-                    "Plot: Sentence %d graph empty (no explicit nodes, no edges)",
-                    sentence_index,
-                )
         except Exception:
             logging.error("Failed to plot graph snapshot", exc_info=True)
 
@@ -476,7 +461,6 @@ class PlotOps:
 
         # PROJECTION CONTINUITY + EXPLICIT FALLBACK
         if not active_triplets and explicit_nodes_for_plot:
-            logging.debug("No active edges — plotting explicit nodes only.")
             active_triplets = []
 
         # Store current projection snapshot for next iteration

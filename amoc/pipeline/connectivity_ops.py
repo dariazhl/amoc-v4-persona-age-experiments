@@ -57,8 +57,6 @@ class ConnectivityOps:
             if self.is_active_connected() and self.is_cumulative_connected():
                 return False
 
-        logging.debug("Deterministic repair insufficient, trying LLM repair")
-
         # PHASE 2: LLM repair - try twice
         for attempt in range(2):
             create_forced_edges_fn(
@@ -69,20 +67,17 @@ class ConnectivityOps:
                 mode="active",
             )
             if self.is_active_connected():
-                logging.debug("LLM repair succeeded on attempt %d", attempt + 1)
                 break
 
         # Check if LLM repair was sufficient
         if self.is_active_connected() and self.is_cumulative_connected():
             return False
 
-        logging.debug("LLM repair insufficient, applying fallback edges")
-
         # PHASE 3: Final fallback "relates_to" edges
         self._apply_relates_to_fallback(required_nodes)
 
         if not self.is_active_connected():
-            logging.error("Active graph still disconnected after all repairs")
+            logging.error("Active graph disconnected after all repairs")
             return True  # rollback required
 
         # Verify cumulative connectivity
@@ -90,7 +85,7 @@ class ConnectivityOps:
             self._apply_cumulative_fallback()
 
             if not self.is_cumulative_connected():
-                logging.error("Cumulative graph still disconnected after all repairs")
+                logging.error("Cumulative graph disconnected after all repairs")
                 return True  # rollback required
 
         return False
@@ -156,11 +151,6 @@ class ConnectivityOps:
                 edge.asserted_this_sentence = False
                 edge.reactivated_this_sentence = False
                 largest_component.update(comp_set)
-                logging.debug(
-                    "Created fallback edge: %s -[relates_to]-> %s",
-                    node_small.get_text_representer(),
-                    backbone_node.get_text_representer(),
-                )
 
     def _apply_cumulative_fallback(self) -> None:
         G_full = self._graph.to_networkx()
@@ -204,11 +194,6 @@ class ConnectivityOps:
 
             if edge:
                 largest.update(comp)
-                logging.debug(
-                    "Created cumulative fallback edge: %s -[relates_to]-> %s",
-                    node_small_name,
-                    node_large_name,
-                )
 
     def _get_nodes_with_active_edges(self) -> set:
         nodes = set()
@@ -266,11 +251,6 @@ class ConnectivityOps:
         if not dangling_nodes:
             return False
 
-        logging.debug(
-            "Found %d dangling nodes, attempting LLM repair",
-            len(dangling_nodes),
-        )
-
         any_repair_failed = False
 
         for node in dangling_nodes:
@@ -326,20 +306,10 @@ class ConnectivityOps:
 
                 if edge:
                     repair_success = True
-                    logging.debug(
-                        "LLM repair for dangling node: %s -[%s]-> %s",
-                        node.get_text_representer(),
-                        relation,
-                        anchor.get_text_representer(),
-                    )
                     break
 
             if not repair_success:
                 any_repair_failed = True
-                logging.debug(
-                    "LLM repair failed for dangling node: %s",
-                    node.get_text_representer(),
-                )
 
         # Return True if any repair failed - caller should invoke enforce_connectivity
         return any_repair_failed

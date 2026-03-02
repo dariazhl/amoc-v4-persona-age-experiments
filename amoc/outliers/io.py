@@ -45,6 +45,6 @@ def filter_bins_by_min_n(df, bin_col="age_bin", min_n=1):
     dropped = set(counts.index) - set(valid)
 
     if dropped:
-        print(f"[INFO] Dropping age bins with n < {min_n}: {sorted(dropped)}")
+        print(f"Dropping age bins with n < {min_n}: {sorted(dropped)}")
 
     return df[df[bin_col].isin(valid)]

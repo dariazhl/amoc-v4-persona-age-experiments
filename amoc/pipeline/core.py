@@ -741,7 +741,7 @@ class AMoCv4:
                     property_nodes=[],
                 )
             except Exception as e:
-                logging.warning(f"[RollbackPlot] Failed to save previous plot: {e}")
+                logging.warning(f"Rollback plot failed: {e}")
 
         self.graph = previous_graph_state
         self._rebind_ops_graph_refs()
@@ -849,12 +849,6 @@ class AMoCv4:
             if should_skip_sentence:
                 continue
 
-            if self.debug:
-                logging.info(
-                    "Active graph after sentence %d:\n%s",
-                    i,
-                    self.graph.get_active_graph_repr(),
-                )
             if self._anchor_nodes:
                 cleaned = self._sentence_ops.cleanup_anchor_nodes(self._anchor_nodes)
                 self._anchor_nodes.clear()

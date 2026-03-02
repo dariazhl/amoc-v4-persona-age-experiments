@@ -177,7 +177,7 @@ def attach_persona_attributes(
     # warn on duplicate persona ids
     vc = all_attrs["persona_text"].value_counts()
     if (vc > 1).any():
-        print("[WARN] Duplicate persona_text entries in refined-age files:")
+        print("Duplicate persona_text entries in refined-age files:")
         print(vc[vc > 1].head())
 
     attrs = all_attrs.drop_duplicates(subset="persona_text")
@@ -192,7 +192,7 @@ def attach_persona_attributes(
     n_missing = df_merged["age_refined"].isna().sum()
     if n_missing > 0:
         print(
-            f"[WARN] {n_missing} personas missing age_refined "
+            f"{n_missing} personas missing age_refined "
             f"({100 * n_missing / len(df_merged):.1f}%)"
         )
 

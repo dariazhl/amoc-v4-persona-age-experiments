@@ -190,11 +190,6 @@ class SentenceProcessingOps:
         if len(prev_sentences) > self.context_length:
             prev_sentences.pop(0)
 
-        logging.debug(
-            "Sentence %d: edges reset inactive at sentence start",
-            i,
-        )
-
         phrase_nodes = self._get_phrase_level_concepts_fn(current_sentence)
 
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
@@ -336,12 +331,6 @@ class SentenceProcessingOps:
             max_distance=self.max_distance_from_active_nodes,
             current_sentence=current_sentence_index,
         )
-        logging.debug(
-            "Reactivated %d memory edges within distance %d",
-            len(reactivated_edges),
-            self.max_distance_from_active_nodes,
-        )
-
         self._reactivate_relevant_edges_fn(
             self.graph.get_active_nodes(
                 self.max_distance_from_active_nodes, only_text_based=True
@@ -410,9 +399,6 @@ class SentenceProcessingOps:
 
         for idx, relationship in enumerate(new_relationships):
             if relationship is None or isinstance(relationship, (int, float, bool)):
-                logging.error(
-                    f"Skipping non-iterable relationship at {idx}: {relationship!r}"
-                )
                 continue
 
             if isinstance(relationship, dict):
@@ -420,16 +406,10 @@ class SentenceProcessingOps:
                 rel = relationship.get("relation") or relationship.get("predicate")
                 obj = relationship.get("object") or relationship.get("tail")
                 if not (subj and rel and obj):
-                    logging.error(
-                        f"Skipping malformed dict relationship at {idx}: {relationship!r}"
-                    )
                     continue
                 relationship = (str(subj), str(rel), str(obj))
 
             if not isinstance(relationship, (list, tuple)):
-                logging.error(
-                    f"Skipping unexpected relationship type at {idx}: {type(relationship)} → {relationship!r}"
-                )
                 continue
 
             if isinstance(relationship, (list, tuple)) and len(relationship) == 4:
@@ -437,9 +417,6 @@ class SentenceProcessingOps:
                 relationship = (subj, rel, obj)
 
             if len(relationship) != 3:
-                logging.error(
-                    f"Skipping relationship with wrong length at {idx}: {relationship!r}"
-                )
                 continue
 
             subj, rel, obj = relationship
@@ -500,12 +477,6 @@ class SentenceProcessingOps:
             if was_swapped:
                 source_node, dest_node = dest_node, source_node
                 edge_label = canon_label
-                logging.debug(
-                    "Swapped direction: %s → %s (label: %s)",
-                    canon_src,
-                    canon_dst,
-                    edge_label,
-                )
 
             if tuple(source_node.lemmas) in sentence_lemma_keys:
                 source_node.node_source = NodeSource.TEXT_BASED
@@ -582,10 +553,6 @@ class SentenceProcessingOps:
             allow_reactivation=True,
         )
 
-        if not connected:
-            logging.debug(
-                "Deterministic repair failed — LLM repair needed",
-            )
 
     def _ensure_explicit_nodes_have_edges(
         self,
@@ -596,11 +563,6 @@ class SentenceProcessingOps:
 
         for node in explicit_nodes_current_sentence:
             if node not in active_nodes:
-                logging.debug(
-                    "Node '%s' has no active edge — invoking LLM repair.",
-                    node.get_text_representer(),
-                )
-
                 repair_relationships = self.client.get_new_relationships(
                     node.get_text_representer(),
                     self.graph.get_nodes_str(self.graph.nodes),
@@ -731,7 +693,7 @@ class SentenceProcessingOps:
             )
 
             if not self._get_nodes_with_active_edges_fn():
-                logging.error("Retry failed. Hard revert triggered.")
+                logging.error("Retry failed — reverting.")
                 return True
 
         return False
@@ -741,7 +703,7 @@ class SentenceProcessingOps:
     ) -> tuple:
         # sometimes, the parser returns sentences such as: "Processing sentence 0: answer is: A man very close to Charlemagne wrote most of the things we know about Charlemagne."
         if resolved_text.strip().startswith("{"):
-            logging.error("LLM JSON contamination detected — reverting.")
+            logging.error("JSON contamination in LLM output — reverting.")
             resolved_text = original_text
 
         # Strip bad prefix

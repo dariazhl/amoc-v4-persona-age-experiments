@@ -203,7 +203,7 @@ class EdgeOps:
 
                     if self._debug:
                         logging.debug(
-                            "REPLACED equivalent edge: %s --%s--> %s (was: %s)",
+                            "Replaced equivalent edge: %s --%s--> %s (was: %s)",
                             source_node.get_text_representer(),
                             label,
                             dest_node.get_text_representer(),

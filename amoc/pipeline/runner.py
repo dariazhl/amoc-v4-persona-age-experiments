@@ -129,7 +129,7 @@ def process_persona_csv(
     checkpoint: bool = False,
 ) -> None:
     short_filename = os.path.basename(filename)
-    print(f"\n=== Processing File (chunk): {short_filename} ===")
+    print(f"Processing: {short_filename}")
     story_excerpt = story_snippet(story_text)
 
     output_dir = Path(output_dir)
@@ -140,8 +140,7 @@ def process_persona_csv(
     # Ensure required columns
     if "persona_text" not in df.columns or "age_refined" not in df.columns:
         print(
-            f"   [Skip] File {short_filename} missing "
-            f"'persona_text' or 'age_refined' columns."
+            f"Skipping {short_filename}: missing persona_text or age_refined columns."
         )
         return
 
@@ -153,7 +152,7 @@ def process_persona_csv(
         df = df.head(max_rows)
 
     if df.empty:
-        print(f"   [Skip] File {short_filename} has no valid rows.")
+        print(f"Skipping {short_filename}: no valid rows.")
         return
 
     # 2. Initialize engines
@@ -211,12 +210,7 @@ def process_persona_csv(
             failures = []
             personas_processed = 0
 
-        print(f"[Model] {model_name}")
-        print(f"  → Cumulative Output: {cumulative_output_path}")
-        print(f"  → Per-sentence Output: {sentence_output_path}")
-        print(f"  → Final active Output: {final_output_path}")
-        if checkpoint:
-            print(f"  → Checkpoint: {ckpt_path}")
+        print(f"[{model_name}] out={final_output_path}")
 
         if not cumulative_output_path.exists():
             pd.DataFrame([], columns=CSV_HEADERS).to_csv(
@@ -572,6 +566,6 @@ def process_persona_csv(
                 ckpt["failures"] = failures
                 save_checkpoint(ckpt_path, ckpt)
             print(
-                f"[Model] {model_name}: processed {personas_processed} "
+                f"{model_name}: processed {personas_processed} "
                 f"personas from {short_filename}"
             )
