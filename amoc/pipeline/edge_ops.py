@@ -73,10 +73,6 @@ class EdgeOps:
         self._persistent_is_edges = persistent_is_edges
 
     def configure_with_core(self, core: "AMoCv4") -> None:
-        """Configure all callbacks using core's ops and methods.
-
-        This method absorbs wiring responsibility from core._setup_ops_classes().
-        """
         self.set_inference_callbacks(
             normalize_endpoint_text_fn=core._normalize_endpoint_text,
             normalize_edge_label_fn=core._normalize_edge_label,
@@ -123,14 +119,14 @@ class EdgeOps:
 
     def create_edge_with_event_mediation(
         self,
-        source_node: Node,
-        dest_node: Node,
+        source_node: "Node",
+        dest_node: "Node",
         label: str,
         edge_forget: int,
         created_at_sentence: Optional[int] = None,
         relation_class=None,
         justification=None,
-    ) -> Optional[Edge]:
+    ) -> Optional["Edge"]:
         sentence_idx = (
             created_at_sentence
             if created_at_sentence is not None
@@ -153,8 +149,8 @@ class EdgeOps:
 
     def add_edge(
         self,
-        source_node: Node,
-        dest_node: Node,
+        source_node: "Node",
+        dest_node: "Node",
         label: str,
         edge_forget: int,
         created_at_sentence: Optional[int] = None,
@@ -162,7 +158,7 @@ class EdgeOps:
         relation_class=None,
         justification=None,
         persona_influenced: bool = False,
-    ) -> Optional[Edge]:
+    ) -> Optional["Edge"]:
         # Reject self-loops - S-V-O triplets require distinct subject and object
         if source_node == dest_node:
             return None
@@ -368,26 +364,19 @@ class EdgeOps:
                     backbone.update(comp)
                     break
 
-            # NOTE: No "relates_to" fallback here - ConnectivityOps handles that
-
         return forced_edges
 
     def record_edge_in_graphs(
         self,
         edge: "Edge",
         sentence_idx: Optional[int],
-        cumulative_graph: "nx.MultiDiGraph",
-        active_graph: "nx.MultiDiGraph",
+        cumulative_graph: nx.MultiDiGraph,
+        active_graph: nx.MultiDiGraph,
         cumulative_triplet_records: list,
     ) -> None:
         u, v, lbl = self.edge_key(edge)
 
         if not lbl or not lbl.strip():
-            logging.warning(
-                "Skipping recording edge with empty label: %s -> %s",
-                u,
-                v,
-            )
             return
 
         introduced = self._triplet_intro.get((u, lbl, v))

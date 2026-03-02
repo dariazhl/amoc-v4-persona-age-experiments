@@ -21,7 +21,7 @@ from amoc.pipeline.sentence_ops import SentenceOps
 from amoc.pipeline.inference_ops import InferenceOps
 from amoc.pipeline.linguistic_ops import LinguisticOps
 from amoc.pipeline.plot_ops import PlotOps
-from amoc.pipeline.activation_ops import ActivationOps
+from amoc.pipeline.activation_scheduler import ActivationScheduler
 from amoc.pipeline.output_ops import OutputOps
 from amoc.pipeline.sentence_processing_ops import SentenceProcessingOps
 from amoc.pipeline.relationship_graph_ops import RelationshipGraphOps
@@ -109,7 +109,6 @@ class AMoCv4:
         self._layout_depth = 3
         self._persistent_is_edges: set[tuple[str, str, str]] = set()
 
-        # Reusable closures for callbacks (text filter closures set in _setup_ops_classes)
         self._get_explicit_nodes = lambda: self._explicit_nodes_current_sentence
         self._get_carryover_nodes = lambda: self._carryover_nodes_current_sentence
         self._get_active_edge_nodes = (
@@ -137,7 +136,7 @@ class AMoCv4:
             story_lemmas=self.story_lemmas,
             persona_only_lemmas=self._persona_only_lemmas,
         )
-        # Initialize text filter closures
+
         self._normalize_edge_label = (
             lambda l: self._text_filter_ops.normalize_edge_label(l)
         )
@@ -249,7 +248,7 @@ class AMoCv4:
             story_lemmas=self.story_lemmas,
             persona_only_lemmas=self._persona_only_lemmas,
         )
-        self._activation_ops = ActivationOps(
+        self._activation_ops = ActivationScheduler(
             graph_ref=self.graph,
             client_ref=self.client,
             get_explicit_nodes=self._get_explicit_nodes,
@@ -298,7 +297,7 @@ class AMoCv4:
             context_length=self.context_length,
             debug=self.debug,
         )
-        # Configure ops classes that need cross-references (declarative wiring)
+        # Configure ops classes
         self._edge_ops.configure_with_core(self)
         self._relationship_graph_ops.configure_with_core(self)
         self._init_ops.configure_with_core(self)
@@ -627,7 +626,6 @@ class AMoCv4:
             )
 
             if not result[1]:
-                # Apply post-sentence processing (decay, stability)
                 # Connectivity enforcement is handled by _enforce_connectivity() in analyze()
                 self._sentence_processing_ops.apply_post_sentence_processing(
                     explicit_nodes=self._explicit_nodes_current_sentence,
@@ -680,7 +678,7 @@ class AMoCv4:
         if repair_needed:
             return True
 
-        # Step 4 — final structural validation
+        # Step 4 — validation
         if not self._connectivity_ops.validate_sentence_state():
             return True
 
@@ -875,13 +873,7 @@ class AMoCv4:
                 )
             )
 
-            # ═══════════════════════════════════════════════════════════════════
-            # SINGLE CONNECTIVITY AUTHORITY: Called ONCE per sentence, BEFORE projection
-            # ConnectivityOps.enforce_connectivity() guarantees:
-            #   - All explicit + carryover nodes connected via active edges
-            #   - Cumulative graph is single component
-            #   - No dangling explicit nodes
-            # ═══════════════════════════════════════════════════════════════════
+            # CONNECTIVITY
             self._connectivity_ops.set_anchor_nodes(self._anchor_nodes)
             rollback_needed = self._enforce_connectivity(prev_sentences)
 
@@ -912,10 +904,6 @@ class AMoCv4:
                     self._per_sentence_view.carryover_nodes
                 )
             else:
-                logging.warning(
-                    "[Projection] per_sentence_view is None at sentence %d",
-                    sentence_id,
-                )
                 self._carryover_nodes_current_sentence.clear()
 
             (
@@ -939,10 +927,10 @@ class AMoCv4:
                 )
             self._capture_sentence_triplets(original_text)
 
-        # CUMULATIVE CONNECTIVITY GUARANTEE: Ensure cumulative graph is connected
+        # Ensure cumulative graph is connected
         if not self._connectivity_ops.is_cumulative_connected():
             logging.warning(
-                "[Connectivity] Cumulative graph disconnected after sentence loop - repairing"
+                "Cumulative graph disconnected after sentence loop - repairing"
             )
             self._enforce_connectivity(prev_sentences)
 

@@ -16,21 +16,19 @@ from amoc.graph.node import NodeType
 @dataclass
 class PerSentenceGraph:
     sentence_index: int
-    explicit_nodes: FrozenSet["Node"]
-    carryover_nodes: FrozenSet["Node"]
-    active_nodes: FrozenSet["Node"]  # explicit ∪ carryover
-    active_edges: FrozenSet["Edge"]
-    anchor_nodes: FrozenSet["Node"]
+    explicit_nodes: FrozenSet[Node]
+    carryover_nodes: FrozenSet[Node]
+    active_nodes: FrozenSet[Node]  # explicit ∪ carryover
+    active_edges: FrozenSet[Edge]
+    anchor_nodes: FrozenSet[Node]
 
-    # Derived structures (computed once at construction)
-    _adjacency: Dict["Node", Set["Node"]] = field(default_factory=dict)
-    _node_degrees: Dict["Node", int] = field(default_factory=dict)
+    _adjacency: Dict[Node, Set[Node]] = field(default_factory=dict)
+    _node_degrees: Dict[Node, int] = field(default_factory=dict)
     _nx_graph: Optional[nx.Graph] = field(default=None)
 
     def __post_init__(self):
-        """Compute derived structures after construction."""
         # Build adjacency list
-        adjacency: Dict["Node", Set["Node"]] = {n: set() for n in self.active_nodes}
+        adjacency: Dict[Node, Set[Node]] = {n: set() for n in self.active_nodes}
         for edge in self.active_edges:
             if edge.source_node in adjacency and edge.dest_node in adjacency:
                 adjacency[edge.source_node].add(edge.dest_node)
@@ -59,16 +57,16 @@ class PerSentenceGraph:
     def is_empty(self) -> bool:
         return len(self.active_edges) == 0
 
-    def get_node_degree(self, node: "Node") -> int:
+    def get_node_degree(self, node: Node) -> int:
         return self._node_degrees.get(node, 0)
 
-    def get_neighbors(self, node: "Node") -> Set["Node"]:
+    def get_neighbors(self, node: Node) -> Set[Node]:
         return self._adjacency.get(node, set())
 
-    def node_is_visible(self, node: "Node") -> bool:
+    def node_is_visible(self, node: Node) -> bool:
         return node in self.active_nodes
 
-    def edge_is_visible(self, edge: "Edge") -> bool:
+    def edge_is_visible(self, edge: Edge) -> bool:
         return edge in self.active_edges
 
     def get_triplets(self) -> List[Tuple[str, str, str]]:
@@ -88,9 +86,9 @@ class PerSentenceGraph:
 class PerSentenceGraphBuilder:
     def __init__(
         self,
-        cumulative_graph: "Graph",
+        cumulative_graph: Graph,
         max_distance: int,
-        anchor_nodes: Set["Node"],
+        anchor_nodes: Set[Node],
         repair_callback=None,
     ):
         self.cumulative_graph = cumulative_graph
@@ -98,11 +96,11 @@ class PerSentenceGraphBuilder:
         self.anchor_nodes = frozenset(anchor_nodes)
         self.repair_callback = repair_callback
 
-        self._explicit_nodes: Set["Node"] = set()
-        self._carryover_nodes: Set["Node"] = set()
+        self._explicit_nodes: Set[Node] = set()
+        self._carryover_nodes: Set[Node] = set()
         self._sentence_index: Optional[int] = None
 
-    def set_explicit_nodes(self, nodes: List["Node"]) -> "PerSentenceGraphBuilder":
+    def set_explicit_nodes(self, nodes: List[Node]) -> "PerSentenceGraphBuilder":
         self._explicit_nodes = set(nodes)
         return self
 
@@ -112,7 +110,7 @@ class PerSentenceGraphBuilder:
             return self
 
         # Use ALL explicit nodes as seeds
-        distances: Dict["Node", int] = {n: 0 for n in self._explicit_nodes}
+        distances: Dict[Node, int] = {n: 0 for n in self._explicit_nodes}
         queue: deque = deque(self._explicit_nodes)
 
         while queue:
@@ -148,23 +146,23 @@ class PerSentenceGraphBuilder:
 
         return self
 
-    def get_active_nodes(self) -> Set["Node"]:
+    def get_active_nodes(self) -> Set[Node]:
         return self._explicit_nodes | self._carryover_nodes
 
-    def get_attachable_nodes(self) -> Set["Node"]:
+    def get_attachable_nodes(self) -> Set[Node]:
         return self._explicit_nodes | self._carryover_nodes | set(self.anchor_nodes)
 
-    def can_add_edge(self, source: "Node", dest: "Node") -> bool:
+    def can_add_edge(self, source: Node, dest: Node) -> bool:
         attachable = self.get_attachable_nodes()
         return source in attachable or dest in attachable
 
     def _attempt_llm_repair(
         self,
-        components: List[Set["Node"]],
-        active_nodes: Set["Node"],
-        active_edges: Set["Edge"],
+        components: List[Set[Node]],
+        active_nodes: Set[Node],
+        active_edges: Set[Edge],
         temperature: float = 0.3,
-    ) -> Optional[Set["Edge"]]:
+    ) -> Optional[Set[Edge]]:
 
         if self.repair_callback is None:
             logging.warning("No repair callback provided.")
@@ -268,15 +266,15 @@ class PerSentenceGraphBuilder:
 
 
 def build_per_sentence_graph(
-    cumulative_graph: "Graph",
-    explicit_nodes: List["Node"],
+    cumulative_graph: Graph,
+    explicit_nodes: List[Node],
     max_distance: int,
-    anchor_nodes: Set["Node"],
+    anchor_nodes: Set[Node],
     sentence_index: int,
     repair_callback: Optional[
         Callable[
-            [List[Set["Node"]], Set["Node"], Set["Edge"], int],
-            Optional[Set["Edge"]],
+            [List[Set[Node]], Set[Node], Set[Edge], int],
+            Optional[Set[Edge]],
         ]
     ] = None,
 ) -> PerSentenceGraph:

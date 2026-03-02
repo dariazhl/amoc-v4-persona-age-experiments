@@ -1,25 +1,18 @@
-# amoc/pipeline/plot_ops.py
-"""
-Visualization and plotting operations extracted from core.py.
-Internal helper class - not a public API.
-"""
 from typing import TYPE_CHECKING, Optional, List, Tuple, Set, Dict, Iterable, Callable
 import os
 import logging
 import math
 import networkx as nx
+import re
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
     from amoc.graph.node import Node, NodeSource
+    from amoc.viz.graph_plots import plot_amoc_triplets
+    from amoc.graph.node import NodeType
 
 
 class PlotOps:
-    """
-    Encapsulates all visualization and plotting logic.
-    Injected with references to parent state - does not own state.
-    """
-
     # Prompt contamination patterns to detect
     PROMPT_CONTAMINATION_PATTERNS = [
         "the text is:",
@@ -48,7 +41,6 @@ class PlotOps:
         self._viz_positions: Dict[str, Tuple[float, float]] = {}
         self._prev_active_nodes: Set["Node"] = set()
         self._cumulative_deactivated_nodes: Set["Node"] = set()
-        # Callbacks to be set by parent
         self._get_explicit_nodes_fn: Optional[Callable] = None
         self._get_edge_activation_scores_fn: Optional[Callable] = None
         self._graph_edges_to_triplets_fn: Optional[Callable] = None
@@ -64,50 +56,36 @@ class PlotOps:
         graph_edges_to_triplets_fn: Callable,
         enforce_cumulative_connectivity_fn: Callable,
     ):
-        """Set callback functions from parent."""
         self._get_explicit_nodes_fn = get_explicit_nodes_fn
         self._get_edge_activation_scores_fn = get_edge_activation_scores_fn
         self._graph_edges_to_triplets_fn = graph_edges_to_triplets_fn
         self._enforce_cumulative_connectivity_fn = enforce_cumulative_connectivity_fn
 
     def set_lemmas(self, story_lemmas: Set[str], persona_only_lemmas: Set[str]):
-        """Set story and persona lemmas for provenance checking."""
         self._story_lemmas = story_lemmas
         self._persona_only_lemmas = persona_only_lemmas
 
     @property
     def viz_positions(self) -> Dict[str, Tuple[float, float]]:
-        """Get current visualization positions."""
         return self._viz_positions
 
     @viz_positions.setter
     def viz_positions(self, value: Dict[str, Tuple[float, float]]):
-        """Set visualization positions."""
         self._viz_positions = value
 
     def set_layout_depth(self, depth: int):
-        """Update layout depth."""
         self._layout_depth = depth
-
-    # =========================================================
-    # TRIPLET FILTERING FOR PLOT
-    # =========================================================
 
     def get_filtered_triplets_for_plot(
         self,
         triplets: List[Tuple[str, str, str]],
         active_node_names: Set[str],
     ) -> List[Tuple[str, str, str]]:
-        """Filter triplets to only show active nodes."""
         return [
             (s, r, o)
             for (s, r, o) in triplets
             if s in active_node_names and o in active_node_names
         ]
-
-    # =========================================================
-    # GRAPH SNAPSHOT
-    # =========================================================
 
     def plot_graph_snapshot(
         self,
@@ -119,17 +97,18 @@ class PlotOps:
         output_path: Optional[str] = None,
         plot_fn: callable = None,
     ) -> Optional[str]:
-        """Plot graph snapshot for a sentence."""
         if plot_fn is None:
             return None
 
         # Filter triplets to active nodes only
         active_nodes, _ = self._graph.get_active_subgraph()
         active_node_names = {n.get_text_representer() for n in active_nodes}
-        filtered_triplets = self.get_filtered_triplets_for_plot(triplets, active_node_names)
+        filtered_triplets = self.get_filtered_triplets_for_plot(
+            triplets, active_node_names
+        )
 
         if not filtered_triplets:
-            logging.warning(f"[Plot] No active triplets for sentence {sentence_idx}")
+            logging.warning(f"No active triplets for sentence {sentence_idx}")
             return None
 
         # Determine output path
@@ -142,7 +121,7 @@ class PlotOps:
                 f"sentence_{sentence_idx}.png",
             )
 
-        # Create directory if needed
+        # Create directory
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
         # Get node categories
@@ -151,7 +130,9 @@ class PlotOps:
 
         # Compute newly activated nodes
         current_active = set(active_node_names)
-        newly_activated = current_active - {n.get_text_representer() for n in self._prev_active_nodes}
+        newly_activated = current_active - {
+            n.get_text_representer() for n in self._prev_active_nodes
+        }
 
         # Call plot function
         self._viz_positions = plot_fn(
@@ -174,17 +155,11 @@ class PlotOps:
         return output_path
 
     def _sanitize_filename(self, name: str, max_len: int = 80) -> str:
-        """Sanitize string for use in filename."""
-        import re
         name = (name or "").replace("\n", " ").strip()
         name = name[:max_len]
         name = re.sub(r"[\\/:*?\"<>|]", "_", name)
         name = re.sub(r"\s+", "_", name)
         return name or "unknown"
-
-    # =========================================================
-    # SENTENCE PLOT
-    # =========================================================
 
     def plot_sentence(
         self,
@@ -198,7 +173,6 @@ class PlotOps:
         plot_fn: callable = None,
         matrix_suffix: Optional[str] = None,
     ) -> Optional[str]:
-        """Plot a sentence with full context."""
         if plot_fn is None:
             return None
 
@@ -207,7 +181,9 @@ class PlotOps:
         active_node_names = {n.get_text_representer() for n in active_nodes}
 
         # Filter triplets
-        filtered_triplets = self.get_filtered_triplets_for_plot(triplets, active_node_names)
+        filtered_triplets = self.get_filtered_triplets_for_plot(
+            triplets, active_node_names
+        )
 
         if not filtered_triplets:
             return None
@@ -236,8 +212,7 @@ class PlotOps:
 
         # Recently deactivated
         deactivated_names = {
-            n.get_text_representer()
-            for n in self._cumulative_deactivated_nodes
+            n.get_text_representer() for n in self._cumulative_deactivated_nodes
         }
 
         self._viz_positions = plot_fn(
@@ -257,10 +232,6 @@ class PlotOps:
 
         return output_path
 
-    # =========================================================
-    # FULL GRAPH SNAPSHOT (from core.py _plot_graph_snapshot)
-    # =========================================================
-
     def plot_graph_snapshot_full(
         self,
         sentence_index: int,
@@ -278,13 +249,6 @@ class PlotOps:
         active_triplets_for_overlay: Optional[List[Tuple[str, str, str]]] = None,
         property_nodes: Optional[List[str]] = None,
     ) -> None:
-        """
-        Full graph snapshot plotting (extracted from core.py).
-
-        This is the comprehensive plotting method with all AMoC v4 features.
-        """
-        from amoc.graph.node import NodeSource
-        from amoc.viz.graph_plots import plot_amoc_triplets
 
         # ==========================================================================
         # DEFENSIVE GUARD: Ensure sentence_text never contains prompt scaffolding
@@ -293,10 +257,10 @@ class PlotOps:
         for pattern in self.PROMPT_CONTAMINATION_PATTERNS:
             if sentence_text_lower.startswith(pattern):
                 logging.error(
-                    "[BUG] Prompt scaffolding leaked into sentence_text: %s",
+                    "Prompt leaked into sentence_text: %s",
                     sentence_text[:100],
                 )
-                sentence_text = sentence_text[len(pattern):].strip()
+                sentence_text = sentence_text[len(pattern) :].strip()
                 break
 
         # Route per-sentence plots into mode-specific subfolders
@@ -309,8 +273,11 @@ class PlotOps:
         triplets = (
             triplets_override
             if triplets_override is not None
-            else (self._graph_edges_to_triplets_fn(only_active=only_active)
-                  if self._graph_edges_to_triplets_fn else [])
+            else (
+                self._graph_edges_to_triplets_fn(only_active=only_active)
+                if self._graph_edges_to_triplets_fn
+                else []
+            )
         )
 
         # Build ACTIVE snapshot for safe plotting
@@ -384,7 +351,7 @@ class PlotOps:
                 }
             )
 
-            # ever_explicit is monotonic
+            # ever_explicit
             ever_explicit_nodes_for_plot = sorted(
                 {
                     node.get_text_representer()
@@ -416,7 +383,8 @@ class PlotOps:
             # Get edge activation scores
             edge_activation_scores = (
                 self._get_edge_activation_scores_fn()
-                if self._get_edge_activation_scores_fn else {}
+                if self._get_edge_activation_scores_fn
+                else {}
             )
 
             saved_path = plot_amoc_triplets(
@@ -450,25 +418,21 @@ class PlotOps:
 
             if triplets:
                 logging.info(
-                    "[Plot] Saved sentence %d graph to %s", sentence_index, saved_path
+                    "Plot: Saved sentence %d graph to %s", sentence_index, saved_path
                 )
             elif explicit_nodes:
                 logging.info(
-                    "[Plot] Saved sentence %d graph (explicit nodes only) to %s",
+                    "Plot: Saved sentence %d graph explicit nodes only to %s",
                     sentence_index,
                     saved_path,
                 )
             else:
                 logging.info(
-                    "[Plot] Sentence %d graph empty (no explicit nodes, no edges)",
+                    "Plot: Sentence %d graph empty (no explicit nodes, no edges)",
                     sentence_index,
                 )
         except Exception:
             logging.error("Failed to plot graph snapshot", exc_info=True)
-
-    # =========================================================
-    # SENTENCE VIEWS PLOTTING (from core.py _plot_sentence)
-    # =========================================================
 
     def plot_sentence_views(
         self,
@@ -483,14 +447,7 @@ class PlotOps:
         explicit_nodes_current_sentence: Set["Node"],
         reconstruct_semantic_triplets_fn: callable,
     ) -> None:
-        """
-        Plot sentence with active and cumulative views.
-
-        Extracted from core.py _plot_sentence method.
-        """
-        from amoc.graph.node import NodeType
-
-        # Active (salience) view - use per-sentence view for clean isolation
+        # Active view - use per-sentence view for clean isolation
         if per_sentence_view is not None:
             active_nodes = set(per_sentence_view.explicit_nodes) | set(
                 per_sentence_view.carryover_nodes
@@ -518,15 +475,12 @@ class PlotOps:
 
         # PROJECTION CONTINUITY + EXPLICIT FALLBACK
         if not active_triplets and explicit_nodes_for_plot:
-            logging.debug(
-                "[Projection] No active edges — plotting explicit nodes only."
-            )
+            logging.debug("No active edges — plotting explicit nodes only.")
             active_triplets = []
 
         # Store current projection snapshot for next iteration
         self._previous_active_triplets = list(active_triplets)
 
-        # AMoC-v4 FIGURE 7 COMPLIANCE: Collect PROPERTY nodes for blue coloring
         property_nodes_for_plot = sorted(
             filter(
                 None,
@@ -538,7 +492,7 @@ class PlotOps:
             )
         )
 
-        # AMoCv4 surface-relation format: edges ARE the semantic triplets
+        # edges ARE the semantic triplets
         if per_sentence_view is not None:
             active_edge_pairs = {
                 (

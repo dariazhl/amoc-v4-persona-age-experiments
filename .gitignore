@@ -20,3 +20,7 @@ correlation_matrix.py
 create_grid_sentences_same_persona.py
 parse_tasa.py
 quick_stats.py
+amoc/graph/connectvity_invariants.py
+*.patch
+tests/*
+pytest.ini

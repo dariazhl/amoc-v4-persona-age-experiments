@@ -14,10 +14,10 @@ class NodeType(Enum):
 
 
 class NodeRole(Enum):
-    ACTOR = 1  # Persons, agents (typically nsubj)
-    OBJECT = 2  # Things (typically dobj)
-    PROPERTY = 3  # Adjectives (attributes)
-    SETTING = 4  # Locations, environments (typically pobj)
+    ACTOR = 1
+    OBJECT = 2
+    PROPERTY = 3
+    SETTING = 4
 
 
 class NodeSource(Enum):
@@ -26,8 +26,8 @@ class NodeSource(Enum):
 
 
 class NodeProvenance(Enum):
-    STORY_TEXT = 1  # Node derived from story sentence tokens
-    INFERRED_FROM_STORY = 2  # Node inferred by LLM but validated against story
+    STORY_TEXT = 1
+    INFERRED_FROM_STORY = 2
 
 
 class Node:
@@ -99,7 +99,7 @@ class Node:
     def get_text_representer(self) -> str:
         DETERMINERS = {"the", "a", "an"}
         best = max(self.actual_texts, key=self.actual_texts.get)
-        # Safety: strip leading determiners
+
         words = best.split()
         while words and words[0].lower() in DETERMINERS:
             words.pop(0)

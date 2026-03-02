@@ -29,7 +29,7 @@ from amoc.nlp.highlights import blue_nodes_from_text
 def parse_args(argv: List[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
-            "Run AMoCv4 over persona CSVs using age-aware, persona-aware prompts."
+            "Run AMoCv4 over persona CSVs using age-aware and persona-aware prompts"
         )
     )
 
@@ -46,14 +46,14 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         "--max-rows",
         type=int,
         default=None,
-        help="Optional limit on rows per CSV (for testing).",
+        help="Optional limit on rows per CSV",
     )
 
     p.add_argument(
         "--no-replace-pronouns",
         dest="replace_pronouns",
         action="store_false",
-        help="Disable pronoun resolution (enabled by default).",
+        help="Disable pronoun resolution",
     )
     p.set_defaults(replace_pronouns=True)
 
@@ -63,44 +63,44 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         type=int,
         default=1,
         dest="tp_size",
-        help="Tensor parallel size for vLLM.",
+        help="Tensor parallel size for vLLM",
     )
 
     p.add_argument(
         "--resume-only",
         action="store_true",
-        help="Only process personas not yet completed (checkpoint-based).",
+        help="Only process personas not yet completed",
     )
 
     p.add_argument(
         "--output-dir",
         default=None,
-        help="Output directory for extracted triplets (overrides config).",
+        help="Output directory for extracted triplets",
     )
 
     p.add_argument(
         "--plot-after-each-sentence",
         action="store_true",
-        help="Plot a graph after each sentence for a specific persona.",
+        help="Plot a graph after each sentence for a specific persona",
     )
 
     p.add_argument(
         "--plot-final-graph",
         action="store_true",
-        help="Plot a single final graph per persona (disables per-sentence plotting).",
+        help="Plot a single final graph per persona",
     )
 
     p.add_argument(
         "--plot-largest-component-only",
         action="store_true",
         dest="plot_largest_component_only",
-        help="Keep only the largest connected component when plotting.",
+        help="Keep only the largest connected component when plotting",
     )
     p.add_argument(
         "--plot-all-components",
         action="store_false",
         dest="plot_largest_component_only",
-        help="Plot all connected components (default).",
+        help="Plot all connected components",
     )
     p.set_defaults(plot_largest_component_only=False)
 
@@ -119,9 +119,8 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         help=(
-            "When enabled (default), new edges must touch the current sentence AND "
-            "the active neighborhood and anchor. Disable to allow edges that touch "
-            "either the current sentence or the active neighborhood (still anchored)."
+            "When enabled new edges must touch the current sentence AND "
+            "the active neighborhood and anchor"
         ),
     )
 
@@ -129,65 +128,48 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         "--single-anchor-hub",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help=(
-            "Keep a single anchor hub that every edge must touch (default). "
-            "Disable to allow the anchor set to grow when touched."
-        ),
+        help=("Keep a single anchor hub that every edge must touch "),
     )
 
     p.add_argument(
         "--edge-visibility",
         type=int,
         default=None,
-        help="Override edge visibility score (default uses value from amoc.config.constants).",
+        help="Override edge visibility score (default uses value from amoc.config.constants",
     )
 
     p.add_argument(
         "--include-inactive-edges",
         action="store_true",
-        help="Include inactive (forgotten) edges in CSV export and plots (default: export/plot only active edges).",
+        help="Include inactive edges in CSV export ",
     )
-
-    # p.add_argument(
-    #     "--educational-regime",
-    #     type=str,
-    #     default=None,
-    #     help=(
-    #         "Educational regime to process (e.g. primary, highschool). "
-    #         "If set, only CSVs matching <regime>_*.csv are processed."
-    #     ),
-    # )
 
     p.add_argument(
         "--file",
         type=str,
         required=True,
-        help="Path to a single persona CSV chunk file to process.",
+        help="Path to a single persona CSV chunk file to process",
     )
 
     p.add_argument(
         "--story-text",
         type=str,
         default=None,
-        help="Override the default AMoC story text; defaults to configured STORY_TEXT when omitted.",
+        help="Override the default AMoC story text; defaults to configured knight STORY_TEXT ",
     )
 
     p.add_argument(
         "--allow-multi-edges",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help=(
-            "Allow multiple edges between the same ordered node pair (experimental). "
-            "Default (disabled) enforces paper-aligned single-edge policy where later "
-            "relations replace earlier ones."
-        ),
+        help=("Allow multiple edges between the same ordered node pair"),
     )
 
     p.add_argument(
         "--checkpoint",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Enable checkpoint mode for edges (default: disabled).",
+        help="Enable checkpoint mode for edges",
     )
 
     return p.parse_args(argv)
@@ -210,7 +192,7 @@ def load_story_text_from_arg(story_text_arg: str) -> str:
 
         # Normalize line endings
         text = text.replace("\r\n", "\n").replace("\r", "\n")
-        text = re.sub(r"\n{3,}", "\n\n", text)  # Collapse multiple newlines to max 2
+        text = re.sub(r"\n{3,}", "\n\n", text)
 
         return text.strip()
 
@@ -224,14 +206,7 @@ def main(argv: List[str]) -> None:
     if not model_names:
         raise SystemExit("--models must contain at least one model")
 
-    # --- Load spaCy ONCE per process ---
     spacy_nlp = load_spacy()
-    if spacy_nlp is None:
-        raise RuntimeError("spaCy failed to load")
-
-    # --- Discover input files ---
-    if not os.path.isfile(args.file):
-        raise RuntimeError(f"Input file does not exist: {args.file}")
 
     files_to_process = [args.file]
 
@@ -293,7 +268,6 @@ def main(argv: List[str]) -> None:
         elapsed = time.time() - total_start
         print(f"\nExtraction phase finished in {elapsed:.2f} seconds")
 
-        # Leader-only cumulative statistics:
         if is_leader():
             for model in model_names:
                 try:
@@ -303,7 +277,7 @@ def main(argv: List[str]) -> None:
                         f"Statistical analysis failed for {model}: {e}",
                         exc_info=True,
                     )
-                    print(f"[ERROR] Statistics failed for {model}")
+                    print(f"Statistics failed for {model}")
 
 
 if __name__ == "__main__":

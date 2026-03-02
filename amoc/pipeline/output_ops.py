@@ -1,12 +1,8 @@
-# amoc/pipeline/output_ops.py
-"""
-Output finalization operations extracted from core.py.
-Internal helper class - not a public API.
-"""
 from typing import TYPE_CHECKING, Optional, List, Tuple, Dict, Set
 import os
 import logging
 import pandas as pd
+import re
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
@@ -14,8 +10,6 @@ if TYPE_CHECKING:
 
 
 def _sanitize_filename_component(component: str, max_len: int = 80) -> str:
-    """Sanitize string for use in filename."""
-    import re
     component = (component or "").replace("\n", " ").strip()
     component = component[:max_len]
     component = re.sub(r"[\\/:*?\"<>|]", "_", component)
@@ -24,11 +18,6 @@ def _sanitize_filename_component(component: str, max_len: int = 80) -> str:
 
 
 class OutputOps:
-    """
-    Encapsulates output finalization logic.
-    Injected with references to parent state - does not own state.
-    """
-
     def __init__(
         self,
         graph_ref: "Graph",
@@ -45,10 +34,6 @@ class OutputOps:
         self._story_text = story_text
         self._matrix_dir_base = matrix_dir_base
 
-    # =========================================================
-    # OUTPUT FINALIZATION
-    # =========================================================
-
     def finalize_outputs(
         self,
         amoc_matrix_records: List[Dict],
@@ -60,11 +45,6 @@ class OutputOps:
         sentence_triplets: List,
         matrix_suffix: Optional[str] = None,
     ) -> Tuple[List, List, List]:
-        """
-        Finalize outputs after sentence loop.
-
-        Creates matrix, saves CSV, and returns triplet data.
-        """
         # Save score matrix
         df = pd.DataFrame(amoc_matrix_records)
 
@@ -116,7 +96,7 @@ class OutputOps:
 
         matrix.to_csv(matrix_path)
         logging.info(
-            "[Matrix] Saved activation matrix for persona '%s' to %s",
+            "Saved activation matrix for persona '%s' to %s",
             self._persona,
             matrix_path,
         )
@@ -126,7 +106,9 @@ class OutputOps:
         final_sentence_idx = current_sentence_index
 
         final_triplets = []
-        current_nodes = explicit_nodes_current_sentence | get_nodes_with_active_edges_fn()
+        current_nodes = (
+            explicit_nodes_current_sentence | get_nodes_with_active_edges_fn()
+        )
 
         for subj, rel, obj in reconstruct_semantic_triplets_fn(
             only_active=True, restrict_nodes=current_nodes
@@ -148,7 +130,7 @@ class OutputOps:
             intro = triplet_intro.get((subj, rel, obj), -1)
             cumulative_triplets.append((subj, rel, obj, int(intro)))
 
-        # AMoCv4 HARD CONSTRAINTS - Validate surface-relation format
+        # validations
         self._graph.validate_amocv4_constraints()
         self._graph.sanity_check_readable_triplets()
 

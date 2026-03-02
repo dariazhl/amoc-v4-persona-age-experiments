@@ -56,12 +56,7 @@ AGE_BIN_ORDER = [
 def normalize_age_bin(x: str | None) -> str | None:
     if pd.isna(x):
         return None
-    return (
-        str(x)
-        .strip()
-        .replace("-", "–")  # force EN-DASH
-        .replace("—", "–")  # em-dash → en-dash
-    )
+    return str(x).strip().replace("-", "–").replace("—", "–")
 
 
 def normalize_regime(s: pd.Series) -> pd.Series:
@@ -90,7 +85,7 @@ def winsorize_by_age(
 
     for age, g in df.groupby(age_col, observed=True):
         if len(g) < min_n:
-            # too few samples → leave untouched
+            # too few samples - skip
             continue
 
         q1 = g[metric_col].quantile(0.25)
@@ -133,9 +128,7 @@ def winsorize_by_group(
     return df
 
 
-# ---------------------------------------------
 # Kruskal-Willis test = 1-way ANOVA
-# ---------------------------------------------
 def _run_kruskal(df: pd.DataFrame, metric: str) -> None:
     groups = [
         g[metric].dropna().values
@@ -148,9 +141,7 @@ def _run_kruskal(df: pd.DataFrame, metric: str) -> None:
         print(f"  Kruskal–Wallis H={h:.3f}, p={p:.4g}")
 
 
-# --------------------------------------------
 # Attach persona attributes to persona stats
-# ---------------------------------------------
 def attach_persona_attributes(
     df_stats: pd.DataFrame,
     refined_age_dir: str,
@@ -171,7 +162,6 @@ def attach_persona_attributes(
     if not files:
         raise RuntimeError(f"No refined-age files found in {refined_age_dir}")
 
-    # ---- load refined-age data
     dfs = []
     for path in files:
         df = pd.read_csv(path)
@@ -182,7 +172,6 @@ def attach_persona_attributes(
 
         dfs.append(df[list(required_cols)])
 
-    # ---- concatenate + deduplicate
     all_attrs = pd.concat(dfs, ignore_index=True)
 
     # warn on duplicate persona ids
@@ -193,15 +182,12 @@ def attach_persona_attributes(
 
     attrs = all_attrs.drop_duplicates(subset="persona_text")
 
-    # ---- merge
+    # merge
     df_merged = df_stats.merge(
         attrs[["persona_text", "age_refined"]],
         on="persona_text",
         how="left",
     )
-
-    # ---- post-merge sanity checks
-    assert len(df_merged) == len(df_stats), "Merge changed row count"
 
     n_missing = df_merged["age_refined"].isna().sum()
     if n_missing > 0:
@@ -213,9 +199,6 @@ def attach_persona_attributes(
     return df_merged
 
 
-# ---------------------------------------------
-# Main analysis entry point
-# ---------------------------------------------
 def run_cleaned_regime_analysis(
     input_dir: str,
     model: str,
@@ -274,9 +257,6 @@ def run_cleaned_regime_analysis(
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # -----------------------------------------
-    # Non-age plots
-    # -----------------------------------------
     if plots:
         for metric in QUANTILE_TRIM_METRICS:
             if metric not in df_q.columns:
@@ -308,18 +288,13 @@ def run_cleaned_regime_analysis(
             )
             _run_kruskal(df_w, metric)
 
-    # -----------------------------------------
     # Age plots
-    # -----------------------------------------
     if plots_age:
-        # age_refined already present from aggregation
         if "age_refined" not in df_q.columns:
             raise RuntimeError("age_refined missing from df_q")
 
         if "age_refined" not in df_w.columns:
             raise RuntimeError("age_refined missing from df_w")
-        # df_q = attach_persona_attributes(df_q, refined_age_dir)
-        # df_w = attach_persona_attributes(df_w, refined_age_dir)
 
         print("Age_refined summary:")
         print(df_q["age_refined"].describe())
@@ -389,16 +364,6 @@ def run_cleaned_regime_analysis(
         )
         plot_age_ecdf(df_q, age_out_dir, f"{model}_age_quantile_trimmed")
 
-        # # ---- quantile-trimmed - not used for now
-        # plot_age_violin(df_q, age_out_dir, f"{model}_age_quantile_trimmed")
-        # plot_age_box(df_q, age_out_dir, f"{model}_age_quantile_trimmed")
-        # plot_age_median_ci(df_q, age_out_dir, f"{model}_age_quantile_trimmed")
-
-        # # ---- winsorized - not used for now
-        # plot_age_violin(df_w, age_out_dir, f"{model}_age_iqr_winsorized")
-        # plot_age_ecdf(df_w, age_out_dir, f"{model}_age_iqr_winsorized")
-        # plot_age_box(df_w, age_out_dir, f"{model}_age_iqr_winsorized")
-        # plot_age_median_ci(df_w, age_out_dir, f"{model}_age_iqr_winsorized")
         age_metric_out = os.path.join(output_dir, "age_metrics")
         os.makedirs(age_metric_out, exist_ok=True)
         for metric in QUANTILE_TRIM_METRICS + IQR_WINSORIZED_METRICS:

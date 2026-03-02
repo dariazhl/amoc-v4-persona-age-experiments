@@ -226,11 +226,6 @@ class SentenceOps:
             sentence_index=sentence_index,
             repair_callback=None,
         )
-
-        # NOTE: No "relates_to" fallback edges created here.
-        # ConnectivityOps.enforce_connectivity() is the ONLY authority for fallback edges.
-        # Any connectivity issues will be handled by the caller invoking enforce_connectivity().
-
         self._per_sentence_view = view
         return view
 

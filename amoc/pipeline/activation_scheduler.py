@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from amoc.graph.edge import Edge
 
 
-class ActivationOps:
+class ActivationScheduler:
     def __init__(
         self,
         graph_ref: "Graph",
@@ -25,7 +25,6 @@ class ActivationOps:
         self._edge_visibility = edge_visibility
         self._nr_relevant_edges = nr_relevant_edges
         self._strict_reactivate = strict_reactivate
-        # State refs
         self._anchor_nodes: Set["Node"] = set()
         self._current_sentence_index = None
         self._record_edge_fn = None
@@ -206,7 +205,7 @@ class ActivationOps:
     ) -> None:
 
         def _to_landscape_score(raw_score: float) -> float:
-            # Transform AMoC "distance" style (0=most active) into Landscape style (5=most active).
+            # Transform AMoC "distance" style (0 -> most active) into Landscape style (5 -> most active).
             val = 5.0 - float(raw_score)
             if val < 0.0:
                 return 0.0

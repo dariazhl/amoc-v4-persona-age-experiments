@@ -29,7 +29,6 @@ class SentenceProcessingOps:
         self.context_length = context_length
         self.debug = debug
 
-        # Callbacks to be set by parent
         self._normalize_endpoint_text_fn = None
         self._normalize_edge_label_fn = None
         self._is_valid_relation_label_fn = None
@@ -198,7 +197,7 @@ class SentenceProcessingOps:
             prev_sentences.pop(0)
 
         logging.debug(
-            "[Activation] Sentence %d: edges reset inactive at sentence start",
+            "Sentence %d: edges reset inactive at sentence start",
             i,
         )
 
@@ -346,7 +345,7 @@ class SentenceProcessingOps:
             current_sentence=current_sentence_index,
         )
         logging.debug(
-            "[Activation] Reactivated %d memory edges within distance %d",
+            "Reactivated %d memory edges within distance %d",
             len(reactivated_edges),
             self.max_distance_from_active_nodes,
         )
@@ -379,9 +378,6 @@ class SentenceProcessingOps:
             explicit_nodes_current_sentence,
             anchor_nodes,
         )
-
-        # NOTE: Deterministic connectivity repair removed - ConnectivityOps.enforce_connectivity()
-        # is the single authority, called in core.py after sentence processing completes.
 
         self._ensure_explicit_nodes_have_edges(
             explicit_nodes_current_sentence,
@@ -423,7 +419,7 @@ class SentenceProcessingOps:
         for idx, relationship in enumerate(new_relationships):
             if relationship is None or isinstance(relationship, (int, float, bool)):
                 logging.error(
-                    f"[AMoC] Skipping non-iterable relationship at {idx}: {relationship!r}"
+                    f"Skipping non-iterable relationship at {idx}: {relationship!r}"
                 )
                 continue
 
@@ -433,14 +429,14 @@ class SentenceProcessingOps:
                 obj = relationship.get("object") or relationship.get("tail")
                 if not (subj and rel and obj):
                     logging.error(
-                        f"[AMoC] Skipping malformed dict relationship at {idx}: {relationship!r}"
+                        f"Skipping malformed dict relationship at {idx}: {relationship!r}"
                     )
                     continue
                 relationship = (str(subj), str(rel), str(obj))
 
             if not isinstance(relationship, (list, tuple)):
                 logging.error(
-                    f"[AMoC] Skipping unexpected relationship type at {idx}: {type(relationship)} → {relationship!r}"
+                    f"Skipping unexpected relationship type at {idx}: {type(relationship)} → {relationship!r}"
                 )
                 continue
 
@@ -450,7 +446,7 @@ class SentenceProcessingOps:
 
             if len(relationship) != 3:
                 logging.error(
-                    f"[AMoC] Skipping relationship with wrong length at {idx}: {relationship!r}"
+                    f"Skipping relationship with wrong length at {idx}: {relationship!r}"
                 )
                 continue
 
@@ -513,7 +509,7 @@ class SentenceProcessingOps:
                 source_node, dest_node = dest_node, source_node
                 edge_label = canon_label
                 logging.debug(
-                    "[EdgeDirection] Swapped direction: %s → %s (label: %s)",
+                    "Swapped direction: %s → %s (label: %s)",
                     canon_src,
                     canon_dst,
                     edge_label,
@@ -581,12 +577,6 @@ class SentenceProcessingOps:
         explicit_nodes_current_sentence: set,
         anchor_nodes: set,
     ):
-        """
-        Ensure active graph connectivity.
-
-        Delegates to StabilityOps.enforce_connectivity() (canonical authority).
-        Only logs if deterministic repair fails.
-        """
         carryover = (
             self._carryover_nodes_ref()
             if callable(self._carryover_nodes_ref)
@@ -602,7 +592,7 @@ class SentenceProcessingOps:
 
         if not connected:
             logging.debug(
-                "[Connectivity] Deterministic repair failed — LLM repair needed",
+                "Deterministic repair failed — LLM repair needed",
             )
 
     def _ensure_explicit_nodes_have_edges(
@@ -610,18 +600,12 @@ class SentenceProcessingOps:
         explicit_nodes_current_sentence: set,
         current_sentence_text: str,
     ):
-        """
-        Attempt LLM repair for explicit nodes without active edges.
-
-        NOTE: This method does NOT create "relates_to" fallback edges.
-        ConnectivityOps.enforce_connectivity() is the ONLY authority for fallback edges.
-        """
         active_nodes = self._get_nodes_with_active_edges_fn()
 
         for node in explicit_nodes_current_sentence:
             if node not in active_nodes:
                 logging.debug(
-                    "[ExplicitRepair] Node '%s' has no active edge — invoking LLM repair.",
+                    "Node '%s' has no active edge — invoking LLM repair.",
                     node.get_text_representer(),
                 )
 
@@ -670,8 +654,6 @@ class SentenceProcessingOps:
                                 edge.mark_as_asserted(reset_score=True)
                                 break
 
-        # NOTE: No "relates_to" fallback here - ConnectivityOps handles that
-
     def _handle_empty_projection_retry(
         self,
         explicit_nodes_current_sentence: set,
@@ -691,7 +673,7 @@ class SentenceProcessingOps:
 
         if not current_active_nodes:
             logging.warning(
-                "[Invariant] Empty projection at sentence %d. Retrying once.",
+                "Empty projection at sentence %d. Retrying once.",
                 self._current_sentence_index,
             )
 
@@ -757,7 +739,7 @@ class SentenceProcessingOps:
             )
 
             if not self._get_nodes_with_active_edges_fn():
-                logging.error("[Invariant] Retry failed. Hard revert triggered.")
+                logging.error("Retry failed. Hard revert triggered.")
                 return True
 
         return False
@@ -796,13 +778,6 @@ class SentenceProcessingOps:
         apply_global_edge_decay_fn: callable,
         decay_node_activation_fn: callable,
     ) -> None:
-        """
-        Apply decay and stability operations after sentence processing.
-
-        NOTE: Does NOT enforce connectivity - that is handled by
-        ConnectivityOps.enforce_connectivity() as the single authority.
-        """
         apply_global_edge_decay_fn()
         self.graph.enforce_cumulative_stability(set(explicit_nodes))
         decay_node_activation_fn()
-        # Carryover connectivity is handled by ConnectivityOps.enforce_connectivity()

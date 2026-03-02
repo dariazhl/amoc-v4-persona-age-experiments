@@ -24,6 +24,6 @@ def build_persona_stats(triplet_files: List[str]) -> pd.DataFrame:
         stats_dfs.append(df)
 
     if not stats_dfs:
-        raise RuntimeError("No usable stats produced.")
+        raise RuntimeError("No usable stats produced")
 
     return pd.concat(stats_dfs, ignore_index=True)

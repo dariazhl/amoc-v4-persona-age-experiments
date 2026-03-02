@@ -5,6 +5,13 @@ if TYPE_CHECKING:
     from amoc.graph.graph import Graph
     from amoc.graph.node import Node, NodeType, NodeSource, NodeProvenance
     from spacy.tokens import Span
+    from amoc.nlp.spacy_utils import (
+        get_concept_lemmas,
+        canonicalize_node_text,
+        get_concept_lemmas,
+        get_semantic_class,
+        get_content_words_from_sent,
+    )
 
 
 class NodeOps:
@@ -43,18 +50,15 @@ class NodeOps:
         provenance: str,
         sent: Optional["Span"] = None,
     ) -> bool:
-        from amoc.graph.node import NodeType
 
         lemma = (lemma or "").lower().strip()
 
         if not lemma:
             return False
 
-        # Delegate length policy to canonical authority (ProvenanceOps)
         if not self._graph._provenance_ops.passes_length_policy(lemma):
             return False
 
-        # Hard provenance guard
         if provenance in {
             "LLM_PROMPT",
             "GRAPH_SERIALIZATION",
@@ -64,7 +68,6 @@ class NodeOps:
         }:
             return False
 
-        # Explicit nodes cannot be verbs
         if provenance == "STORY_EXPLICIT":
             if sent is None:
                 return False
@@ -78,7 +81,6 @@ class NodeOps:
                 if tok.pos_ in {"VERB", "AUX"}:
                     return False
 
-        # STORY_EXPLICIT admission
         if provenance == "STORY_EXPLICIT":
             if lemma not in self._story_lemmas:
                 if lemma.endswith("s") and lemma[:-1] in self._story_lemmas:
@@ -119,6 +121,7 @@ class NodeOps:
         is_new = lemma not in self._ever_admitted_nodes
         self._ever_admitted_nodes.add(lemma)
 
+        # Set limits max no. nodes
         if is_new:
             total_nodes = len(self._ever_admitted_nodes)
 
@@ -131,10 +134,6 @@ class NodeOps:
 
         return True
 
-    # =========================================================
-    # PROVENANCE VALIDATION
-    # =========================================================
-
     def validate_node_provenance(
         self,
         lemma: str,
@@ -142,20 +141,12 @@ class NodeOps:
         *,
         allow_bootstrap: bool = False,
     ) -> bool:
-        """
-        Validate that a node has proper provenance.
-        Per AMoC v4 paper: Nodes must come from STORY TEXT only.
-        """
-        from amoc.nlp.spacy_utils import get_semantic_class
-
         lemma_lower = lemma.lower()
 
         # HARD GATE 1: Reject persona-only lemmas
         if lemma_lower in self._persona_only_lemmas:
             if self._debug:
-                logging.debug(
-                    f"PROVENANCE GATE: Rejected persona-only lemma '{lemma_lower}'"
-                )
+                logging.debug(f"Rejected persona-only lemma '{lemma_lower}'")
             return False
 
         # HARD GATE 2: Must appear in story text
@@ -173,7 +164,7 @@ class NodeOps:
         existing_node = self._graph.get_node([lemma_lower])
         if existing_node is not None:
             if self._debug:
-                logging.debug(f"PROVENANCE GATE: Graph grounding for '{lemma_lower}'")
+                logging.debug(f"Graph grounding for '{lemma_lower}'")
             return True
 
         candidate_class = get_semantic_class(lemma_lower)
@@ -186,7 +177,7 @@ class NodeOps:
                 if node_class == candidate_class:
                     if self._debug:
                         logging.debug(
-                            f"PROVENANCE GATE: Semantic-class grounding "
+                            f"Semantic-class grounding "
                             f"'{lemma_lower}' via class '{candidate_class}'"
                         )
                     return True
@@ -196,26 +187,19 @@ class NodeOps:
             return True
 
         if self._debug:
-            logging.debug(
-                f"PROVENANCE GATE: Rejected lemma '{lemma_lower}' - not grounded"
-            )
+            logging.debug(f"Rejected lemma '{lemma_lower}' - not grounded")
         return False
 
     def validate_node_provenance_strict(
         self,
         lemma: str,
     ) -> bool:
-        """Strict validation - lemma must be in story text."""
         lemma_lower = lemma.lower()
 
         if lemma_lower in self._persona_only_lemmas:
             return False
 
         return lemma_lower in self._story_lemmas
-
-    # =========================================================
-    # NODE LOOKUP AND CREATION
-    # =========================================================
 
     def get_node_from_text(
         self,
@@ -225,9 +209,6 @@ class NodeOps:
         node_source: "NodeSource",
         create_node: bool,
     ) -> Optional["Node"]:
-        """Get or create node from text."""
-        from amoc.nlp.spacy_utils import get_concept_lemmas
-
         if text in curr_sentences_words:
             return curr_sentences_nodes[curr_sentences_words.index(text)]
 
@@ -259,10 +240,6 @@ class NodeOps:
         node_source: "NodeSource",
         create_node: bool,
     ) -> Optional["Node"]:
-        """Get or create node from new relationship extraction."""
-        from amoc.nlp.spacy_utils import get_concept_lemmas
-        from amoc.graph.node import NodeProvenance
-
         # 1. Exact sentence match
         if text in curr_sentences_words:
             return curr_sentences_nodes[curr_sentences_words.index(text)]
@@ -312,8 +289,6 @@ class NodeOps:
         text: str,
         candidates,
     ) -> Optional["Node"]:
-        """Find node by text among candidates."""
-        from amoc.nlp.spacy_utils import canonicalize_node_text, get_concept_lemmas
 
         canon = canonicalize_node_text(self._spacy_nlp, text)
         lemmas = tuple(get_concept_lemmas(self._spacy_nlp, canon))
@@ -323,19 +298,13 @@ class NodeOps:
         return None
 
     def is_node_grounded(self, node: "Node") -> bool:
-        """Check if node is grounded in story text."""
         for lemma in node.lemmas:
             if lemma.lower() in self._story_lemmas:
                 return True
         return False
 
     def node_token_for_matrix(self, node: "Node") -> str:
-        """Get token representation for matrix."""
         return (node.get_text_representer() or "").strip().lower()
-
-    # =========================================================
-    # ATTACHMENT CONSTRAINT
-    # =========================================================
 
     def passes_attachment_constraint(
         self,
@@ -350,13 +319,6 @@ class NodeOps:
         graph_active_edge_nodes: Optional[Set["Node"]] = None,
         allow_inference_bridge: bool = False,
     ) -> bool:
-        """
-        Check if an edge passes the attachment constraint.
-
-        The attachment constraint ensures new edges connect to existing
-        active/explicit/carryover nodes, preventing disconnected islands.
-        """
-        from amoc.nlp.spacy_utils import canonicalize_node_text, get_concept_lemmas
 
         # Canonicalize
         subject = canonicalize_node_text(self._spacy_nlp, subject)
@@ -369,7 +331,6 @@ class NodeOps:
         if not self._graph.nodes:
             return True
 
-        # --- Build frontier (connected component surface) ---
         active_nodes = set(get_nodes_with_active_edges_fn())
         frontier_nodes = active_nodes | explicit_nodes | carryover_nodes
         frontier_keys = {tuple(n.lemmas) for n in frontier_nodes}
@@ -378,17 +339,12 @@ class NodeOps:
         if subj_key in frontier_keys and obj_key in frontier_keys:
             return True
 
-        # SAFE MULTI-HOP RULE
         # Allow if at least one endpoint touches frontier
         if subj_key in frontier_keys or obj_key in frontier_keys:
             return True
 
-        # Otherwise reject (prevents island creation)
+        # Otherwise reject
         return False
-
-    # =========================================================
-    # TEXT-BASED NODE EXTRACTION
-    # =========================================================
 
     def get_sentences_text_based_nodes(
         self,
@@ -396,15 +352,6 @@ class NodeOps:
         current_sentence_index: int,
         create_unexistent_nodes: bool = True,
     ) -> tuple:
-        """
-        Extract text-based nodes from sentences.
-
-        Creates CONCEPT nodes for nouns and PROPERTY nodes for adjectives.
-        Returns (nodes, words) tuple.
-        """
-        from amoc.graph.node import NodeType, NodeSource, NodeProvenance, NodeRole
-        from amoc.nlp.spacy_utils import get_content_words_from_sent
-
         META_LEMMAS = {"subject", "object", "entity", "concept", "property"}
 
         text_based_nodes: List["Node"] = []
@@ -419,9 +366,6 @@ class NodeOps:
                 if not lemma:
                     continue
 
-                # ------------------------------------------
-                # CONCEPT NODES (nouns / proper nouns)
-                # ------------------------------------------
                 if word.pos_ in {"NOUN", "PROPN"}:
                     if lemma in META_LEMMAS:
                         continue
@@ -456,9 +400,6 @@ class NodeOps:
                     text_based_nodes.append(node)
                     text_based_words.append(lemma)
 
-                # ------------------------------------------
-                # PROPERTY NODES (adjectives)
-                # ------------------------------------------
                 elif word.pos_ == "ADJ" or (
                     word.pos_ == "VERB"
                     and word.tag_ == "VBN"
@@ -499,30 +440,16 @@ class NodeOps:
 
         return unique_nodes, unique_words
 
-    # =========================================================
-    # PHRASE-LEVEL CONCEPT EXTRACTION
-    # =========================================================
-
     def get_phrase_level_concepts(
         self,
         sent: "Span",
         admit_node_fn: callable,
     ) -> List["Node"]:
-        """
-        Extract phrase-level concepts from a sentence per AMoC v4 paper.
-
-        Per paper Figures 2-4:
-        - Node labels are single lowercase lemmas (e.g., "country" not "the country")
-        - Determiners are NEVER included in node labels
-        - Each noun becomes a CONCEPT node, each adjective a PROPERTY node
-        """
-        from amoc.graph.node import NodeType, NodeSource, NodeProvenance
-
         phrase_nodes = []
 
         # spaCy noun chunks = adjective + noun phrases
         for chunk in sent.noun_chunks:
-            # Extract the head noun from the chunk (ignore determiners completely)
+            # Extract the head noun from the chunk
             head_noun = None
             for tok in chunk:
                 if tok.pos_ in {"NOUN", "PROPN"}:
@@ -532,12 +459,9 @@ class NodeOps:
             if head_noun is None:
                 continue
 
-            # CRITICAL FIX: Use single lemma as node key, not full phrase
-            # Per AMoC paper: nodes are "country" not "the country"
+            # AMoC paper: nodes are "country" not "the country"
             lemma = head_noun.lemma_.lower()
 
-            # actual_text should also be the clean lemma (no determiners)
-            # This ensures get_text_representer() returns the clean label
             if not admit_node_fn(
                 lemma=lemma,
                 node_type=NodeType.CONCEPT,

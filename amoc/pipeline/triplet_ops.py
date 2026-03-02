@@ -1,8 +1,3 @@
-# amoc/pipeline/triplet_ops.py
-"""
-Triplet extraction and graph export operations extracted from core.py.
-Internal helper class - not a public API.
-"""
 from typing import TYPE_CHECKING, List, Tuple, Set, Optional, Dict
 import networkx as nx
 
@@ -13,11 +8,6 @@ if TYPE_CHECKING:
 
 
 class TripletOps:
-    """
-    Encapsulates all triplet extraction and graph export logic.
-    Injected with references to parent state - does not own state.
-    """
-
     def __init__(
         self,
         graph_ref: "Graph",
@@ -30,17 +20,9 @@ class TripletOps:
         self._active_graph = active_graph_ref
         self._triplet_intro = triplet_intro_ref
 
-    # =========================================================
-    # TRIPLET EXTRACTION
-    # =========================================================
-
     def graph_edges_to_triplets(
         self, only_active: bool = False
     ) -> List[Tuple[str, str, str]]:
-        """
-        Convert graph edges to triplet list.
-        AMoCv4 surface-relation format: edges ARE the triplets.
-        """
         triplets = []
         for edge in self._graph.edges:
             if only_active and not edge.active:
@@ -62,7 +44,6 @@ class TripletOps:
         return triplets
 
     def graph_to_triplets(self, graph: nx.MultiDiGraph) -> List[Tuple[str, str, str]]:
-        """Convert NetworkX MultiDiGraph to triplet list."""
         triplets = []
         for u, v, data in graph.edges(data=True):
             label = data.get("label", "")
@@ -70,9 +51,6 @@ class TripletOps:
         return triplets
 
     def cumulative_triplets_upto(self, sentence_idx: int) -> List[Tuple[str, str, str]]:
-        """
-        Get cumulative triplets up to a given sentence index.
-        """
         triplets = []
         for edge in self._graph.edges:
             if edge.created_at_sentence is not None:
@@ -95,12 +73,7 @@ class TripletOps:
                 )
         return triplets
 
-    # =========================================================
-    # EDGE KEY UTILITIES
-    # =========================================================
-
     def edge_key(self, edge: "Edge") -> Tuple[str, str, str]:
-        """Get canonical key for an edge."""
         return (
             edge.source_node.get_text_representer(),
             edge.label.lower().strip(),
@@ -108,7 +81,6 @@ class TripletOps:
         )
 
     def get_edge_activation_scores(self) -> Dict[Tuple[str, str, str], int]:
-        """Get activation scores for all edges, keyed by (source, dest, label)."""
         scores = {}
         for edge in self._graph.edges:
             key = (
@@ -121,16 +93,11 @@ class TripletOps:
             scores[(key[0], key[1])] = edge.activation_score
         return scores
 
-    # =========================================================
-    # GRAPH RECORDING
-    # =========================================================
-
     def record_edge_in_graphs(
         self,
         edge: "Edge",
         sentence_idx: Optional[int],
     ) -> None:
-        """Record edge in cumulative and active tracking graphs."""
         src = edge.source_node.get_text_representer()
         dst = edge.dest_node.get_text_representer()
         label = edge.label
@@ -147,19 +114,11 @@ class TripletOps:
         if edge.active:
             self._active_graph.add_edge(src, dst, label=label)
 
-    # =========================================================
-    # SEMANTIC TRIPLET RECONSTRUCTION
-    # =========================================================
-
     def reconstruct_semantic_triplets(
         self,
         only_active: bool = False,
         restrict_nodes: Optional[Set["Node"]] = None,
     ) -> List[Tuple[str, str, str]]:
-        """
-        AMoCv4 surface-relation format: edges ARE the semantic triplets.
-        No reconstruction needed - just filter and return.
-        """
         triplets = []
 
         for edge in self._graph.edges:
@@ -189,14 +148,9 @@ class TripletOps:
 
         return triplets
 
-    # =========================================================
-    # FILTERED TRIPLETS FOR PLOTTING
-    # =========================================================
-
     def get_filtered_triplets_for_plot(
         self, active_only: bool = True
     ) -> List[Tuple[str, str, str]]:
-        """Get triplets filtered for visualization."""
         active_nodes, _ = self._graph.get_active_subgraph()
         active_names = {n.get_text_representer() for n in active_nodes}
 
@@ -207,10 +161,6 @@ class TripletOps:
             for (s, r, o) in triplets
             if s in active_names and o in active_names
         ]
-
-    # =========================================================
-    # SENTENCE TRIPLET CAPTURE
-    # =========================================================
 
     def capture_sentence_triplets(
         self,

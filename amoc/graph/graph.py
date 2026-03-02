@@ -1,7 +1,7 @@
 from amoc.graph.node import Node
 from amoc.graph.node import NodeType, NodeSource, NodeProvenance, NodeRole
 from amoc.graph.edge import Edge
-from amoc.graph.activation_ops import ActivationOps
+from amoc.graph.node_activation_engine import NodeActivationEngine
 from amoc.graph.stability_ops import StabilityOps
 from amoc.graph.provenance_ops import ProvenanceOps
 from typing import List, Set, Dict, Optional, Tuple, Callable
@@ -19,7 +19,7 @@ class Graph:
         self._current_sentence_idx: int = 0
         self._current_sentence_lemmas: Optional[Set[str]] = None
 
-        self._activation_ops = ActivationOps(self)
+        self._activation_ops = NodeActivationEngine(self)
         self._stability_ops = StabilityOps(self)
         self._provenance_ops = ProvenanceOps(self)
 
@@ -147,7 +147,6 @@ class Graph:
             created_at_sentence=created_at_sentence,
         )
 
-        # Delegate edge reinforcement to ActivationOps
         if self._activation_ops.check_and_reinforce_similar_edge(edge, edge_visibility):
             return self._activation_ops.get_similar_edge(edge)
 

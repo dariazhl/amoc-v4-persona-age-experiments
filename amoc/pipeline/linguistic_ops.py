@@ -133,10 +133,7 @@ class LinguisticOps:
                 edge.mark_as_asserted(reset_score=True)
 
         for token in sent:
-
-            # -------------------------
             # Copular: X is ADJ
-            # -------------------------
             if token.dep_ in {"acomp", "attr"} and (
                 token.pos_ == "ADJ" or (token.pos_ == "VERB" and token.tag_ == "VBN")
             ):
@@ -167,9 +164,7 @@ class LinguisticOps:
                 if subj_node and prop_node:
                     assert_edge(subj_node, prop_node, "is")
 
-            # -------------------------
             # Adjectival modifier
-            # -------------------------
             if token.dep_ == "amod" and token.pos_ == "ADJ":
                 head_node = get_node(token.head)
                 prop_node = get_node(token)
@@ -177,9 +172,7 @@ class LinguisticOps:
                 if head_node and prop_node:
                     assert_edge(head_node, prop_node, "is")
 
-            # -------------------------
             # Verb SVO
-            # -------------------------
             if token.pos_ == "VERB" and token.lemma_ != "be":
 
                 subj = next(

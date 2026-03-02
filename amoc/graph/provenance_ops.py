@@ -78,7 +78,7 @@ class ProvenanceOps:
 
         lemma_lower = lemma.lower()
 
-        # TIER 1: Absolute floor - single char always rejected
+        # single char always rejected
         if len(lemma_lower) <= 1:
             return False
 

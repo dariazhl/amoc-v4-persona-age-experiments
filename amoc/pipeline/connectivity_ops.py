@@ -48,18 +48,6 @@ class ConnectivityOps:
         current_sentence_text: str,
         create_forced_edges_fn: callable,
     ) -> bool:
-        """
-        CANONICAL AUTHORITY for connectivity repair.
-
-        This is the ONLY location where "relates_to" fallback edges may be created.
-
-        Repair order:
-        1. Deterministic reactivation of existing edges
-        2. LLM repair (2 attempts)
-        3. Final fallback "relates_to" edges (smallest → largest component)
-
-        Returns True if rollback is needed (repair completely failed).
-        """
         explicit_nodes = self._get_explicit_nodes()
         carryover_nodes = self._get_carryover_nodes()
         required_nodes = explicit_nodes | carryover_nodes
@@ -69,9 +57,7 @@ class ConnectivityOps:
             if self.is_active_connected() and self.is_cumulative_connected():
                 return False
 
-        logging.debug(
-            "[Connectivity] Deterministic repair insufficient, trying LLM repair"
-        )
+        logging.debug("Deterministic repair insufficient, trying LLM repair")
 
         # PHASE 2: LLM repair - try twice
         for attempt in range(2):
@@ -83,60 +69,39 @@ class ConnectivityOps:
                 mode="active",
             )
             if self.is_active_connected():
-                logging.debug(
-                    "[Connectivity] LLM repair succeeded on attempt %d", attempt + 1
-                )
+                logging.debug("LLM repair succeeded on attempt %d", attempt + 1)
                 break
 
         # Check if LLM repair was sufficient
         if self.is_active_connected() and self.is_cumulative_connected():
             return False
 
-        logging.debug("[Connectivity] LLM repair insufficient, applying fallback edges")
+        logging.debug("LLM repair insufficient, applying fallback edges")
 
         # PHASE 3: Final fallback "relates_to" edges
-        # This is the ONLY location where relates_to edges are created
         self._apply_relates_to_fallback(required_nodes)
 
-        # Verify active connectivity
         if not self.is_active_connected():
-            logging.error(
-                "[Connectivity] Active graph still disconnected after all repairs"
-            )
+            logging.error("Active graph still disconnected after all repairs")
             return True  # rollback required
 
-        # Verify and repair cumulative connectivity
+        # Verify cumulative connectivity
         if not self.is_cumulative_connected():
             self._apply_cumulative_fallback()
 
             if not self.is_cumulative_connected():
-                logging.error(
-                    "[Connectivity] Cumulative graph still disconnected after all repairs"
-                )
+                logging.error("Cumulative graph still disconnected after all repairs")
                 return True  # rollback required
 
         return False
 
     def _apply_relates_to_fallback(self, required_nodes: set) -> None:
-        """
-        Apply "relates_to" fallback edges to connect disconnected components.
-
-        DETERMINISTIC backbone selection priority:
-            1. Anchor node inside largest component (sorted by text for stability)
-            2. Highest-degree active node (ties broken by text)
-            3. Lexicographically smallest node label (final fallback)
-
-        DETERMINISTIC small component node selection:
-            1. Explicit node in component (sorted by text)
-            2. Highest-degree node (ties broken by text)
-            3. Lexicographically smallest node label
-        """
         components, _ = self._graph.get_disconnected_components(required_nodes)
 
         if len(components) <= 1:
             return
 
-        # Sort components by size (largest first)
+        # Sort components by size
         components = sorted(components, key=len, reverse=True)
         largest_component = set(components[0])
 
@@ -149,10 +114,8 @@ class ConnectivityOps:
             )
             return (-degree, n.get_text_representer())
 
-        # --- Select stable backbone node (DETERMINISTIC) ---
         anchor_nodes = getattr(self, "_anchor_nodes", set())
 
-        # 1️⃣ Prefer anchor node inside largest component
         anchor_candidates = sorted(
             [n for n in largest_component if n in anchor_nodes],
             key=lambda n: n.get_text_representer(),
@@ -160,20 +123,17 @@ class ConnectivityOps:
         if anchor_candidates:
             backbone_node = anchor_candidates[0]
         else:
-            # 2️⃣ Prefer highest-degree active node (deterministic tie-break)
+
             backbone_node = min(largest_component, key=node_sort_key)
 
-        # --- Connect smaller components to backbone ---
         for comp in sorted(components[1:], key=len):
             comp_set = set(comp)
 
             if not (comp_set & required_nodes):
                 continue
 
-            # Select node from small component (DETERMINISTIC)
             explicit_nodes = self._get_explicit_nodes()
 
-            # 1️⃣ Prefer explicit nodes (sorted by text)
             explicit_in_comp = sorted(
                 [n for n in comp_set if n in explicit_nodes],
                 key=lambda n: n.get_text_representer(),
@@ -181,7 +141,6 @@ class ConnectivityOps:
             if explicit_in_comp:
                 node_small = explicit_in_comp[0]
             else:
-                # 2️⃣ Highest-degree, then lexicographic fallback
                 node_small = min(comp_set, key=node_sort_key)
 
             edge = self._graph.add_edge(
@@ -198,18 +157,12 @@ class ConnectivityOps:
                 edge.reactivated_this_sentence = False
                 largest_component.update(comp_set)
                 logging.debug(
-                    "[Connectivity] Created fallback edge: %s -[relates_to]-> %s",
+                    "Created fallback edge: %s -[relates_to]-> %s",
                     node_small.get_text_representer(),
                     backbone_node.get_text_representer(),
                 )
 
     def _apply_cumulative_fallback(self) -> None:
-        """
-        Apply "relates_to" fallback edges to repair cumulative graph connectivity.
-
-        INTERNAL: Called only by enforce_connectivity().
-        DETERMINISTIC: Uses lexicographic sorting for stable node selection.
-        """
         G_full = self._graph.to_networkx()
 
         if G_full.number_of_nodes() <= 1:
@@ -220,11 +173,6 @@ class ConnectivityOps:
         if len(components) <= 1:
             return
 
-        logging.warning(
-            "[Connectivity] Cumulative graph fragmented into %d components - repairing",
-            len(components),
-        )
-
         # Map string names back to nodes
         name_to_node = {n.get_text_representer(): n for n in self._graph.nodes}
 
@@ -232,12 +180,11 @@ class ConnectivityOps:
         components = sorted(components, key=len, reverse=True)
         largest = set(components[0])
 
-        # DETERMINISTIC: Select backbone from largest component (lexicographically smallest)
+        # DETERMINISTIC
         node_large_name = min(largest)
 
         # Connect smallest → largest
         for comp in sorted(components[1:], key=len):
-            # DETERMINISTIC: Select from small component (lexicographically smallest)
             node_small_name = min(comp)
 
             node_small = name_to_node.get(node_small_name)
@@ -258,7 +205,7 @@ class ConnectivityOps:
             if edge:
                 largest.update(comp)
                 logging.debug(
-                    "[Connectivity] Created cumulative fallback edge: %s -[relates_to]-> %s",
+                    "Created cumulative fallback edge: %s -[relates_to]-> %s",
                     node_small_name,
                     node_large_name,
                 )
@@ -300,13 +247,6 @@ class ConnectivityOps:
         normalize_edge_label_fn: callable,
         persona: str = "",
     ) -> bool:
-        """
-        Repair dangling nodes via LLM-generated edges.
-
-        NOTE: This method does NOT create "relates_to" fallback edges.
-        If LLM repair fails, returns True to signal that enforce_connectivity()
-        should be called to apply the canonical fallback.
-        """
         if per_sentence_view is None:
             return False
 
@@ -327,7 +267,7 @@ class ConnectivityOps:
             return False
 
         logging.debug(
-            "[Connectivity] Found %d dangling nodes, attempting LLM repair",
+            "Found %d dangling nodes, attempting LLM repair",
             len(dangling_nodes),
         )
 
@@ -356,7 +296,7 @@ class ConnectivityOps:
                 any_repair_failed = True
                 continue
 
-            # Try LLM repair (2 attempts)
+            # Try LLM repair - 2 attemptS
             for _ in range(2):
                 result = self._client.get_forced_connectivity_edge_label(
                     node_a=node.get_text_representer(),
@@ -387,7 +327,7 @@ class ConnectivityOps:
                 if edge:
                     repair_success = True
                     logging.debug(
-                        "[Connectivity] LLM repair for dangling node: %s -[%s]-> %s",
+                        "LLM repair for dangling node: %s -[%s]-> %s",
                         node.get_text_representer(),
                         relation,
                         anchor.get_text_representer(),
@@ -395,10 +335,9 @@ class ConnectivityOps:
                     break
 
             if not repair_success:
-                # Do NOT create "relates_to" here - let enforce_connectivity handle it
                 any_repair_failed = True
                 logging.debug(
-                    "[Connectivity] LLM repair failed for dangling node: %s",
+                    "LLM repair failed for dangling node: %s",
                     node.get_text_representer(),
                 )
 
@@ -414,9 +353,6 @@ class ConnectivityOps:
         temperature: float = 0.3,
         forced_pair=None,
     ):
-        """
-        DETERMINISTIC: Uses degree-based + lexicographic ordering for stable selection.
-        """
         if forced_pair is not None:
             representative, anchor_node = forced_pair
             components = [{representative}, {anchor_node}]

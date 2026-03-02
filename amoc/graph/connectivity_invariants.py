@@ -1,16 +1,3 @@
-"""
-Connectivity Invariants - Formal verification of graph connectivity.
-
-This module provides explicit invariant checks that can be used to:
-1. Verify connectivity before/after operations
-2. Stress test the connectivity subsystem
-3. Prove that refactoring preserves connectivity guarantees
-
-INVARIANTS:
-- INV-1: Cumulative graph must always be connected (or empty)
-- INV-2: Active graph must be connected for required nodes (or trivial)
-"""
-
 from typing import TYPE_CHECKING, Set, Optional, List, Tuple, Dict
 import logging
 
@@ -19,7 +6,7 @@ if TYPE_CHECKING:
     from amoc.graph.node import Node
 
 
-class ConnectivityInvariantError(Exception):
+class ConnectivityInariantError(Exception):
     pass
 
 
@@ -37,7 +24,7 @@ def assert_cumulative_connected(graph: "Graph") -> bool:
         components = list(nx.connected_components(G))
 
         raise ConnectivityInvariantError(
-            f"INV-1 VIOLATION: Cumulative graph fragmented into {len(components)} components. "
+            f"Cumulative graph fragmented into {len(components)} components. "
             f"Component sizes: {[len(c) for c in components]}"
         )
 
@@ -49,15 +36,13 @@ def assert_active_connected(
     required_nodes: Set["Node"],
 ) -> bool:
     if not required_nodes or len(required_nodes) <= 1:
-        return True  # Trivially connected
+        return True
 
     connected = graph.is_active_connected(required_nodes)
 
     if not connected:
-        # Get component info for diagnostics
         components, focus_idx = graph.get_disconnected_components(required_nodes)
 
-        # Find which required nodes are in which components
         node_locations = {}
         for node in required_nodes:
             for idx, comp in enumerate(components):
@@ -120,21 +105,16 @@ class ConnectivityStressTest:
         return self._results
 
     def _test_high_decay(self) -> bool:
-        # Just verify current state - actual decay is handled by pipeline
         return assert_cumulative_connected(self._graph)
 
     def _test_massive_activation_drop(self) -> bool:
         active_nodes, active_edges = self._graph.get_active_subgraph()
-
-        # Cumulative should still be connected regardless of activation
         return assert_cumulative_connected(self._graph)
 
     def _test_carryover_only(self) -> bool:
-        # Cumulative invariant should hold
         return assert_cumulative_connected(self._graph)
 
     def _test_single_explicit_node(self) -> bool:
-        # Take any node as the "single explicit"
         if self._graph.nodes:
             single_node = next(iter(self._graph.nodes))
             return assert_active_connected(self._graph, {single_node})
@@ -145,7 +125,6 @@ class ConnectivityStressTest:
             edge = next(iter(self._graph.edges))
             required = {edge.source_node, edge.dest_node}
 
-            # These two nodes should be connected if edge is active
             if edge.active:
                 return assert_active_connected(self._graph, required)
 
@@ -155,7 +134,6 @@ class ConnectivityStressTest:
         if not self._graph.edges and not self._graph.nodes:
             return True
 
-        # If not empty, just verify cumulative
         return assert_cumulative_connected(self._graph)
 
     def get_summary(self) -> str:

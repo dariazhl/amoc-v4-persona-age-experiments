@@ -20,8 +20,6 @@ METRICS_TO_PLOT = [
 def canonicalize_model_name(name: str) -> str:
     name = name.lower().strip()
 
-    # DO NOT strip prefixes like google/ or meta/
-    # Only normalize common pattern variations:
     if "gemma3" in name:
         name = name.replace("gemma3", "gemma-3")
     elif "phi4" in name:
@@ -42,7 +40,7 @@ def run_statistical_analysis(model_name: str):
     model_name = canonicalize_model_name(model_name)
     safe_tag = model_name.replace("/", "-").replace(":", "-").replace(" ", "_")
     # Apply Qwen-specific capitalization rules
-    safe_tag = safe_tag.lower()  # ensure deterministic base
+    safe_tag = safe_tag.lower()
 
     if "qwen" in safe_tag:
         parts = safe_tag.split("-")
@@ -58,26 +56,21 @@ def run_statistical_analysis(model_name: str):
                 # instruct -> Instruct
                 new_parts.append(p.capitalize())
             else:
-                # numbers etc. unchanged (2507)
+                # numbers etc. unchanged
                 new_parts.append(p)
 
         safe_tag = "-".join(new_parts)
 
     is_llama = model_name.lower().startswith("meta-llama")
 
-    # --- primary pattern (all models)
     pattern = f"model_{safe_tag}_triplets_*.csv"
     search_path = os.path.join(OUTPUT_DIR, pattern)
 
     print(f"Looking for CSV files with pattern: {search_path}")
     files_to_analyze = glob.glob(search_path)
 
-    # --- LLaMA fallback (only if nothing found)
     if not files_to_analyze and is_llama:
-        print(
-            "[INFO] No files found with glob. "
-            "Retrying with case-insensitive LLaMA match."
-        )
+        print("No files found with glob")
 
         candidates = [
             os.path.join(OUTPUT_DIR, f)
@@ -93,7 +86,6 @@ def run_statistical_analysis(model_name: str):
             f for f in candidates if safe_tag_lc in os.path.basename(f).lower()
         ]
 
-    # --- final check
     if not files_to_analyze:
         print(f"No triplet CSVs found for model {model_name}")
         return
@@ -112,10 +104,7 @@ def run_statistical_analysis(model_name: str):
     df_master = pd.concat(all_metrics, ignore_index=True)
 
     if "regime" not in df_master.columns:
-        raise RuntimeError(
-            "Missing 'regime' column. "
-            "Regime must be injected during extraction from filename."
-        )
+        raise RuntimeError("Missing 'regime' column ")
 
     print(f"Total personas analyzed: {len(df_master)}")
     print("Regime counts:")
@@ -123,7 +112,6 @@ def run_statistical_analysis(model_name: str):
 
     os.makedirs(OUTPUT_ANALYSIS_DIR, exist_ok=True)
 
-    # --- Distributional analysis ---
     model_tag = safe_tag
     stats_records = []
 
@@ -140,7 +128,6 @@ def run_statistical_analysis(model_name: str):
             model_tag=model_tag,
         )
 
-        # Optional: Kruskal–Wallis (unequal N, non-parametric)
         groups = [
             g[metric].dropna().values
             for _, g in df_master.groupby("regime")

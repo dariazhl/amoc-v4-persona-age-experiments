@@ -4,47 +4,11 @@ import math
 from typing import List, Tuple, Iterable, Optional, Dict
 import networkx as nx
 import matplotlib.pyplot as plt
-from amoc.config.paths import OUTPUT_ANALYSIS_DIR  # reuse existing output base
+from amoc.config.paths import OUTPUT_ANALYSIS_DIR
 from collections import defaultdict
 import textwrap
 
 DEFAULT_BLUE_NODES: Iterable[str] = ()
-
-TRIVIAL_NODE_TEXTS = {
-    # Determiners - should be stripped at node creation but filter here as safety
-    "the",
-    "a",
-    "an",
-    # Conjunctions
-    "and",
-    "or",
-    "but",
-    "nor",
-    "so",
-    "yet",
-    # Prepositions (these shouldn't be node labels per AMoC paper)
-    "through",
-    "with",
-    "without",
-    "to",
-    "of",
-    "in",
-    "on",
-    "at",
-    "from",
-    "into",
-    "onto",
-    "by",
-    "for",
-    "about",
-    "over",
-    "under",
-    "after",
-    "before",
-    "during",
-    "while",
-    "as",
-}
 
 
 def _pretty_text(text: str) -> str:
@@ -54,22 +18,10 @@ def _pretty_text(text: str) -> str:
     return text
 
 
-def _is_trivial_node_text(text: str) -> bool:
-    return _pretty_text(text).lower() in TRIVIAL_NODE_TEXTS
-
-
 def _compute_radial_positions(G, hub):
-    """
-    Deterministic BFS-based concentric radial layout.
-    No scaling loops.
-    No collision detection.
-    No jitter.
-    """
     from collections import deque
 
-    # ---------------------------
-    # BFS LEVEL COMPUTATION
-    # ---------------------------
+    # BFS COMPUTATION
     levels = {hub: 0}
     queue = deque([hub])
 
@@ -80,9 +32,7 @@ def _compute_radial_positions(G, hub):
                 levels[neighbor] = levels[node] + 1
                 queue.append(neighbor)
 
-    # ---------------------------
     # GROUP NODES BY LEVEL
-    # ---------------------------
     rings = {}
     for node, level in levels.items():
         rings.setdefault(level, []).append(node)
@@ -93,9 +43,7 @@ def _compute_radial_positions(G, hub):
     RING_GAP = 4.5
     NODE_DIAMETER = 1.8
 
-    # ---------------------------
     # PLACE EACH RING
-    # ---------------------------
     for level, nodes in rings.items():
 
         n = len(nodes)
@@ -132,26 +80,6 @@ def _compute_radial_positions(G, hub):
 def _compute_edge_curvatures(
     edges_with_keys: List[Tuple[str, str, str]],
 ) -> Tuple[Dict[Tuple[str, str, str], float], Dict[Tuple[str, str, str], float]]:
-    """
-    Compute curvature values and label t-parameters for edges to prevent overlap.
-
-    For edges between the same pair of nodes (including reciprocals), assign
-    different curvature radii so they curve differently and don't overlap.
-
-    MULTI-EDGE LABEL PLACEMENT: Also assigns staggered t-parameters (position
-    along the curve) to prevent label overlap when multiple edges exist between
-    the same node pair. Labels are placed at t=0.35, 0.5, 0.65 etc.
-
-    DIRECTION INVARIANT: Curvature affects only the PATH shape, NOT arrow direction.
-    The edge direction (u → v) is preserved from the original triplet ordering.
-    Curvature simply determines whether the edge curves "above" or "below" the
-    straight line between nodes for visual separation of parallel/reciprocal edges.
-
-    Returns:
-        Tuple of:
-        - curvatures: dict mapping (u, v, key) -> curvature radius for arc3
-        - label_t_params: dict mapping (u, v, key) -> t parameter (0.0-1.0) for label position
-    """
     # Group edges by their node pair (undirected for overlap detection)
     from collections import defaultdict
 
@@ -212,15 +140,6 @@ def _compute_label_position_curved(
     curvature: float,
     t: float = 0.5,
 ) -> Tuple[float, float]:
-    """
-    Compute label position along a curved edge (quadratic Bezier matching matplotlib arc3).
-
-    For a curved edge from u to v with given curvature, compute the position
-    at parameter t (0=start, 1=end, 0.5=middle).
-
-    The curve matches matplotlib's arc3 connectionstyle where the control point
-    is offset perpendicular to the midpoint by curvature * edge_length.
-    """
     x1, y1 = pos[u]
     x2, y2 = pos[v]
 
@@ -257,21 +176,6 @@ def _compute_label_angle_along_edge(
     curvature: float,
     t: float = 0.5,
 ) -> float:
-    """
-    Compute the rotation angle (in degrees) for a label to align along the edge direction.
-
-    Labels are placed ALONG the curved edge, following the tangent direction.
-    This computes the tangent angle of the Bezier curve at parameter t.
-
-    For quadratic Bezier, the tangent at t is: B'(t) = 2[(1-t)(P1-P0) + t(P2-P1)]
-    This gives the direction the curve is traveling at that point.
-
-    The angle is normalized to keep text readable:
-    - If angle would make text upside-down (90° < angle < 270°), flip by 180°
-    - This ensures text is always readable left-to-right or slightly tilted
-
-    Returns angle in degrees suitable for matplotlib text rotation.
-    """
     x1, y1 = pos[u]
     x2, y2 = pos[v]
 
@@ -313,18 +217,6 @@ def _compute_label_angle_along_edge(
     return angle_deg
 
 
-# ==========================================================================
-# TASK 2: ACTIVE TRIPLET OVERLAY
-# ==========================================================================
-# This function renders active triplets as a text overlay on the plot.
-# IMPORTANT: This is VISUALIZATION ONLY - it does not recompute triplets.
-# Triplets are passed from core.py via the active_triplets_for_overlay parameter.
-# The triplet structure originates from:
-#   - core.py: _graph_edges_to_triplets() or _reconstruct_semantic_triplets()
-#   - runner.py: collected as final_triplets, sentence_triplets, cumulative_triplets
-# ==========================================================================
-
-
 def _draw_triplet_overlay(
     ax,
     triplets: List[Tuple[str, str, str]],
@@ -332,21 +224,6 @@ def _draw_triplet_overlay(
     max_triplets: int = 12,
     font_size: int = 8,
 ) -> None:
-    """
-    Draw an overlay of active triplets in the top-right corner of the plot.
-
-    VISUALIZATION ONLY: This function renders pre-computed triplets.
-    It does NOT derive triplets from the graph - triplets are passed from
-    the AMoC pipeline (core.py/runner.py).
-
-    Args:
-        ax: Matplotlib axes object
-        triplets: List of (subject, relation, object) tuples from the pipeline
-        active_nodes: Optional set of active node names for filtering.
-                      If provided, only triplets where BOTH nodes are active are shown.
-        max_triplets: Maximum number of triplets to display (to avoid clutter)
-        font_size: Font size for triplet text
-    """
     if not triplets:
         return
 
@@ -509,10 +386,6 @@ def plot_amoc_triplets(
     # Build sets for node categorization (needed for layout decision)
     inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
 
-    # Track edges seen per UNORDERED node pair when allow_multi_edges=False
-    # Using unordered pairs ensures consistency with curvature logic which groups
-    # by tuple(sorted([u, v])). The first triplet for each unordered pair wins,
-    # preserving its original direction (subject → object).
     seen_node_pairs: set[Tuple[str, str]] = set()
 
     for src, rel, dst in triplets:
@@ -520,14 +393,10 @@ def plot_amoc_triplets(
         dst = str(dst).strip()
         rel = str(rel).strip()
 
-        # INVARIANT: semantic triplets must be complete
         if not src or not dst or not rel:
             continue
 
         # Multi-edge control: when allow_multi_edges=False, skip duplicate edges
-        # between the same UNORDERED node pair (keep only the first edge).
-        # This ensures one edge per entity pair, with the surviving edge direction
-        # corresponding to the original triplet (subject → object).
         if not allow_multi_edges:
             pair_key = tuple(sorted((src, dst)))
             if pair_key in seen_node_pairs:
@@ -540,12 +409,7 @@ def plot_amoc_triplets(
         # Unique key per semantic relation
         edge_key = f"{clean_rel}"
 
-        # =========================================================================
-        # DIRECTION INVARIANT: Edge direction must always follow triplet ordering.
-        # Triplet (subject, predicate, object) maps to edge (subject → object).
-        # This ensures: subject ──▶ object in the visual rendering.
-        # The invariant holds regardless of edge multiplicity or curvature.
-        # =========================================================================
+        # Edge direction must always follow triplet ordering.
         G.add_edge(src, dst, key=edge_key)
 
         edge_labels[(src, dst, edge_key)] = clean_rel
@@ -555,7 +419,6 @@ def plot_amoc_triplets(
         else:
             edge_status[(src, dst, edge_key)] = "normal"
 
-        # LAYOUT POLICY: Only active structure shapes layout
         # Add to active subgraph only if BOTH endpoints are active
         is_edge_active = (src, dst) in active_edge_set or (
             src,
@@ -590,24 +453,15 @@ def plot_amoc_triplets(
     salient_node_set = set(salient_nodes) if salient_nodes else set()
     inferred_node_set = set(inferred_nodes) if inferred_nodes else set()
 
-    # =========================================================================
-    # DETERMINISTIC BFS RADIAL LAYOUT
-    # =========================================================================
     # Select hub: highest degree node
     hub = max(G.degree, key=lambda x: x[1])[0]
 
     # Compute positions using pure BFS radial layout
     pos = _compute_radial_positions(G, hub)
 
-    # --------------------------------------------------
-    # SAFETY: Never allow empty layout (prevents blank plot)
-    # --------------------------------------------------
     if not pos:
         pos = nx.spring_layout(G, seed=42)
 
-    # ==========================================================
-    # HARD INVARIANT: Every graph node must have a position
-    # ==========================================================
     missing_nodes = [n for n in G.nodes() if n not in pos]
 
     if missing_nodes:
@@ -668,9 +522,6 @@ def plot_amoc_triplets(
     edge_pairs = {(u, v) for u, v, _ in G.edges(keys=True)}
     reciprocals = {(u, v) for (u, v) in edge_pairs if (v, u) in edge_pairs}
 
-    # Compute curvatures for all edges to handle parallel edges
-    # This ensures edges between same node pairs curve differently for visibility
-    # MULTI-EDGE LABEL PLACEMENT: Also get staggered t-parameters for labels
     all_edges_with_keys = list(G.edges(keys=True))
     edge_curvatures, edge_label_t_params = _compute_edge_curvatures(all_edges_with_keys)
 
@@ -694,12 +545,10 @@ def plot_amoc_triplets(
 
     # Helper to compute edge width/alpha from activation_score
     def _score_to_width(score: int, base_width: float = 1.3) -> float:
-        """Map activation_score to edge width. Higher score = thicker edge."""
         # Score typically 0-3, map to 0.8-2.5 width
         return base_width + min(score, 3) * 0.4
 
     def _score_to_alpha(score: int, base_alpha: float = 1.0) -> float:
-        """Map activation_score to edge alpha. Higher score = more opaque."""
         # Score typically 0-3, map to 0.4-1.0 alpha
         return min(1.0, base_alpha - (3 - min(score, 3)) * 0.15)
 
@@ -756,13 +605,7 @@ def plot_amoc_triplets(
         else:
             normal_edge_alphas.append(0.4)
 
-    # Draw normal edges as solid lines with per-edge curvature for parallel edges
-    # =========================================================================
-    # DIRECTION INVARIANT: Edges are drawn with arrows pointing from u to v.
-    # The (u, v) order comes directly from the triplet (subject, _, object).
-    # Curvature affects only the PATH shape, NOT the arrow direction.
-    # This ensures: subject ──▶ object regardless of edge multiplicity.
-    # =========================================================================
+    # Edges are drawn with arrows pointing from u to v
     if normal_edges:
         # Group edges by (alpha, curvature) for efficient drawing
         # Each unique (alpha, curvature) combination gets its own draw call
@@ -793,7 +636,7 @@ def plot_amoc_triplets(
                 ax=ax,
             )
 
-    # POLICY A: Draw implicit edges as dashed lines with per-edge curvature
+    # Draw implicit edges as dashed lines with per-edge curvature
     if implicit_edges:
         implicit_curvature_groups = defaultdict(list)
         for idx, (u, v, k) in enumerate(implicit_edges):
@@ -874,28 +717,15 @@ def plot_amoc_triplets(
                 ax=ax,
             )
 
-    # ==========================================================================
-    # TASK 1 FIX: Draw edge labels ALONG the edge direction, not perpendicular
-    # ==========================================================================
-    # Labels are:
-    # 1. Positioned along each edge's curve using staggered t-parameter
-    # 2. ROTATED to follow the edge tangent direction
-    # 3. Kept readable (flipped if angle would make text upside-down)
-    # MULTI-EDGE LABEL PLACEMENT: Parallel edges use different t-parameters
-    # (0.35, 0.5, 0.65 etc.) to prevent label overlap.
+    # FIX: Draw edge labels ALONG the edge direction, not perpendicular
     for u, v, k in G.edges(keys=True):
         if (u, v, k) not in edge_labels:
             continue
 
-        # =========================================================================
-        # UNIFIED EDGE/LABEL RENDERING: Same conditions for edge and label colors
-        # =========================================================================
         is_active = (u, v, k) in active_edge_set or (u, v) in active_edge_set
         is_structural = str(k).startswith("structural::")
         involves_inactive = u in inactive_node_set or v in inactive_node_set
 
-        # Get curvature and t-parameter for this edge
-        # MULTI-EDGE LABEL PLACEMENT: t-parameter varies per parallel edge
         curvature = edge_curvatures.get((u, v, k), 0.0)
         label_t = edge_label_t_params.get((u, v, k), 0.5)
         lx, ly = _compute_label_position_curved(pos, u, v, curvature, t=label_t)
@@ -905,9 +735,7 @@ def plot_amoc_triplets(
 
         label_text = edge_labels[(u, v, k)]
 
-        # =========================================================================
-        # LABEL COLOR CONSISTENCY: Matches edge line color exactly
-        # =========================================================================
+        # colors
         if is_structural:
             label_color = "green"
         elif not is_active:
@@ -1014,9 +842,6 @@ def plot_amoc_triplets(
         )
 
     def _normalize_title_line(text: str, max_len: int = 220) -> str:
-        # Avoid extremely long headers (e.g., if a full prompt leaks in) that
-        # blow up the canvas and distort node placement by compacting and
-        # truncating the line.
         cleaned = re.sub(r"<[^>]+>", " ", text or "")
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         if len(cleaned) > max_len:
@@ -1123,15 +948,7 @@ def plot_amoc_triplets(
         color="darkblue",
     )
 
-    # ==========================================================================
-    # TASK 2: Draw active triplet overlay in top-right corner
-    # ==========================================================================
-    # ============================================================
-    # OVERLAY CONSISTENCY FIX
-    # Active Triplets must reflect rendered graph edges exactly
-    # ============================================================
-    # Source of truth: G.edges() - the actual rendered graph
-    # This ensures no ghost triplets or projection/render divergence
+    # Draw active triplet overlay in top-right corner
     active_triplets_for_overlay = [
         (u, edge_labels[(u, v, k)], v)
         for u, v, k in G.edges(keys=True)

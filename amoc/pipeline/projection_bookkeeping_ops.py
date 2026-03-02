@@ -160,9 +160,7 @@ class ProjectionBookkeepingOps:
             and per_sentence_view.is_empty
             and previous_active_triplets
         ):
-            logging.debug(
-                "[ContinuityPatch] Per-sentence view empty — preserving previous projection."
-            )
+            logging.debug("Per-sentence view empty — preserving previous projection.")
 
         if self.debug and per_sentence_view is not None:
             logging.info(

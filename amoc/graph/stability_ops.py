@@ -157,7 +157,7 @@ class StabilityOps:
                 logging.warning("Cumulative graph fragmented")
             return True
 
-        # Attempt deterministic repair via cumulative edge reactivation
+        # deterministic repair via cumulative edge reactivation
         if allow_reactivation:
             reactivated = self.reconnect_via_cumulative(required_nodes)
 

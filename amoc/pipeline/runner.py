@@ -132,7 +132,6 @@ def process_persona_csv(
     print(f"\n=== Processing File (chunk): {short_filename} ===")
     story_excerpt = story_snippet(story_text)
 
-    # --- Path normalization (CRITICAL FIX) ---
     output_dir = Path(output_dir)
 
     # 1. Load data (entire chunk)
@@ -149,7 +148,7 @@ def process_persona_csv(
     regime = infer_regime_from_filename(filename)
     df["age_refined"] = pd.to_numeric(df["age_refined"], errors="coerce")
 
-    # Optional row cap (debug / testing only)
+    # Optional row cap
     if max_rows is not None and max_rows > 0:
         df = df.head(max_rows)
 
@@ -260,7 +259,6 @@ def process_persona_csv(
 
                     records = []
                     for trip in final_triplets:
-                        # Support legacy 3/4-tuple and new 6-tuple with intro/last-active
                         sentence_idx = -1
                         if len(trip) == 6:
                             s, r, o, active, introduced_at, last_active = trip
@@ -332,7 +330,7 @@ def process_persona_csv(
                         )
 
                     if records:
-                        # Deduplicate triplets (helps avoid repeats after pronoun replacement).
+                        # Deduplicate triplets
                         seen = set()
                         deduped = []
                         for rec in records:

@@ -11,9 +11,6 @@ from amoc.metrics.graph_metrics import compute_graph_metrics
 from amoc.nlp.spacy_utils import load_spacy
 
 
-# ======================================================
-# spaCy singleton
-# ======================================================
 _NLP = None
 
 
@@ -26,20 +23,10 @@ def get_nlp():
     return _NLP
 
 
-# ======================================================
-# Stable persona identity
-# ======================================================
 def make_persona_id(persona_text: str) -> str:
-    """
-    Stable global persona identifier.
-    Invariant to chunking, file boundaries, and re-runs.
-    """
     return hashlib.sha1(persona_text.encode("utf-8")).hexdigest()
 
 
-# ======================================================
-# Abstraction metrics — Dimension B & C
-# ======================================================
 TAXONOMIC_RELATIONS = {
     "is_a",
     "type_of",
@@ -101,14 +88,11 @@ def abstract_concept_ratio(concepts) -> float:
     return abstract / total if total > 0 else 0.0
 
 
-# ======================================================
-# Main aggregation function
-# ======================================================
 def process_triplets_file(path: str) -> pd.DataFrame:
-    # Be permissive about field counts (legacy/extra columns, occasional bad lines)
+
     df = pd.read_csv(path, engine="python", on_bad_lines="warn")
 
-    # Drop stray unnamed columns if present
+    # Drop stray unnamed columns
     df = df.loc[:, ~df.columns.str.startswith("Unnamed")]
 
     if df.empty:
@@ -127,27 +111,13 @@ def process_triplets_file(path: str) -> pd.DataFrame:
         logging.warning(f"Missing required columns in {path}: {missing}")
         return pd.DataFrame()
 
-    # # Optional new column: active flag
-    # if "active" not in df.columns:
-    #     df["active"] = True
-    # else:
-    #     df["active"] = df["active"].astype(bool)
-
     if "model_name" not in df.columns:
         df["model_name"] = None
 
-    # --------------------------------------------------
-    # Provenance (metadata only)
-    # --------------------------------------------------
     df["source_file"] = os.path.basename(path)
-
-    # --------------------------------------------------
-    # --------------------------------------------------
     df["persona_id"] = df["persona_text"].astype(str).apply(make_persona_id)
 
-    # --------------------------------------------------
-    # Correct grouping
-    # --------------------------------------------------
+    # grouping
     group_cols = [
         "persona_id",
         "persona_text",
@@ -175,9 +145,7 @@ def process_triplets_file(path: str) -> pd.DataFrame:
             else pd.Series(["<NO_RELATION>"] * num_triplets, index=g.index)
         )
 
-        # --------------------------------------------------
-        # Structural metrics
-        # --------------------------------------------------
+        # METRICS
         num_unique_subjects = subjects.nunique()
         num_unique_objects = objects.nunique()
         num_unique_relations = relations.nunique()
@@ -187,47 +155,29 @@ def process_triplets_file(path: str) -> pd.DataFrame:
         num_unique_triplets = len(set(triplets))
         triplet_repetition_ratio = 1.0 - (num_unique_triplets / num_triplets)
 
-        # --------------------------------------------------
-        # Persona text metrics
-        # --------------------------------------------------
         persona_text = ctx["persona_text"] or ""
         persona_tokens = persona_text.split()
         persona_num_tokens = len(persona_tokens)
-
         triplets_per_100_tokens = (
             (num_triplets / persona_num_tokens) * 100 if persona_num_tokens > 0 else 0.0
         )
-
         sentiment_score = simple_sentiment_score(persona_text)
         lex = compute_lexical_metrics(persona_text)
-
-        # --------------------------------------------------
-        # Graph metrics
-        # --------------------------------------------------
         edges = list(zip(subjects.tolist(), objects.tolist()))
         graph = compute_graph_metrics(edges)
 
-        # --------------------------------------------------
-        # Abstraction metrics (NEW)
-        # --------------------------------------------------
         concepts = list(subjects) + list(objects)
         relation_list = list(relations)
-
         concept_abstraction = abstract_concept_ratio(concepts)
         relation_abstraction = abstract_relation_ratio(relation_list)
 
-        # --------------------------------------------------
-        # Age (metadata)
-        # --------------------------------------------------
+        # age -> retrieved from age_refined
         age_refined = g["age_refined"].iloc[0]
         try:
             age_refined_int = int(age_refined)
         except Exception:
             age_refined_int = None
 
-        # --------------------------------------------------
-        # Final record
-        # --------------------------------------------------
         record: Dict[str, Any] = {
             "persona_id": ctx["persona_id"],
             "original_index": g["original_index"].iloc[0],  # metadata only

@@ -64,7 +64,6 @@ class VLLMClient:
             logging.error("VLLM not initialized.")
             return "[]"
 
-        # Manual prompt template construction
         prompt = ""
         for m in messages:
             role = m.get("role", "user")
@@ -73,7 +72,6 @@ class VLLMClient:
                 f"<|start_header_id|>{role}<|end_header_id|>\n\n{content}<|eot_id|>"
             )
 
-        # Force Start to 'final' channel (The "Anti-Loop" Fix)
         prompt += "<|start_header_id|>assistant<|end_header_id|>\n\nfinal\n"
 
         try:
@@ -88,9 +86,6 @@ class VLLMClient:
             outputs = self.llm.generate([prompt], sampling_params, use_tqdm=False)
             raw_text = outputs[0].outputs[0].text
 
-            # Keep output as-is; downstream parsing helpers extract the first
-            # [...] or {...} block. Mutating here can easily corrupt otherwise
-            # parseable responses (e.g., prefixing '[' before prose containing a list).
             if "final" in raw_text:
                 return raw_text.split("final")[-1].strip()
             return raw_text.strip()
@@ -99,38 +94,17 @@ class VLLMClient:
             logging.exception(f"VLLM runtime error: {e}")
             return "[]"
 
-    # ==========================================================================
-    # CANONICAL LLM GATEWAY
-    # ==========================================================================
-    # All LLM calls in the system MUST go through methods in this class.
-    # Direct calls to self.generate() from outside this class are prohibited.
-
+    # wrapper to generate response without persona injection for repair - design
     def generate_raw(
         self,
         prompt_text: str,
         temperature: float = 0.3,
     ) -> str:
-        """
-        CANONICAL WRAPPER: Generate response without persona injection.
-
-        Use this for connectivity repair and other cases where persona
-        should NOT influence the response.
-
-        Args:
-            prompt_text: The prompt text to send to the LLM
-            temperature: Sampling temperature (default 0.3)
-
-        Returns:
-            Raw LLM response string (caller handles parsing)
-        """
         messages = [{"role": "user", "content": prompt_text}]
         return self.generate(messages, temperature=temperature)
 
     def call_vllm(self, prompt: str, persona: str) -> str:
         # Inject persona into system prompt
-        # CRITICAL (AMoC v4 Paper Alignment):
-        # Persona influences SALIENCE (what the LLM considers important), never CONTENT.
-        # All nodes/edges must come from STORY TEXT, never from persona.
         messages = [
             {
                 "role": "system",
@@ -148,9 +122,6 @@ class VLLMClient:
             {"role": "user", "content": prompt},
         ]
         return self.generate(messages)
-
-    # --- Wrappers for AMoC Logic ---
-    # Now accepting 'persona' arg passed down from AMoC class
 
     def get_new_relationships(
         self, nodes_from_text, nodes_from_graph, edges_from_graph, text, persona
@@ -268,9 +239,6 @@ class VLLMClient:
             "explanation": result.get("explanation", ""),
         }
 
-    # ==========================================================================
-    # TASK 2: FORCED CONNECTIVITY EDGE GENERATION
-    # ==========================================================================
     def get_forced_connectivity_edge_label(
         self,
         node_a: str,
@@ -279,25 +247,7 @@ class VLLMClient:
         current_sentence: str,
         persona: str,
     ) -> Dict[str, str]:
-        """
-        TASK 2: Generate an edge label to restore graph connectivity.
-
-        This method is called ONLY when:
-        1. The active graph has become disconnected
-        2. No existing edges in cumulative memory can restore connectivity
-        3. A minimal connecting edge must be created
-
-        Args:
-            node_a: First node text (from isolated component)
-            node_b: Second node text (from focus component)
-            story_context: Previous sentences for context
-            current_sentence: The current sentence being processed
-            persona: The persona description for LLM context
-
-        Returns:
-            Dict with 'label' and 'explanation' keys.
-            Returns {"label": "relates to", "explanation": "..."} as fallback.
-        """
+        # call method when the activate graph is disconnected
         prompt = FORCED_CONNECTIVITY_EDGE_PROMPT.format(
             node_a=node_a,
             node_b=node_b,
@@ -308,9 +258,9 @@ class VLLMClient:
         result = parse_for_dict(response)
 
         if not isinstance(result, dict) or not result.get("label"):
-            # Fallback to generic relationship if LLM fails
+            # Fallback
             logging.warning(
-                "[Connectivity] LLM failed to generate edge label for %s -> %s, using fallback",
+                " LLM failed to generate edge label for %s -> %s, using fallback",
                 node_a,
                 node_b,
             )

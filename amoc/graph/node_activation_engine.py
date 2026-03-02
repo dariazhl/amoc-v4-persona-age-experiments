@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from amoc.graph.edge import Edge
 
 
-class ActivationOps:
+class NodeActivationEngine:
     MAX_REACTIVATION_COUNT: int = 6
 
     def __init__(self, graph_ref: "Graph"):

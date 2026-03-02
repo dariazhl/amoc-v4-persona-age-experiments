@@ -217,10 +217,6 @@ class InitOps:
             )
 
             if degree == 0:
-                logging.warning(
-                    f"[LLM Expansion] '{node.get_text_representer()}' has no edges."
-                )
-
                 nodes_from_text = ""
                 for i, n in enumerate(current_sentence_text_based_nodes):
                     nodes_from_text += (

@@ -380,7 +380,6 @@ Provide them in the following format (a list of numbers):
 [1, 2, 3, ...]
 """
 
-# Prompt for generating edge label with explanation when connecting disconnected explicit nodes
 HUB_EDGE_LABEL_WITH_EXPLANATION_PROMPT = """I am building a knowledge graph from text. I have extracted the following concepts from the sentence:
 {explicit_nodes}
 
@@ -400,16 +399,6 @@ Respond in this exact JSON format:
     "explanation": "Brief explanation of the connection"
 }}"""
 
-# ==========================================================================
-# TASK 2: FORCED CONNECTIVITY EDGE PROMPT
-# ==========================================================================
-# This prompt is used ONLY when:
-# 1. The active graph has become disconnected
-# 2. No existing edges in cumulative memory can restore connectivity
-# 3. A secondary LLM call is needed to create a minimal connecting edge
-#
-# The goal is to create semantically reasonable edges with minimal commitment.
-# ==========================================================================
 
 FORCED_CONNECTIVITY_EDGE_PROMPT = """I am building a knowledge graph from a story. The graph has become disconnected - there are concepts that should be connected but are not.
 

@@ -1,4 +1,3 @@
-# amoc/pipeline/decay_ops.py
 from typing import TYPE_CHECKING, Set, Optional
 
 if TYPE_CHECKING:
@@ -22,10 +21,6 @@ class DecayOps:
         for edge in list(self._graph.edges):
             if not edge.active:
                 edge.reduce_visibility()
-
-    # =========================================================
-    # NODE DECAY
-    # =========================================================
 
     def decay_node_activation(self) -> None:
         explicit_nodes = self._get_explicit_nodes()
