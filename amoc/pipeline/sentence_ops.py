@@ -202,7 +202,7 @@ class SentenceOps:
                     node.lemmas,
                     label,
                     node.node_type,
-                    node.source,
+                    node.node_source,
                     provenance=node.provenance,
                     origin_sentence=sentence_index,
                 )

@@ -407,7 +407,7 @@ class AMoCv4:
         current_sentence_nodes: List[Node],
         graph_active_nodes: List[Node],
         graph_active_edge_nodes: Optional[set[Node]] = None,
-        allow_inference_bridge: bool = False,
+        allow_inference_bridge: bool = False,  # inference is low in early sentences, want to boost it
     ) -> bool:
         return self._node_ops.passes_attachment_constraint(
             subject=subject,
@@ -652,6 +652,18 @@ class AMoCv4:
         if rollback_needed:
             return True
 
+        # introducing anchors = all concepts that were explicit
+        explicit_concepts = {
+            n
+            for n in self._explicit_nodes_current_sentence
+            if n.node_type == NodeType.CONCEPT
+        }
+
+        self._anchor_nodes |= explicit_concepts
+
+        # keep only the active nodes
+        self._anchor_nodes = {n for n in self._anchor_nodes if n in self.graph.nodes}
+
         # Step 2 — rebuild per-sentence view
         self._per_sentence_view = self._build_per_sentence_view(
             explicit_nodes=list(self._explicit_nodes_current_sentence),
@@ -852,22 +864,6 @@ class AMoCv4:
                     nodes_before_sentence
                 )
             )
-
-            # introducing anchors
-            explicit_concepts = {
-                n
-                for n in self._explicit_nodes_current_sentence
-                if n.node_type == NodeType.CONCEPT
-            }
-
-            active_concepts = {
-                n
-                for n in self._get_active_edge_nodes()
-                if n.node_type == NodeType.CONCEPT
-            }
-
-            self._anchor_nodes.clear()
-            self._anchor_nodes.update(explicit_concepts | active_concepts)
 
             # CONNECTIVITY
             self._connectivity_ops.set_anchor_nodes(self._anchor_nodes)

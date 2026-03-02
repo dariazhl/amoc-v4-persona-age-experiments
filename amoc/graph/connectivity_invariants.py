@@ -72,7 +72,7 @@ def verify_connectivity_invariants(
         return (True, None)
 
     except ConnectivityInvariantError as e:
-        error_msg = f"[{context}] {str(e)}" if context else str(e)
+        error_msg = f"{context}] {str(e)}" if context else str(e)
         logging.error(error_msg)
         return (False, error_msg)
 

@@ -343,8 +343,12 @@ class InitOps:
 
         anchor_nodes = {
             n
-            for n in anchor_nodes
-            if n in graph.nodes and n.active and any(e.active for e in n.edges)
+            for n in explicit_nodes_current_sentence
+            if n.node_type == NodeType.CONCEPT
+        } | {
+            n
+            for n in self.graph.nodes
+            if n.node_type == NodeType.CONCEPT and any(e.active for e in n.edges)
         }
 
         inferred_concept_relationships, inferred_property_relationships = (

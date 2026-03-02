@@ -251,9 +251,6 @@ class PlotOps:
         property_nodes: Optional[List[str]] = None,
     ) -> None:
 
-        # ==========================================================================
-        # DEFENSIVE GUARD: Ensure sentence_text never contains prompt scaffolding
-        # ==========================================================================
         sentence_text_lower = (sentence_text or "").lower().strip()
         for pattern in self.PROMPT_CONTAMINATION_PATTERNS:
             if sentence_text_lower.startswith(pattern):
@@ -416,7 +413,21 @@ class PlotOps:
                 layout_depth=self._layout_depth,
                 inferred_nodes=inferred_nodes_for_plot,
             )
-
+            if triplets:
+                logging.info(
+                    "[Plot] Saved sentence %d graph to %s", sentence_index, saved_path
+                )
+            elif explicit_nodes:
+                logging.info(
+                    "[Plot] Saved sentence %d graph (explicit nodes only) to %s",
+                    sentence_index,
+                    saved_path,
+                )
+            else:
+                logging.info(
+                    "[Plot] Sentence %d graph empty (no explicit nodes, no edges)",
+                    sentence_index,
+                )
         except Exception:
             logging.error("Failed to plot graph snapshot", exc_info=True)
 

@@ -160,6 +160,35 @@ class SentenceProcessingOps:
             persona=core.persona,
         )
 
+    def _relation_is_syntactically_supported(
+        self,
+        source_node,
+        edge_label,
+        dest_node,
+    ) -> bool:
+        # triplets such as "famous - knows - man" are incorrect
+        # method validates that the triplet makes semantic sense
+        doc = self.spacy_nlp(self._current_sentence_text)
+
+        source_lemma = source_node.get_text_representer().lower()
+        dest_lemma = dest_node.get_text_representer().lower()
+
+        for tok in doc:
+            if tok.lemma_.lower() == edge_label.lower():
+                # find nominal subject
+                subj = [c for c in tok.children if c.dep_ in {"nsubj", "nsubjpass"}]
+                # find direct object
+                obj = [c for c in tok.children if c.dep_ in {"dobj", "pobj", "attr"}]
+
+                if subj and obj:
+                    subj_lemma = subj[0].lemma_.lower()
+                    obj_lemma = obj[0].lemma_.lower()
+
+                    if subj_lemma == source_lemma and obj_lemma == dest_lemma:
+                        return True
+        # do not admit triplet that does not make sense
+        return False
+
     def handle_nonfirst_sentence(
         self,
         i: int,
@@ -482,6 +511,13 @@ class SentenceProcessingOps:
                 source_node.node_source = NodeSource.TEXT_BASED
             if tuple(dest_node.lemmas) in sentence_lemma_keys:
                 dest_node.node_source = NodeSource.TEXT_BASED
+
+            if not self._relation_is_syntactically_supported(
+                source_node,
+                edge_label,
+                dest_node,
+            ):
+                continue
 
             edge = self._add_edge_fn(
                 source_node,

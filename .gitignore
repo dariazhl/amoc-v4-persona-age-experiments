@@ -1,7 +1,5 @@
-# OS generated files #
 ######################
 .DS_Store
-.DS_Store?
 ._*
 /pycache__/
 *.pyc

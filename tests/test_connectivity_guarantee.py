@@ -1,40 +1,11 @@
-"""
-CONNECTIVITY TEST HARNESS: Formal Invariant Verification
-
-This test module provides INDEPENDENT verification of connectivity guarantees.
-The utilities do NOT use internal helpers from StabilityOps - they independently
-reconstruct connectivity using NetworkX.
-
-INVARIANTS TESTED:
-1. cumulative_is_connected(graph) == True
-   - All edges (active or not) form a single connected component
-
-2. active_required_is_connected(graph, required_nodes) == True
-   - All required nodes are reachable via active edges
-
-TEST SCENARIOS:
-- Minimal graph (2 nodes, 1 edge)
-- Multi-hop chain (A -> B -> C -> D)
-- Decay scenario (bridge edge deactivated)
-- Carryover-only scenario
-- LLM disabled scenario
-- Heavy pruning scenario
-- Sentence transition scenario
-- Large graph scenario
-"""
-
 import pytest
 import sys
 import importlib.util
 from typing import Set, List, Optional
 import networkx as nx
 
-# =============================================================================
-# DIRECT MODULE LOADING (avoid spacy dependency issues)
-# =============================================================================
 
 def load_module_directly(name, path):
-    """Load a module directly without triggering package __init__.py imports."""
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -44,6 +15,7 @@ def load_module_directly(name, path):
 
 # Create stub for 'amoc' and 'amoc.graph' packages to prevent __init__.py loading
 import types
+
 if "amoc" not in sys.modules:
     sys.modules["amoc"] = types.ModuleType("amoc")
 if "amoc.graph" not in sys.modules:
@@ -59,9 +31,15 @@ node_module = load_module_directly("amoc.graph.node", f"{base_path}/node.py")
 edge_module = load_module_directly("amoc.graph.edge", f"{base_path}/edge.py")
 
 # 2. Load ops modules (depend on node/edge via TYPE_CHECKING only)
-activation_ops_module = load_module_directly("amoc.graph.activation_ops", f"{base_path}/activation_ops.py")
-stability_ops_module = load_module_directly("amoc.graph.stability_ops", f"{base_path}/stability_ops.py")
-provenance_module = load_module_directly("amoc.graph.provenance_ops", f"{base_path}/provenance_ops.py")
+activation_ops_module = load_module_directly(
+    "amoc.graph.activation_ops", f"{base_path}/activation_ops.py"
+)
+stability_ops_module = load_module_directly(
+    "amoc.graph.stability_ops", f"{base_path}/stability_ops.py"
+)
+provenance_module = load_module_directly(
+    "amoc.graph.provenance_ops", f"{base_path}/provenance_ops.py"
+)
 
 # 3. Finally load graph module (imports all the above)
 graph_module = load_module_directly("amoc.graph.graph", f"{base_path}/graph.py")
@@ -74,25 +52,7 @@ Edge = edge_module.Edge
 Graph = graph_module.Graph
 
 
-# =============================================================================
-# INDEPENDENT CONNECTIVITY UTILITIES
-# =============================================================================
-# These MUST NOT use internal helpers from StabilityOps.
-# They independently reconstruct connectivity using NetworkX.
-
 def cumulative_is_connected(graph: Graph) -> bool:
-    """
-    Build cumulative graph via NetworkX and verify single connected component.
-
-    This utility is INDEPENDENT of StabilityOps - it directly builds a NetworkX
-    graph from the Graph object and checks connectivity.
-
-    Args:
-        graph: The Graph object to check
-
-    Returns:
-        True if all edges form a single connected component
-    """
     G = nx.Graph()
 
     # Add all edges (regardless of active state)
@@ -111,19 +71,6 @@ def cumulative_is_connected(graph: Graph) -> bool:
 
 
 def active_required_is_connected(graph: Graph, required_nodes: Set[Node]) -> bool:
-    """
-    Build active subgraph and verify all required nodes are reachable.
-
-    This utility is INDEPENDENT of StabilityOps - it directly builds a NetworkX
-    graph from active edges and checks if all required nodes are connected.
-
-    Args:
-        graph: The Graph object to check
-        required_nodes: Set of nodes that MUST be reachable via active edges
-
-    Returns:
-        True if all required_nodes are in a single connected component
-    """
     G = nx.Graph()
 
     # Add only active edges with positive visibility
@@ -162,11 +109,6 @@ def active_required_is_connected(graph: Graph, required_nodes: Set[Node]) -> boo
 
 
 def get_active_nodes_from_edges(graph: Graph) -> Set[Node]:
-    """
-    Get all nodes that have at least one active edge.
-
-    INDEPENDENT utility - does not use any internal helpers.
-    """
     nodes = set()
     for edge in graph.edges:
         if edge.active and edge.visibility_score > 0:
@@ -176,11 +118,6 @@ def get_active_nodes_from_edges(graph: Graph) -> Set[Node]:
 
 
 def count_connected_components_active(graph: Graph) -> int:
-    """
-    Count connected components in the active subgraph.
-
-    INDEPENDENT utility for debugging.
-    """
     G = nx.Graph()
     for edge in graph.edges:
         if edge.active and edge.visibility_score > 0:
@@ -193,11 +130,6 @@ def count_connected_components_active(graph: Graph) -> int:
 
 
 def count_connected_components_cumulative(graph: Graph) -> int:
-    """
-    Count connected components in the cumulative graph.
-
-    INDEPENDENT utility for debugging.
-    """
     G = nx.Graph()
     for edge in graph.edges:
         G.add_edge(edge.source_node, edge.dest_node)
@@ -208,17 +140,13 @@ def count_connected_components_cumulative(graph: Graph) -> int:
     return nx.number_connected_components(G)
 
 
-# =============================================================================
-# TEST FIXTURES: Graph Builders
-# =============================================================================
-
+# helper
 def create_node(
     lemma: str,
     node_type: NodeType = NodeType.CONCEPT,
     node_source: NodeSource = NodeSource.TEXT_BASED,
     active: bool = True,
 ) -> Node:
-    """Helper to create a node for testing."""
     node = Node(
         lemmas=[lemma],
         actual_text=lemma,
@@ -239,7 +167,6 @@ def create_edge(
     visibility_score: int = 3,
     active: bool = True,
 ) -> Edge:
-    """Helper to create an edge for testing."""
     edge = Edge(
         source_node=source,
         dest_node=dest,
@@ -252,7 +179,6 @@ def create_edge(
 
 
 def add_edge_to_graph(graph: Graph, edge: Edge) -> None:
-    """Helper to properly add an edge to graph with node tracking."""
     # Ensure nodes are in graph
     graph.nodes.add(edge.source_node)
     graph.nodes.add(edge.dest_node)
@@ -267,15 +193,9 @@ def add_edge_to_graph(graph: Graph, edge: Edge) -> None:
         edge.dest_node.edges.append(edge)
 
 
-# =============================================================================
-# TEST SCENARIO 1: Minimal Graph (2 nodes, 1 edge)
-# =============================================================================
-
 class TestMinimalGraph:
-    """Test connectivity invariants on minimal graph (2 nodes, 1 edge)."""
 
     def test_minimal_graph_cumulative_connected(self):
-        """Minimal graph: cumulative should be connected."""
         graph = Graph()
 
         # Create 2 nodes
@@ -287,8 +207,9 @@ class TestMinimalGraph:
         add_edge_to_graph(graph, edge)
 
         # Verify cumulative connectivity
-        assert cumulative_is_connected(graph) == True, \
-            "Minimal graph (2 nodes, 1 edge) must be cumulatively connected"
+        assert (
+            cumulative_is_connected(graph) == True
+        ), "Minimal graph (2 nodes, 1 edge) must be cumulatively connected"
 
     def test_minimal_graph_active_connected(self):
         """Minimal graph: active subgraph should connect required nodes."""
@@ -300,8 +221,9 @@ class TestMinimalGraph:
         add_edge_to_graph(graph, edge)
 
         required = {node_a, node_b}
-        assert active_required_is_connected(graph, required) == True, \
-            "Minimal graph with active edge must connect required nodes"
+        assert (
+            active_required_is_connected(graph, required) == True
+        ), "Minimal graph with active edge must connect required nodes"
 
     def test_minimal_graph_inactive_edge(self):
         """Minimal graph with inactive edge: active check should fail."""
@@ -318,19 +240,14 @@ class TestMinimalGraph:
         assert cumulative_is_connected(graph) == True
 
         # Active check should FAIL since edge is inactive
-        assert active_required_is_connected(graph, required) == False, \
-            "Inactive edge should not connect required nodes in active check"
+        assert (
+            active_required_is_connected(graph, required) == False
+        ), "Inactive edge should not connect required nodes in active check"
 
-
-# =============================================================================
-# TEST SCENARIO 2: Multi-hop Chain (A -> B -> C -> D)
-# =============================================================================
 
 class TestMultiHopChain:
-    """Test connectivity invariants on multi-hop chain."""
-
+    # multi-hop chains
     def setup_method(self):
-        """Create a chain: A -> B -> C -> D."""
         self.graph = Graph()
 
         self.node_a = create_node("knight")
@@ -347,21 +264,17 @@ class TestMultiHopChain:
         add_edge_to_graph(self.graph, self.edge_cd)
 
     def test_chain_cumulative_connected(self):
-        """Chain: cumulative should be connected."""
         assert cumulative_is_connected(self.graph) == True
 
     def test_chain_active_all_required(self):
-        """Chain: all nodes should be reachable via active edges."""
         required = {self.node_a, self.node_b, self.node_c, self.node_d}
         assert active_required_is_connected(self.graph, required) == True
 
     def test_chain_endpoints_only(self):
-        """Chain: endpoints A and D should be reachable."""
         required = {self.node_a, self.node_d}
         assert active_required_is_connected(self.graph, required) == True
 
     def test_chain_middle_edge_removed(self):
-        """Chain with middle edge inactive: endpoints should NOT be reachable."""
         # Deactivate middle edge
         self.edge_bc.active = False
 
@@ -374,15 +287,8 @@ class TestMultiHopChain:
         assert active_required_is_connected(self.graph, required) == False
 
 
-# =============================================================================
-# TEST SCENARIO 3: Decay Scenario (Bridge Edge Deactivated)
-# =============================================================================
-
 class TestDecayScenario:
-    """Test connectivity after bridge edge decay."""
-
     def setup_method(self):
-        """Create a graph with a bridge edge connecting two clusters."""
         self.graph = Graph()
 
         # Cluster 1: knight, horse
@@ -403,21 +309,19 @@ class TestDecayScenario:
         add_edge_to_graph(self.graph, self.bridge)
 
     def test_bridge_active_connected(self):
-        """With bridge active: all nodes should be connected."""
         required = {self.knight, self.horse, self.dragon, self.treasure}
 
         assert cumulative_is_connected(self.graph) == True
         assert active_required_is_connected(self.graph, required) == True
 
     def test_bridge_deactivated_cumulative_still_connected(self):
-        """Bridge deactivated: cumulative should still be connected."""
         self.bridge.active = False
 
-        assert cumulative_is_connected(self.graph) == True, \
-            "Cumulative graph should remain connected even with inactive edges"
+        assert (
+            cumulative_is_connected(self.graph) == True
+        ), "Cumulative graph should remain connected even with inactive edges"
 
     def test_bridge_deactivated_active_disconnected(self):
-        """Bridge deactivated: active subgraph should be disconnected."""
         self.bridge.active = False
 
         # Full set should NOT be connected
@@ -432,7 +336,6 @@ class TestDecayScenario:
         assert active_required_is_connected(self.graph, cluster2) == True
 
     def test_component_count_after_decay(self):
-        """Verify component count changes after bridge decay."""
         # Initially 1 component
         assert count_connected_components_active(self.graph) == 1
 
@@ -444,15 +347,9 @@ class TestDecayScenario:
         assert count_connected_components_cumulative(self.graph) == 1
 
 
-# =============================================================================
-# TEST SCENARIO 4: Carryover-Only Scenario
-# =============================================================================
-
 class TestCarryoverOnlyScenario:
-    """Test connectivity with only carryover nodes (no explicit nodes)."""
 
     def setup_method(self):
-        """Create graph where all nodes are carryover (not explicit in current sentence)."""
         self.graph = Graph()
 
         # Create nodes from sentence 1
@@ -478,7 +375,6 @@ class TestCarryoverOnlyScenario:
         add_edge_to_graph(self.graph, self.edge_bc)
 
     def test_carryover_nodes_connected_sentence_1(self):
-        """In sentence 1, all nodes are explicit and connected."""
         # All nodes are explicit in sentence 1
         assert self.node_a.is_explicit_in_sentence(1) == True
         assert self.node_b.is_explicit_in_sentence(1) == True
@@ -488,7 +384,6 @@ class TestCarryoverOnlyScenario:
         assert active_required_is_connected(self.graph, required) == True
 
     def test_carryover_nodes_in_sentence_2(self):
-        """In sentence 2, all nodes are carryover (not explicit)."""
         # Check carryover status in sentence 2
         assert self.node_a.is_carryover_in_sentence(2) == True
         assert self.node_b.is_carryover_in_sentence(2) == True
@@ -499,22 +394,15 @@ class TestCarryoverOnlyScenario:
         assert active_required_is_connected(self.graph, required) == True
 
 
-# =============================================================================
-# TEST SCENARIO 5: LLM Disabled Scenario
-# =============================================================================
-
 class TestLLMDisabledScenario:
-    """Test connectivity when only deterministic edges exist (no LLM-generated edges)."""
-
     def test_deterministic_only_linear_chain(self):
-        """Linear chain with only deterministic edges."""
         graph = Graph()
 
         # Create deterministic chain
         nodes = [create_node(f"node_{i}") for i in range(5)]
 
         for i in range(len(nodes) - 1):
-            edge = create_edge(nodes[i], nodes[i+1], f"relation_{i}")
+            edge = create_edge(nodes[i], nodes[i + 1], f"relation_{i}")
             edge.inferred = False  # Not LLM-inferred
             add_edge_to_graph(graph, edge)
 
@@ -523,7 +411,6 @@ class TestLLMDisabledScenario:
         assert active_required_is_connected(graph, set(nodes)) == True
 
     def test_deterministic_only_star_topology(self):
-        """Star topology with hub and spokes (deterministic only)."""
         graph = Graph()
 
         hub = create_node("hub")
@@ -540,15 +427,8 @@ class TestLLMDisabledScenario:
         assert active_required_is_connected(graph, all_nodes) == True
 
 
-# =============================================================================
-# TEST SCENARIO 6: Heavy Pruning Scenario
-# =============================================================================
-
 class TestHeavyPruningScenario:
-    """Test connectivity after heavy edge pruning."""
-
     def test_most_edges_pruned_but_spanning_tree_remains(self):
-        """Prune most edges but keep a spanning tree."""
         graph = Graph()
 
         # Create 5 nodes with many edges
@@ -581,7 +461,6 @@ class TestHeavyPruningScenario:
         assert active_required_is_connected(graph, set(nodes)) == True
 
     def test_pruning_creates_islands(self):
-        """Prune edges to create isolated islands."""
         graph = Graph()
 
         # Create two clusters
@@ -590,8 +469,8 @@ class TestHeavyPruningScenario:
 
         # Connect within clusters
         for i in range(2):
-            e1 = create_edge(cluster1[i], cluster1[i+1], f"c1_rel_{i}")
-            e2 = create_edge(cluster2[i], cluster2[i+1], f"c2_rel_{i}")
+            e1 = create_edge(cluster1[i], cluster1[i + 1], f"c1_rel_{i}")
+            e2 = create_edge(cluster2[i], cluster2[i + 1], f"c2_rel_{i}")
             add_edge_to_graph(graph, e1)
             add_edge_to_graph(graph, e2)
 
@@ -614,15 +493,9 @@ class TestHeavyPruningScenario:
         assert active_required_is_connected(graph, set(cluster2)) == True
 
 
-# =============================================================================
-# TEST SCENARIO 7: Sentence Transition Scenario
-# =============================================================================
-
 class TestSentenceTransitionScenario:
-    """Test connectivity across sentence boundaries."""
 
     def test_new_explicit_connected_to_carryover(self):
-        """New explicit node connects to carryover node."""
         graph = Graph()
 
         # Sentence 1: Create knight and horse
@@ -646,7 +519,6 @@ class TestSentenceTransitionScenario:
         assert active_required_is_connected(graph, all_nodes) == True
 
     def test_multiple_sentence_buildup(self):
-        """Graph builds up over multiple sentences."""
         graph = Graph()
 
         # Sentence 1
@@ -685,21 +557,15 @@ class TestSentenceTransitionScenario:
         assert cumulative_is_connected(graph) == True
 
 
-# =============================================================================
-# TEST SCENARIO 8: Large Graph Scenario
-# =============================================================================
-
 class TestLargeGraphScenario:
-    """Test connectivity on larger graphs."""
-
+    # large chain
     def test_large_linear_chain(self):
-        """Large linear chain (50 nodes)."""
         graph = Graph()
 
         nodes = [create_node(f"node_{i}") for i in range(50)]
 
         for i in range(len(nodes) - 1):
-            edge = create_edge(nodes[i], nodes[i+1], f"rel_{i}")
+            edge = create_edge(nodes[i], nodes[i + 1], f"rel_{i}")
             add_edge_to_graph(graph, edge)
 
         assert cumulative_is_connected(graph) == True
@@ -709,7 +575,6 @@ class TestLargeGraphScenario:
         assert active_required_is_connected(graph, {nodes[0], nodes[-1]}) == True
 
     def test_large_star_with_secondary_hubs(self):
-        """Large star with multiple hub levels."""
         graph = Graph()
 
         # Primary hub
@@ -740,7 +605,6 @@ class TestLargeGraphScenario:
         assert active_required_is_connected(graph, all_nodes) == True
 
     def test_large_graph_with_bottleneck(self):
-        """Large graph with bottleneck (weak point)."""
         graph = Graph()
 
         # Left cluster (20 nodes, densely connected)
@@ -776,22 +640,14 @@ class TestLargeGraphScenario:
         assert cumulative_is_connected(graph) == True
 
 
-# =============================================================================
-# EDGE CASE TESTS
-# =============================================================================
-
 class TestEdgeCases:
-    """Edge cases and boundary conditions."""
-
     def test_empty_graph(self):
-        """Empty graph is trivially connected."""
         graph = Graph()
 
         assert cumulative_is_connected(graph) == True
         assert active_required_is_connected(graph, set()) == True
 
     def test_single_node_no_edges(self):
-        """Single node with no edges."""
         graph = Graph()
 
         node = create_node("lonely")
@@ -804,7 +660,6 @@ class TestEdgeCases:
         assert active_required_is_connected(graph, {node}) == True
 
     def test_self_loop(self):
-        """Self-loop edge (source == dest)."""
         graph = Graph()
 
         node = create_node("self")
@@ -827,7 +682,6 @@ class TestEdgeCases:
         assert active_required_is_connected(graph, {node}) == True
 
     def test_zero_visibility_edge(self):
-        """Edge with visibility_score = 0 should not count as active."""
         graph = Graph()
 
         node_a = create_node("a")
@@ -846,7 +700,6 @@ class TestEdgeCases:
         assert active_required_is_connected(graph, {node_a, node_b}) == False
 
     def test_required_node_not_in_graph(self):
-        """Required node that's not in the graph."""
         graph = Graph()
 
         in_graph = create_node("in_graph")
@@ -859,45 +712,29 @@ class TestEdgeCases:
         assert active_required_is_connected(graph, {in_graph, not_in_graph}) == False
 
 
-# =============================================================================
-# INVARIANT ASSERTION UTILITIES
-# =============================================================================
-
 def assert_connectivity_invariants(
     graph: Graph,
     required_nodes: Set[Node],
     context: str = "",
 ) -> None:
-    """
-    Assert both connectivity invariants hold.
-
-    Use this as a test gate - if either invariant fails, the test fails
-    with a detailed error message.
-
-    Args:
-        graph: The graph to check
-        required_nodes: Set of required nodes
-        context: Optional context string for error messages
-    """
     ctx = f" ({context})" if context else ""
 
     cum_connected = cumulative_is_connected(graph)
-    assert cum_connected, \
-        f"INVARIANT VIOLATION{ctx}: cumulative graph is disconnected " \
+    assert cum_connected, (
+        f"INVARIANT VIOLATION{ctx}: cumulative graph is disconnected "
         f"(components: {count_connected_components_cumulative(graph)})"
+    )
 
     active_connected = active_required_is_connected(graph, required_nodes)
-    assert active_connected, \
-        f"INVARIANT VIOLATION{ctx}: required nodes not connected via active edges " \
-        f"(active components: {count_connected_components_active(graph)}, " \
+    assert active_connected, (
+        f"INVARIANT VIOLATION{ctx}: required nodes not connected via active edges "
+        f"(active components: {count_connected_components_active(graph)}, "
         f"required nodes: {len(required_nodes)})"
+    )
 
 
 class TestInvariantUtility:
-    """Test the invariant assertion utility."""
-
     def test_passing_invariants(self):
-        """Test that valid graph passes invariants."""
         graph = Graph()
 
         a = create_node("a")
@@ -909,7 +746,6 @@ class TestInvariantUtility:
         assert_connectivity_invariants(graph, {a, b}, "test")
 
     def test_failing_cumulative(self):
-        """Test that disconnected cumulative fails."""
         graph = Graph()
 
         # Create two disconnected edge components
@@ -931,7 +767,6 @@ class TestInvariantUtility:
             assert_connectivity_invariants(graph, {a, b, c, d}, "test")
 
     def test_failing_active(self):
-        """Test that disconnected active fails."""
         graph = Graph()
 
         a = create_node("a")
@@ -940,7 +775,9 @@ class TestInvariantUtility:
         add_edge_to_graph(graph, e)
 
         # Cumulative passes, active fails
-        with pytest.raises(AssertionError, match="required nodes not connected via active edges"):
+        with pytest.raises(
+            AssertionError, match="required nodes not connected via active edges"
+        ):
             assert_connectivity_invariants(graph, {a, b}, "test")
 
 

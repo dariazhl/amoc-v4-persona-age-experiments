@@ -37,8 +37,8 @@ class ConnectivityOps:
         self._anchor_nodes = anchor_nodes
 
     def is_active_connected(self) -> bool:
-        explicit_nodes = self._get_explicit_nodes()
-        return self._graph.is_active_connected(explicit_nodes)
+        required_nodes = self._get_explicit_nodes() | self._get_carryover_nodes()
+        return self._graph.is_active_connected(required_nodes)
 
     def is_cumulative_connected(self) -> bool:
         return self._graph.is_cumulative_connected()
@@ -112,21 +112,31 @@ class ConnectivityOps:
 
         active_nodes = self._get_nodes_with_active_edges()
 
-        anchor_candidates = sorted(
-            [
-                n
-                for n in largest_component
-                if n in self._anchor_nodes and n in self._get_nodes_with_active_edges()
-            ],
-            key=lambda n: n.get_text_representer(),
-        )
+        anchor_candidates = [
+            n
+            for n in largest_component
+            if n in self._anchor_nodes and any(e.active for e in n.edges)
+        ]
 
         if anchor_candidates:
-            backbone_node = anchor_candidates[0]
+
+            def anchor_score(n):
+                active_degree = sum(1 for e in n.edges if e.active)
+                return (
+                    n.activation_score,
+                    active_degree,
+                    n.get_text_representer(),  # deterministic
+                )
+
+            backbone_node = max(anchor_candidates, key=anchor_score)
+
         else:
-            backbone_node = min(
+            backbone_node = max(
                 largest_component,
-                key=lambda n: self._node_sort_key(n, active_edge_pool),
+                key=lambda n: (
+                    len(n.edges),
+                    n.get_text_representer(),
+                ),
             )
 
         for comp in sorted(components[1:], key=len):
