@@ -1,14 +1,12 @@
 import logging
 import re
-from typing import List, Tuple, Optional, Iterable
+from typing import TYPE_CHECKING, List, Tuple, Optional, Iterable
 
 import networkx as nx
-from spacy.tokens import Span
 
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
 from amoc.graph import Graph, Node, Edge, NodeType, NodeSource
 from amoc.graph.per_sentence_graph import PerSentenceGraph
-from amoc.llm.vllm_client import VLLMClient
 
 from amoc.pipeline.text_filter_ops import TextFilterOps
 from amoc.pipeline.triplet_ops import TripletOps
@@ -21,7 +19,10 @@ from amoc.pipeline.plot_ops import PlotOps
 from amoc.pipeline.output_ops import OutputOps
 from amoc.pipeline.sentence_processing_ops import SentenceProcessingOps
 from amoc.pipeline.relationship_graph_ops import RelationshipGraphOps
-from amoc.pipeline.init_ops import InitOps
+
+if TYPE_CHECKING:
+    from amoc.llm.vllm_client import VLLMClient
+    from spacy.tokens import Span
 
 
 class AMoCv4:
@@ -31,7 +32,7 @@ class AMoCv4:
         self,
         persona_description: str,
         story_text: str,
-        vllm_client: VLLMClient,
+        vllm_client: "VLLMClient",
         max_distance_from_active_nodes: int,
         max_new_concepts: int,
         max_new_properties: int,
@@ -255,13 +256,6 @@ class AMoCv4:
             edge_visibility=self.edge_visibility,
             debug=self.debug,
         )
-        self._init_ops = InitOps(
-            graph_ref=self.graph,
-            client_ref=self.client,
-            spacy_nlp=self.spacy_nlp,
-            edge_visibility=self.edge_visibility,
-            debug=self.debug,
-        )
         self._sentence_processing_ops = SentenceProcessingOps(
             graph_ref=self.graph,
             client_ref=self.client,
@@ -275,32 +269,6 @@ class AMoCv4:
         self._edge_ops.configure_with_core(self)
         self._relationship_graph_ops.configure_with_core(self)
 
-        self._init_ops.set_callbacks(
-            normalize_endpoint_text_fn=self._normalize_endpoint_text,
-            normalize_edge_label_fn=self._normalize_edge_label,
-            is_valid_relation_label_fn=self._is_valid_relation_label,
-            passes_attachment_constraint_fn=self._passes_attachment_constraint,
-            canonicalize_edge_direction_fn=self._canonicalize_edge_direction,
-            classify_relation_fn=self._classify_relation,
-            add_edge_fn=self._add_edge,
-            get_nodes_with_active_edges_fn=self._get_active_edge_nodes,
-            get_node_from_text_fn=self._resolve_node_from_text,
-            get_sentences_text_based_nodes_fn=self._get_sentences_nodes,
-            extract_deterministic_structure_fn=lambda s, n, w: (
-                self._linguistic_ops.set_sentence_context(
-                    self._current_sentence_index, self.edge_visibility
-                ),
-                self._linguistic_ops.extract_deterministic_structure(s, n, w),
-            )[-1],
-            infer_new_relationships_step_0_fn=self._infer_new_relationships_bootstrap,
-            add_inferred_relationships_to_graph_step_0_fn=self.add_inferred_relationships_to_graph_step_0,
-            restrict_active_to_current_explicit_fn=lambda en: None,
-        )
-        self._init_ops.set_state_refs(
-            explicit_nodes_ref=self._get_explicit_nodes,
-            persona=self.persona,
-        )
-
         self._sentence_processing_ops.set_callbacks(
             normalize_endpoint_text_fn=self._normalize_endpoint_text,
             normalize_edge_label_fn=self._normalize_edge_label,
@@ -313,16 +281,11 @@ class AMoCv4:
             append_adjectival_hints_fn=lambda n, s: self._linguistic_ops.append_adjectival_hints(
                 n, s
             ),
-            extract_deterministic_structure_fn=lambda s, n, w: (
-                self._linguistic_ops.set_sentence_context(
-                    self._current_sentence_index, self.edge_visibility
-                ),
-                self._linguistic_ops.extract_deterministic_structure(s, n, w),
-            )[-1],
+            extract_deterministic_structure_fn=lambda *args, **kwargs: None,
             infer_edges_to_recently_deactivated_fn=lambda *args, **kwargs: [],
             restrict_active_to_current_explicit_fn=lambda en: None,
             get_node_from_new_relationship_fn=self._resolve_node_from_new_relationship,
-            get_phrase_level_concepts_fn=self._extract_phrase_level_concepts,
+            get_phrase_level_concepts_fn=lambda *args, **kwargs: [],
             get_sentences_text_based_nodes_fn=self._get_sentences_nodes,
             infer_new_relationships_fn=self._infer_new_relationships_for_sentence,
             add_inferred_relationships_to_graph_fn=self.add_inferred_relationships_to_graph,
@@ -338,7 +301,7 @@ class AMoCv4:
     def _compute_nodes_with_active_edges(self) -> set[Node]:
         nodes: set[Node] = set()
         for edge in self.graph.edges:
-            if edge.active:
+            if edge.visibility_score > 0:
                 nodes.add(edge.source_node)
                 nodes.add(edge.dest_node)
         return nodes
@@ -423,24 +386,6 @@ class AMoCv4:
         self._carryover_nodes_current_sentence.clear()
         return nodes_before_sentence
 
-    def _handle_first_sentence(
-        self,
-        sent,
-        resolved_text: str,
-        prev_sentences: list,
-        nodes_before_sentence: set,
-    ) -> tuple:
-        result = self._init_ops.handle_first_sentence(
-            sent=sent,
-            resolved_text=resolved_text,
-            prev_sentences=prev_sentences,
-            nodes_before_sentence=nodes_before_sentence,
-        )
-        nodes_before, should_skip, explicit_nodes, _anchor_nodes = result
-        self._explicit_nodes_current_sentence.clear()
-        self._explicit_nodes_current_sentence.update(explicit_nodes)
-        return (nodes_before, should_skip)
-
     def _handle_nonfirst_sentence(
         self,
         i: int,
@@ -474,25 +419,21 @@ class AMoCv4:
     ) -> tuple:
         self._new_inferred_nodes_count = 0
         nodes_before_sentence = self._prepare_sentence_runtime_state(original_text)
+
         logging.info("Processing sentence %d: %s", i, resolved_text)
 
         resolved_text, sent = self._sentence_processing_ops.sanitize_json_contamination(
             resolved_text, original_text, sent
         )
 
-        if i == 0:
-            result = self._handle_first_sentence(
-                sent, resolved_text, prev_sentences, nodes_before_sentence
-            )
-        else:
-            result = self._handle_nonfirst_sentence(
-                i,
-                sent,
-                resolved_text,
-                original_text,
-                prev_sentences,
-                nodes_before_sentence,
-            )
+        result = self._handle_nonfirst_sentence(
+            i,
+            sent,
+            resolved_text,
+            original_text,
+            prev_sentences,
+            nodes_before_sentence,
+        )
 
         return result
 
@@ -532,7 +473,7 @@ class AMoCv4:
 
         G_active = nx.Graph()
         for edge in self.graph.edges:
-            if edge.active:
+            if edge.visibility_score > 0:
                 G_active.add_edge(edge.source_node, edge.dest_node)
 
         for node in self._historical_explicit_nodes | current_explicit_nodes:
@@ -560,7 +501,7 @@ class AMoCv4:
         active_edges = {
             edge
             for edge in self.graph.edges
-            if edge.active
+            if edge.visibility_score > 0
             and edge.source_node in active_nodes
             and edge.dest_node in active_nodes
         }
@@ -693,7 +634,6 @@ class AMoCv4:
                 continue
 
             self._apply_edge_decay_paper(" ".join(prev_sentences))
-            prev_sentences.append(original_text)
 
             self._historical_explicit_nodes |= set(
                 self._explicit_nodes_current_sentence
@@ -720,11 +660,6 @@ class AMoCv4:
 
         return self._finalize_run_outputs(matrix_suffix)
 
-    def _infer_new_relationships_bootstrap(
-        self, sent: Span
-    ) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
-        return self._inference_ops.infer_new_relationships_step_0(sent)
-
     def _infer_new_relationships_for_sentence(
         self,
         text: str,
@@ -739,26 +674,6 @@ class AMoCv4:
             current_sentence_text_based_words=current_sentence_text_based_words,
             graph_nodes_representation=graph_nodes_representation,
             graph_edges_representation=graph_edges_representation,
-        )
-
-    def add_inferred_relationships_to_graph_step_0(
-        self,
-        inferred_relationships: List[Tuple[str, str, str]],
-        node_type: NodeType,
-        sent: Span,
-    ) -> None:
-        current_sentence_text_based_nodes, current_sentence_text_based_words = (
-            self._collect_sentence_text_based_nodes(
-                [sent], create_unexistent_nodes=False
-            )
-        )
-        self._relationship_graph_ops.set_current_sentence(self._current_sentence_index)
-        self._relationship_graph_ops.add_inferred_relationships_to_graph_step_0(
-            inferred_relationships=inferred_relationships,
-            node_type=node_type,
-            sent=sent,
-            current_sentence_text_based_nodes=current_sentence_text_based_nodes,
-            current_sentence_text_based_words=current_sentence_text_based_words,
         )
 
     def add_inferred_relationships_to_graph(
@@ -824,7 +739,7 @@ class AMoCv4:
 
     def _collect_sentence_text_based_nodes(
         self,
-        previous_sentences: List[Span],
+        previous_sentences: List["Span"],
         create_unexistent_nodes: bool = True,
     ) -> Tuple[List[Node], List[str]]:
         return self._node_ops.get_sentences_text_based_nodes(

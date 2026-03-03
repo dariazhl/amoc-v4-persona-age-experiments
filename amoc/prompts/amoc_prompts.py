@@ -423,3 +423,31 @@ Respond in this exact JSON format:
     "label": "relationship_label",
     "explanation": "Brief explanation (1 sentence) of why this connection is reasonable"
 }}"""
+
+SELECT_EXPLICIT_NODES_PROMPT = """
+I want to build a knowledge graph using the provided text.
+
+The graph should consist of two types of nodes:
+- Concept nodes (objects or persons, usually nouns or noun phrases)
+- Property nodes (attributes, usually adjectives or meaningful descriptors)
+
+Your task is to SELECT the most narratively important nodes from the sentence below.
+
+Rules:
+1. Select at most 5 concept nodes.
+2. Select at most 3 property nodes.
+3. Only select nodes that appear in or are strongly implied by the text.
+4. Avoid generic words unless they are central.
+5. Age or educational level mentioned in the text may influence what is considered salient.
+6. Do NOT generate relationships.
+7. Do NOT invent nodes unrelated to the sentence.
+
+The text is:
+{text}
+
+Return JSON only in this format:
+{{
+    "concepts": [...],
+    "properties": [...]
+}}
+"""

@@ -16,6 +16,7 @@ from amoc.prompts.amoc_prompts import (
     INFER_OBJECTS_AND_PROPERTIES_FIRST_SENTENCE_PROMPT,
     GENERATE_NEW_INFERRED_RELATIONSHIPS_FIRST_SENTENCE_PROMPT,
     SELECT_RELEVANT_EDGES_PROMPT,
+    SELECT_EXPLICIT_NODES_PROMPT,
     REPLACE_PRONOUNS_PROMPT,
     HUB_EDGE_LABEL_WITH_EXPLANATION_PROMPT,
     FORCED_CONNECTIVITY_EDGE_PROMPT,
@@ -122,6 +123,19 @@ class VLLMClient:
             {"role": "user", "content": prompt},
         ]
         return self.generate(messages)
+
+    def call_json(self, prompt: str, persona: str = "") -> dict:
+        response = self.call_vllm(prompt, persona)
+        parsed = parse_for_dict(response)
+        if isinstance(parsed, dict):
+            return parsed
+        return {}
+
+    def get_explicit_nodes_from_text(self, sentence: str, persona: str) -> dict:
+        prompt = SELECT_EXPLICIT_NODES_PROMPT.format(
+            text=sentence,
+        )
+        return self.call_json(prompt, persona)
 
     def get_new_relationships(
         self, nodes_from_text, nodes_from_graph, edges_from_graph, text, persona

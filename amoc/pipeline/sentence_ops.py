@@ -249,11 +249,8 @@ class SentenceOps:
         explicit_nodes: Set["Node"],
         activation_max_distance: int,
     ) -> None:
-        for node in explicit_nodes:
-            node.activation_score = activation_max_distance
-
-            if node not in self._graph.nodes:
-                self._graph.nodes.add(node)
+        # B-state: node-level activation bookkeeping is disabled.
+        return None
 
     def extract_sentence_lemmas(self, text: str) -> Set[str]:
         return {w.lower() for w in re.findall(r"[a-zA-Z]+", text)}

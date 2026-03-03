@@ -56,21 +56,24 @@ class OutputOps:
                 .astype({"token": str})
             )
 
-        matrix = (
-            df.pivot(index="token", columns="sentence", values="score")
-            .sort_index()
-            .fillna(0.0)
-        )
+        if df.empty or not {"token", "sentence", "score"}.issubset(df.columns):
+            matrix = pd.DataFrame()
+        else:
+            matrix = (
+                df.pivot(index="token", columns="sentence", values="score")
+                .sort_index()
+                .fillna(0.0)
+            )
 
-        # Order rows by salience: highest peak activation first, then total activation
-        salience_max = matrix.max(axis=1)
-        salience_sum = matrix.sum(axis=1)
-        ordering = (
-            salience_max.to_frame("max")
-            .assign(sum=salience_sum)
-            .sort_values(by=["max", "sum", "token"], ascending=[False, False, True])
-        )
-        matrix = matrix.loc[ordering.index]
+            # Order rows by salience: highest peak activation first, then total activation
+            salience_max = matrix.max(axis=1)
+            salience_sum = matrix.sum(axis=1)
+            ordering = (
+                salience_max.to_frame("max")
+                .assign(sum=salience_sum)
+                .sort_values(by=["max", "sum", "token"], ascending=[False, False, True])
+            )
+            matrix = matrix.loc[ordering.index]
 
         # Prepend full story text as first row for traceability
         if len(matrix.columns) > 0:
@@ -131,6 +134,8 @@ class OutputOps:
             cumulative_triplets.append((subj, rel, obj, int(intro)))
 
         # validations
-        self._graph.sanity_check_readable_triplets()
+        sanity_check = getattr(self._graph, "sanity_check_readable_triplets", None)
+        if callable(sanity_check):
+            sanity_check()
 
         return final_triplets, sentence_triplets, cumulative_triplets

@@ -85,9 +85,7 @@ class Edge:
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = True
         self.activation_role = "reactivated"
-
         if reset_score:
-            self.activation_score = max(self.activation_score, 1)
             self.visibility_score = max(self.visibility_score, 1)
 
     def mark_as_asserted(self, reset_score: bool = True) -> None:
@@ -95,13 +93,11 @@ class Edge:
         self.reactivated_this_sentence = False
         self.activation_role = "asserted"
         if reset_score:
-            self.activation_score = self.DEFAULT_ACTIVATION_SCORE
             self.visibility_score = max(self.visibility_score, 1)
 
     def activate(self, reset_score: bool = True) -> None:
         self.visibility_score = max(self.visibility_score, 1)
-        if reset_score:
-            self.activation_score = self.DEFAULT_ACTIVATION_SCORE
+        return None
 
     def deactivate(self) -> None:
         self.visibility_score = 0
@@ -115,8 +111,7 @@ class Edge:
         self.activation_role = None
 
     def decay_activation(self) -> None:
-        if self.activation_score > 0:
-            self.activation_score -= 1
+        self.reduce_visibility()
 
     def reduce_visibility(self) -> None:
         if self.visibility_score <= 0:
@@ -132,7 +127,6 @@ class Edge:
         self.asserted_this_sentence = True
         self.reactivated_this_sentence = False
         self.activation_role = "asserted"
-        self.activation_score = self.DEFAULT_ACTIVATION_SCORE
 
     @property
     def active(self) -> bool:

@@ -1,4 +1,8 @@
 from amoc.pipeline.core import AMoCv4
-from amoc.pipeline.engine import AgeAwareAMoCEngine
+
+try:
+    from amoc.pipeline.engine import AgeAwareAMoCEngine
+except ModuleNotFoundError:
+    AgeAwareAMoCEngine = None
 
 __all__ = ["AMoCv4", "AgeAwareAMoCEngine"]

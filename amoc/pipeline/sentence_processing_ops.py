@@ -1,10 +1,8 @@
 import logging
-import copy
 import re
 from typing import TYPE_CHECKING, List, Optional, Tuple, Set
-import networkx as nx
 
-from amoc.graph.node import NodeType, NodeSource, NodeProvenance
+from amoc.graph.node import NodeType, NodeSource
 
 if TYPE_CHECKING:
     from amoc.pipeline.core import AMoCv4
@@ -53,7 +51,6 @@ class SentenceProcessingOps:
         self._carryover_nodes_ref = None
         self.persona = None
         self.ENFORCE_ATTACHMENT_CONSTRAINT = True
-        self.ACTIVATION_MAX_DISTANCE = 2
 
     def set_callbacks(
         self,
@@ -126,56 +123,22 @@ class SentenceProcessingOps:
             append_adjectival_hints_fn=lambda n, s: (
                 core._linguistic_ops.append_adjectival_hints(n, s)
             ),
-            extract_deterministic_structure_fn=lambda s, n, w: (
-                core._linguistic_ops.set_sentence_context(
-                    core._current_sentence_index, core.edge_visibility
-                ),
-                core._linguistic_ops.extract_deterministic_structure(s, n, w),
-            )[-1],
+            extract_deterministic_structure_fn=lambda *args, **kwargs: None,
             infer_edges_to_recently_deactivated_fn=core._infer_edges_to_recently_deactivated,
             restrict_active_to_current_explicit_fn=lambda en: None,
             get_node_from_new_relationship_fn=core._resolve_node_from_new_relationship,
-            get_phrase_level_concepts_fn=core._extract_phrase_level_concepts,
+            get_phrase_level_concepts_fn=lambda *args, **kwargs: [],
             get_sentences_text_based_nodes_fn=core._get_sentences_nodes,
             infer_new_relationships_fn=core._infer_new_relationships_for_sentence,
             add_inferred_relationships_to_graph_fn=core.add_inferred_relationships_to_graph,
         )
         self.set_state_refs(
             explicit_nodes_ref=core._get_explicit_nodes,
-            anchor_nodes_ref=core._anchor_nodes,
+            anchor_nodes_ref=core._dummy_anchor_nodes,
             triplet_intro_ref=core._triplet_intro,
             carryover_nodes_ref=core._get_carryover_nodes,
             persona=core.persona,
         )
-
-    def _relation_is_syntactically_supported(
-        self,
-        source_node,
-        edge_label,
-        dest_node,
-    ) -> bool:
-        # triplets such as "famous - knows - man" are incorrect
-        # method validates that the triplet makes semantic sense
-        doc = self.spacy_nlp(self._current_sentence_text)
-
-        source_lemma = source_node.get_text_representer().lower()
-        dest_lemma = dest_node.get_text_representer().lower()
-
-        for tok in doc:
-            if tok.lemma_.lower() == edge_label.lower():
-                # find nominal subject
-                subj = [c for c in tok.children if c.dep_ in {"nsubj", "nsubjpass"}]
-                # find direct object
-                obj = [c for c in tok.children if c.dep_ in {"dobj", "pobj", "attr"}]
-
-                if subj and obj:
-                    subj_lemma = subj[0].lemma_.lower()
-                    obj_lemma = obj[0].lemma_.lower()
-
-                    if subj_lemma == source_lemma and obj_lemma == dest_lemma:
-                        return True
-        # do not admit triplet that does not make sense
-        return False
 
     def handle_nonfirst_sentence(
         self,
@@ -191,199 +154,86 @@ class SentenceProcessingOps:
         anchor_nodes: set,
         triplet_intro: dict,
     ) -> Tuple[set, bool]:
+
         self._current_sentence_index = current_sentence_index
         self._current_sentence_text = current_sentence_text
 
-        for e in self.graph.edges:
-            e.active_this_sentence = False
-        added_edges = []
-
-        _graph_snapshot = copy.deepcopy(self.graph)
-        _anchor_snapshot = copy.deepcopy(anchor_nodes)
-        _triplet_intro_snapshot = copy.deepcopy(triplet_intro)
-
-        current_sentence = sent
         prev_sentences.append(resolved_text)
         if len(prev_sentences) > self.context_length:
             prev_sentences.pop(0)
 
-        phrase_nodes = self._get_phrase_level_concepts_fn(current_sentence)
-
-        current_sentence_text_based_nodes, current_sentence_text_based_words = (
-            self._get_sentences_text_based_nodes_fn(
-                [current_sentence], create_unexistent_nodes=True
-            )
-        )
-
-        sentence_lemma_set = {
-            token.lemma_.lower() for token in self.spacy_nlp(original_text)
-        }
-
-        new_explicit_nodes = {
-            n
-            for n in current_sentence_text_based_nodes
-            if n.node_type in {NodeType.CONCEPT, NodeType.PROPERTY}
-            and any(lemma in sentence_lemma_set for lemma in n.lemmas)
-        }
-        explicit_nodes_current_sentence.clear()
-        explicit_nodes_current_sentence.update(new_explicit_nodes)
-
-        self._extract_deterministic_structure_fn(
-            current_sentence,
-            current_sentence_text_based_nodes,
-            current_sentence_text_based_words,
-        )
-
-        for node in explicit_nodes_current_sentence:
-            node.activation_score = self.ACTIVATION_MAX_DISTANCE
-
-        current_all_text = resolved_text
-
-        graph_active_nodes = self.graph.get_active_nodes(
-            self.max_distance_from_active_nodes, only_text_based=True
-        )
-
-        active_nodes_text = self.graph.get_nodes_str(graph_active_nodes)
-        active_nodes_edges_text, _ = self.graph.get_edges_str(
-            graph_active_nodes, only_text_based=True
-        )
-
-        nodes_from_text = ""
-        for idx, node in enumerate(current_sentence_text_based_nodes):
-            nodes_from_text += (
-                f" - ({current_sentence_text_based_words[idx]}, {node.node_type})\n"
-            )
-
-        nodes_from_text = self._append_adjectival_hints_fn(nodes_from_text, sent)
-
-        new_relationships = self.client.get_new_relationships(
-            nodes_from_text,
-            active_nodes_text,
-            active_nodes_edges_text,
-            current_all_text,
+        # llm node extraction
+        llm_nodes = self.client.get_explicit_nodes_from_text(
+            resolved_text,
             self.persona,
         )
 
-        if explicit_nodes_current_sentence and (
-            not new_relationships or len(new_relationships) == 0
-        ):
-            explicit = list(explicit_nodes_current_sentence)
-            if len(explicit) >= 2:
-                new_relationships = [
-                    (
-                        explicit[0].get_text_representer(),
-                        "co_occurs_with",
-                        explicit[1].get_text_representer(),
-                    )
-                ]
+        concepts = llm_nodes.get("concepts", [])
+        properties = llm_nodes.get("properties", [])
 
-        text_based_activated_nodes = current_sentence_text_based_nodes
-        sentence_lemma_keys = {
-            tuple(n.lemmas) for n in current_sentence_text_based_nodes
-        }
+        current_nodes = []
 
-        added_edges = self._process_llm_relationships(
-            new_relationships,
-            current_sentence_text_based_nodes,
-            current_sentence_text_based_words,
-            graph_active_nodes,
-            sentence_lemma_keys,
-            explicit_nodes_current_sentence,
-        )
-
-        inferred_concept_relationships, inferred_property_relationships = (
-            self._infer_new_relationships_fn(
-                current_all_text,
-                current_sentence_text_based_nodes,
-                current_sentence_text_based_words,
-                self.graph.get_nodes_str(
-                    self.graph.get_active_nodes(
-                        self.max_distance_from_active_nodes,
-                        only_text_based=True,
-                    )
-                ),
-                self.graph.get_edges_str(
-                    self.graph.get_active_nodes(
-                        self.max_distance_from_active_nodes,
-                        only_text_based=True,
-                    ),
-                    only_text_based=True,
-                )[0],
+        for concept in concepts:
+            node = self.graph.add_or_get_node(
+                lemmas=[concept.lower()],
+                actual_text=concept.lower(),
+                node_type=NodeType.CONCEPT,
+                node_source=NodeSource.TEXT_BASED,
+                origin_sentence=current_sentence_index,
             )
-        )
+            if node:
+                current_nodes.append(node)
 
-        graph_active_nodes = self.graph.get_active_nodes(
-            self.max_distance_from_active_nodes,
-            only_text_based=True,
-        )
-
-        self._add_inferred_relationships_to_graph_fn(
-            inferred_concept_relationships,
-            NodeType.CONCEPT,
-            current_sentence_text_based_nodes,
-            current_sentence_text_based_words,
-            graph_active_nodes,
-            added_edges,
-        )
-        self._add_inferred_relationships_to_graph_fn(
-            inferred_property_relationships,
-            NodeType.PROPERTY,
-            current_sentence_text_based_nodes,
-            current_sentence_text_based_words,
-            graph_active_nodes,
-            added_edges,
-        )
-
-        if self.ENFORCE_ATTACHMENT_CONSTRAINT:
-            targeted_edges = self._infer_edges_to_recently_deactivated_fn(
-                current_sentence_text_based_nodes,
-                current_sentence_text_based_words,
-                current_all_text,
+        for prop in properties:
+            node = self.graph.add_or_get_node(
+                lemmas=[prop.lower()],
+                actual_text=prop.lower(),
+                node_type=NodeType.PROPERTY,
+                node_source=NodeSource.TEXT_BASED,
+                origin_sentence=current_sentence_index,
             )
-            added_edges.extend(targeted_edges)
+            if node:
+                current_nodes.append(node)
 
-        new_anchors = {
+        explicit_nodes_current_sentence.clear()
+        explicit_nodes_current_sentence.update(current_nodes)
+
+        # llm relationships
+        nodes_from_text = ""
+        for node in current_nodes:
+            nodes_from_text += f" - ({node.get_text_representer()}, {node.node_type})\n"
+
+        graph_nodes_text = self.graph.get_nodes_str(self.graph.nodes)
+        graph_edges_text, _ = self.graph.get_edges_str(self.graph.nodes)
+
+        new_relationships = self.client.get_new_relationships(
+            nodes_from_text,
+            graph_nodes_text,
+            graph_edges_text,
+            resolved_text,
+            self.persona,
+        )
+        sentence_lemma_keys = {tuple(n.lemmas) for n in current_nodes}
+        self._process_llm_relationships(
+            new_relationships=new_relationships,
+            current_sentence_text_based_nodes=current_nodes,
+            current_sentence_text_based_words=[
+                n.get_text_representer() for n in current_nodes
+            ],
+            graph_active_nodes=list(self.graph.nodes),
+            sentence_lemma_keys=sentence_lemma_keys,
+            explicit_nodes_current_sentence=explicit_nodes_current_sentence,
+        )
+
+        # anchors
+        anchor_nodes.clear()
+        anchor_nodes.update(
             n
             for n in explicit_nodes_current_sentence
             if n.node_type == NodeType.CONCEPT
-        } | {
-            n
-            for n in self._get_nodes_with_active_edges_fn()
-            if n.node_type == NodeType.CONCEPT
-        }
-
-        anchor_nodes.clear()
-        anchor_nodes.update(new_anchors)
-
-        self._handle_single_explicit_bridge(
-            explicit_nodes_current_sentence,
         )
 
-        self._ensure_explicit_nodes_have_edges(
-            explicit_nodes_current_sentence,
-            current_sentence_text,
-        )
-
-        self._restrict_active_to_current_explicit_fn(
-            list(explicit_nodes_current_sentence)
-        )
-
-        should_skip = self._handle_empty_projection_retry(
-            explicit_nodes_current_sentence,
-            current_sentence_text_based_nodes,
-            current_sentence_text_based_words,
-            graph_active_nodes,
-            current_all_text,
-            nodes_from_text,
-            _graph_snapshot,
-            _anchor_snapshot,
-            _triplet_intro_snapshot,
-            anchor_nodes,
-            triplet_intro,
-            nodes_before_sentence,
-        )
-
-        return (nodes_before_sentence, should_skip)
+        return (nodes_before_sentence, False)
 
     def _normalize_relationship(self, relationship):
         # Normalize LLM output into (subj, rel, obj)
@@ -485,13 +335,6 @@ class SentenceProcessingOps:
             if tuple(dest_node.lemmas) in sentence_lemma_keys:
                 dest_node.node_source = NodeSource.TEXT_BASED
 
-            if not self._relation_is_syntactically_supported(
-                source_node,
-                edge_label,
-                dest_node,
-            ):
-                continue
-
             edge = self._add_edge_fn(
                 source_node,
                 dest_node,
@@ -503,182 +346,6 @@ class SentenceProcessingOps:
                 added_edges.append(edge)
 
         return added_edges
-
-    def _handle_single_explicit_bridge(
-        self,
-        explicit_nodes_current_sentence: set,
-    ):
-        if len(explicit_nodes_current_sentence) == 1:
-            node = next(iter(explicit_nodes_current_sentence))
-
-            active_nodes = self._get_nodes_with_active_edges_fn()
-            if node not in active_nodes and active_nodes:
-                anchor = min(
-                    active_nodes,
-                    key=lambda n: n.get_text_representer(),
-                )
-
-                if anchor != node:
-                    edge = self._add_edge_fn(
-                        anchor,
-                        node,
-                        "appears",
-                        self.edge_visibility,
-                    )
-                    if edge:
-                        edge.mark_as_asserted(reset_score=True)
-
-    def _ensure_active_connectivity(
-        self,
-        explicit_nodes_current_sentence: set,
-        anchor_nodes: set,
-    ):
-        # B-state: no connectivity forcing at sentence time.
-        return None
-
-    def _ensure_explicit_nodes_have_edges(
-        self,
-        explicit_nodes_current_sentence: set,
-        current_sentence_text: str,
-    ):
-        active_nodes = self._get_nodes_with_active_edges_fn()
-
-        for node in explicit_nodes_current_sentence:
-            if node not in active_nodes:
-                repair_relationships = self.client.get_new_relationships(
-                    node.get_text_representer(),
-                    self.graph.get_nodes_str(self.graph.nodes),
-                    self.graph.get_edges_str(self.graph.nodes)[0],
-                    current_sentence_text,
-                    self.persona,
-                )
-
-                for relationship in repair_relationships:
-                    if (
-                        isinstance(relationship, (list, tuple))
-                        and len(relationship) == 3
-                    ):
-                        subj, rel, obj = relationship
-
-                        source_node = self._get_node_from_new_relationship_fn(
-                            subj,
-                            self.graph.nodes,
-                            [],
-                            [],
-                            node_source=NodeSource.TEXT_BASED,
-                            create_node=False,
-                        )
-
-                        dest_node = self._get_node_from_new_relationship_fn(
-                            obj,
-                            self.graph.nodes,
-                            [],
-                            [],
-                            node_source=NodeSource.TEXT_BASED,
-                            create_node=False,
-                        )
-
-                        if source_node and dest_node:
-                            edge = self._add_edge_fn(
-                                source_node,
-                                dest_node,
-                                rel,
-                                self.edge_visibility,
-                            )
-
-                            if edge:
-                                edge.mark_as_asserted(reset_score=True)
-                                break
-
-    def _handle_empty_projection_retry(
-        self,
-        explicit_nodes_current_sentence: set,
-        current_sentence_text_based_nodes,
-        current_sentence_text_based_words,
-        graph_active_nodes,
-        current_all_text: str,
-        nodes_from_text: str,
-        _graph_snapshot,
-        _anchor_snapshot,
-        _triplet_intro_snapshot,
-        anchor_nodes: set,
-        triplet_intro: dict,
-        nodes_before_sentence: set,
-    ) -> bool:
-        current_active_nodes = self._get_nodes_with_active_edges_fn()
-
-        if not current_active_nodes:
-            logging.warning(
-                "Empty projection at sentence %d. Retrying once.",
-                self._current_sentence_index,
-            )
-
-            # Recompute active context
-            graph_active_nodes = self.graph.get_active_nodes(
-                self.max_distance_from_active_nodes,
-                only_text_based=True,
-            )
-
-            active_nodes_text = self.graph.get_nodes_str(graph_active_nodes)
-            active_nodes_edges_text, _ = self.graph.get_edges_str(
-                graph_active_nodes,
-                only_text_based=True,
-            )
-
-            retry_relationships = self.client.get_new_relationships(
-                nodes_from_text,
-                active_nodes_text,
-                active_nodes_edges_text,
-                current_all_text,
-                self.persona,
-            )
-
-            for relationship in retry_relationships:
-                if isinstance(relationship, (list, tuple)) and len(relationship) == 3:
-                    subj, rel, obj = relationship
-                    subj = self._normalize_endpoint_text_fn(subj, is_subject=True)
-                    obj = self._normalize_endpoint_text_fn(obj, is_subject=False)
-
-                    if not subj or not obj or subj == obj:
-                        continue
-
-                    source_node = self._get_node_from_new_relationship_fn(
-                        subj,
-                        graph_active_nodes,
-                        current_sentence_text_based_nodes,
-                        current_sentence_text_based_words,
-                        node_source=NodeSource.TEXT_BASED,
-                        create_node=True,
-                    )
-
-                    dest_node = self._get_node_from_new_relationship_fn(
-                        obj,
-                        graph_active_nodes,
-                        current_sentence_text_based_nodes,
-                        current_sentence_text_based_words,
-                        node_source=NodeSource.TEXT_BASED,
-                        create_node=True,
-                    )
-
-                    if source_node and dest_node:
-                        edge = self._add_edge_fn(
-                            source_node,
-                            dest_node,
-                            rel,
-                            self.edge_visibility,
-                        )
-                        if edge:
-                            break
-
-            self._restrict_active_to_current_explicit_fn(
-                list(explicit_nodes_current_sentence)
-            )
-
-            if not self._get_nodes_with_active_edges_fn():
-                logging.error("Retry failed — reverting.")
-                return True
-
-        return False
 
     def sanitize_json_contamination(
         self, resolved_text: str, original_text: str, sent
