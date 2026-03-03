@@ -41,140 +41,19 @@ class ActivationScheduler:
         self._current_sentence_index = idx
 
     def apply_global_edge_decay(self) -> None:
-        for edge in self._graph.edges:
-            # Don't decay edges created this sentence
-            if edge.created_at_sentence == self._current_sentence_index:
-                continue
-
-            # Only decay edges reactivated this sentence
-            if not edge.asserted_this_sentence and not edge.reactivated_this_sentence:
-                edge.reduce_visibility()
-
-                if edge.visibility_score <= 0:
-                    edge.visibility_score = 0
-                    edge.active = False
+        # Attention simulation disabled.
+        return None
 
     def decay_node_activation(self) -> None:
-        explicit_nodes = self._get_explicit_nodes()
-
-        for node in self._graph.nodes:
-            # Explicit nodes never decay this sentence
-            if node in explicit_nodes:
-                node.active = True
-                continue
-
-            # Step 1 — numeric decay
-            if node.activation_score > 0:
-                node.activation_score -= 1
-
-            # Step 2 — cutoff by score
-            if node.activation_score <= 0:
-                node.active = False
-                continue
-
-            # Step 3 — active node must have ≥1 active edge
-            has_active_edge = any(
-                e.active and (e.source_node == node or e.dest_node == node)
-                for e in self._graph.edges
-            )
-
-            if not has_active_edge:
-                node.active = False
-
-    def reactivate_relevant_edges(
-        self,
-        active_nodes: List["Node"],
-        prev_sentences_text: str,
-        newly_added_edges: List["Edge"],
-    ) -> None:
-        edges_text, edges = self._graph.get_edges_str(
-            self._graph.nodes, only_active=False
-        )
-
-        if not self._strict_reactivate:
-            for edge in edges:
-                if edge.is_property_edge():
-                    continue
-                edge.mark_as_reactivated(reset_score=False)
-                edge.visibility_score = self._edge_visibility
-                if self._record_edge_fn and (
-                    edge.is_asserted() or edge.is_reactivated()
-                ):
-                    self._record_edge_fn(edge, self._current_sentence_index)
-            return
-
-        raw_indices = self._client.get_relevant_edges(
-            edges_text, prev_sentences_text, None
-        )
-
-        valid_indices: List[int] = []
-        for idx in raw_indices:
-            try:
-                i = int(idx)
-            except Exception:
-                continue
-            if 1 <= i <= len(edges):
-                valid_indices.append(i)
-
-        valid_indices = valid_indices[: self._nr_relevant_edges]
-
-        active_node_set = set(active_nodes)
-
-        if not valid_indices:
-            # Fallback: keep edges that are newly added
-            selected = set()
-            connected_nodes = active_node_set
-            for idx, edge in enumerate(edges, start=1):
-                if edge in newly_added_edges:
-                    selected.add(idx)
-        else:
-            selected = set(valid_indices)
-            for i in selected:
-                edge = edges[i - 1]
-                edge.visibility_score = self._edge_visibility
-                if not edge.is_property_edge():
-                    continue
-                if self._record_edge_fn:
-                    self._record_edge_fn(edge, self._current_sentence_index)
-
-        # Apply decay to edges
-        for idx, edge in enumerate(edges, start=1):
-            if idx in selected or edge in newly_added_edges:
-                if edge.is_property_edge():
-                    continue
-                edge.mark_as_reactivated(reset_score=False)
-                edge.visibility_score = self._edge_visibility
-            else:
-                edge.reduce_visibility()
+        # Attention simulation disabled.
+        return None
 
     def reactivate_memory_edges(
         self,
         current_sentence: int,
     ) -> Set["Edge"]:
-        # Reactivate memory edges within distance from explicit nodes
-        explicit_nodes = self._get_explicit_nodes()
-
-        if not explicit_nodes:
-            return set()
-
-        return self._graph.reactivate_memory_edges_within_distance(
-            explicit_nodes=explicit_nodes,
-            max_distance=self._max_distance,
-            current_sentence=current_sentence,
-        )
-
-    def propagate_activation_from_edges(self) -> None:
-        for edge in self._graph.edges:
-            if not edge.active:
-                continue
-            edge.source_node.activation_score = max(
-                edge.source_node.activation_score, edge.activation_score
-            )
-            edge.dest_node.activation_score = max(
-                edge.dest_node.activation_score, edge.activation_score
-            )
-            edge.source_node.active = True
-            edge.dest_node.active = True
+        # Attention simulation disabled.
+        return set()
 
     def record_sentence_activation(
         self,
@@ -295,52 +174,13 @@ class ActivationScheduler:
     def distances_from_sources_active_edges(
         self, sources: Set["Node"], max_distance: int
     ) -> Dict["Node", int]:
-        if not sources:
-            return {}
-        distances: Dict["Node", int] = {s: 0 for s in sources}
-        queue: deque["Node"] = deque(sources)
-        while queue:
-            node = queue.popleft()
-            dist = distances[node]
-            if dist >= max_distance:
-                continue
-            for edge in node.edges:
-                if not edge.active:
-                    continue
-
-                # Ignore edges that are fully faded
-                if edge.visibility_score <= 1:
-                    continue
-                neighbor = (
-                    edge.dest_node if edge.source_node == node else edge.source_node
-                )
-                if neighbor in distances:
-                    continue
-                distances[neighbor] = dist + 1
-                queue.append(neighbor)
-        return distances
+        # Attention simulation disabled.
+        return {}
 
     def restrict_active_to_current_explicit(self, explicit_nodes: List["Node"]) -> None:
-        explicit_set = set(explicit_nodes)
-
-        for node in self._graph.nodes:
-            # Explicit nodes always stay active if they have active edges
-            if node in explicit_set:
-                has_active_edge = any(
-                    e.active and (e.source_node == node or e.dest_node == node)
-                    for e in self._graph.edges
-                )
-                node.active = has_active_edge
-                continue
-
-            # Non-explicit nodes only stay active if they have active edges
-            has_active_edge = any(
-                e.active and (e.source_node == node or e.dest_node == node)
-                for e in self._graph.edges
-            )
-            node.active = has_active_edge
+        # Attention simulation disabled.
+        return None
 
     def has_active_attachment(self, lemma: str) -> bool:
-        active_nodes = {n for n in self._graph.nodes if n.active}
-        active_nodes |= self._get_explicit_nodes()
-        return any(lemma in n.lemmas for n in active_nodes)
+        # Attention simulation disabled: attachment gate no longer depends on activation.
+        return any(lemma in n.lemmas for n in self._graph.nodes)

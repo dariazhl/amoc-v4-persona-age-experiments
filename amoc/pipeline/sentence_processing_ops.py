@@ -40,14 +40,12 @@ class SentenceProcessingOps:
         self._append_adjectival_hints_fn = None
         self._extract_deterministic_structure_fn = None
         self._infer_edges_to_recently_deactivated_fn = None
-        self._propagate_activation_from_edges_fn = None
         self._restrict_active_to_current_explicit_fn = None
         self._get_node_from_new_relationship_fn = None
         self._get_phrase_level_concepts_fn = None
         self._get_sentences_text_based_nodes_fn = None
         self._infer_new_relationships_fn = None
         self._add_inferred_relationships_to_graph_fn = None
-        self._reactivate_relevant_edges_fn = None
 
         self._explicit_nodes_ref = None
         self._anchor_nodes_ref = None
@@ -70,14 +68,12 @@ class SentenceProcessingOps:
         append_adjectival_hints_fn,
         extract_deterministic_structure_fn,
         infer_edges_to_recently_deactivated_fn,
-        propagate_activation_from_edges_fn,
         restrict_active_to_current_explicit_fn,
         get_node_from_new_relationship_fn,
         get_phrase_level_concepts_fn,
         get_sentences_text_based_nodes_fn,
         infer_new_relationships_fn,
         add_inferred_relationships_to_graph_fn,
-        reactivate_relevant_edges_fn,
     ):
         self._normalize_endpoint_text_fn = normalize_endpoint_text_fn
         self._normalize_edge_label_fn = normalize_edge_label_fn
@@ -92,7 +88,6 @@ class SentenceProcessingOps:
         self._infer_edges_to_recently_deactivated_fn = (
             infer_edges_to_recently_deactivated_fn
         )
-        self._propagate_activation_from_edges_fn = propagate_activation_from_edges_fn
         self._restrict_active_to_current_explicit_fn = (
             restrict_active_to_current_explicit_fn
         )
@@ -103,7 +98,6 @@ class SentenceProcessingOps:
         self._add_inferred_relationships_to_graph_fn = (
             add_inferred_relationships_to_graph_fn
         )
-        self._reactivate_relevant_edges_fn = reactivate_relevant_edges_fn
 
     def set_state_refs(
         self,
@@ -139,18 +133,12 @@ class SentenceProcessingOps:
                 core._linguistic_ops.extract_deterministic_structure(s, n, w),
             )[-1],
             infer_edges_to_recently_deactivated_fn=core._infer_edges_to_recently_deactivated,
-            propagate_activation_from_edges_fn=lambda: (
-                core._activation_ops.propagate_activation_from_edges()
-            ),
-            restrict_active_to_current_explicit_fn=lambda en: (
-                core._activation_ops.restrict_active_to_current_explicit(en)
-            ),
+            restrict_active_to_current_explicit_fn=lambda en: None,
             get_node_from_new_relationship_fn=core._resolve_node_from_new_relationship,
             get_phrase_level_concepts_fn=core._extract_phrase_level_concepts,
             get_sentences_text_based_nodes_fn=core._get_sentences_nodes,
             infer_new_relationships_fn=core._infer_new_relationships_for_sentence,
             add_inferred_relationships_to_graph_fn=core.add_inferred_relationships_to_graph,
-            reactivate_relevant_edges_fn=core.reactivate_relevant_edges,
         )
         self.set_state_refs(
             explicit_nodes_ref=core._get_explicit_nodes,
@@ -248,7 +236,6 @@ class SentenceProcessingOps:
 
         for node in explicit_nodes_current_sentence:
             node.activation_score = self.ACTIVATION_MAX_DISTANCE
-            node.active = True
 
         current_all_text = resolved_text
 
@@ -354,20 +341,6 @@ class SentenceProcessingOps:
                 current_all_text,
             )
             added_edges.extend(targeted_edges)
-
-        reactivated_edges = self.graph.reactivate_memory_edges_within_distance(
-            explicit_nodes=explicit_nodes_current_sentence,
-            max_distance=self.max_distance_from_active_nodes,
-            current_sentence=current_sentence_index,
-        )
-        self._reactivate_relevant_edges_fn(
-            self.graph.get_active_nodes(
-                self.max_distance_from_active_nodes, only_text_based=True
-            ),
-            " ".join(prev_sentences),
-            added_edges,
-        )
-        self._propagate_activation_from_edges_fn()
 
         new_anchors = {
             n
@@ -560,18 +533,8 @@ class SentenceProcessingOps:
         explicit_nodes_current_sentence: set,
         anchor_nodes: set,
     ):
-        carryover = (
-            self._carryover_nodes_ref()
-            if callable(self._carryover_nodes_ref)
-            else set()
-        )
-        required_nodes = explicit_nodes_current_sentence | carryover
-
-        # Delegate to canonical authority for deterministic repair
-        connected = self.graph.enforce_connectivity(
-            required_nodes,
-            allow_reactivation=True,
-        )
+        # B-state: no connectivity forcing at sentence time.
+        return None
 
     def _ensure_explicit_nodes_have_edges(
         self,
@@ -751,6 +714,5 @@ class SentenceProcessingOps:
         apply_global_edge_decay_fn: callable,
         decay_node_activation_fn: callable,
     ) -> None:
-        apply_global_edge_decay_fn()
-        self.graph.enforce_cumulative_stability(set(explicit_nodes))
-        decay_node_activation_fn()
+        # B-state: global activation scheduler hooks are disabled.
+        return None

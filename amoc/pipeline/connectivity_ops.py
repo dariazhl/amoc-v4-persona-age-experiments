@@ -52,46 +52,7 @@ class ConnectivityOps:
         current_sentence_text: str,
         create_forced_edges_fn: callable,
     ) -> bool:
-        explicit_nodes = self._get_explicit_nodes()
-        carryover_nodes = self._get_carryover_nodes()
-        required_nodes = explicit_nodes | carryover_nodes
-
-        # PHASE 1: Deterministic repair via StabilityOps (reactivate cumulative edges)
-        if self._graph.enforce_connectivity(required_nodes, allow_reactivation=True):
-            if self.is_active_connected() and self.is_cumulative_connected():
-                return False
-
-        # PHASE 2: LLM repair - try twice
-        for attempt in range(2):
-            create_forced_edges_fn(
-                story_context=(
-                    " ".join(prev_sentences[:-1]) if len(prev_sentences) > 1 else ""
-                ),
-                current_sentence=current_sentence_text,
-                mode="active",
-            )
-            if self.is_active_connected():
-                break
-
-        # Check if LLM repair was sufficient
-        if self.is_active_connected() and self.is_cumulative_connected():
-            return False
-
-        # PHASE 3: Final fallback "relates_to" edges
-        self._apply_relates_to_fallback(required_nodes)
-
-        if not self.is_active_connected():
-            logging.error("Active graph disconnected after all repairs")
-            return True  # rollback required
-
-        # Verify cumulative connectivity
-        if not self.is_cumulative_connected():
-            self._apply_cumulative_fallback()
-
-            if not self.is_cumulative_connected():
-                logging.error("Cumulative graph disconnected after all repairs")
-                return True  # rollback required
-
+        # Connectivity forcing disabled.
         return False
 
     @staticmethod

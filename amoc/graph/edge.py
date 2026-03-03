@@ -55,9 +55,10 @@ class Edge:
     ) -> None:
         self.source_node: "Node" = source_node
         self.dest_node: "Node" = dest_node
-        self.active: bool = active
         self.label: str = label
-        self.visibility_score: int = visibility_score
+        self.visibility_score: int = max(0, visibility_score)
+        if not active:
+            self.visibility_score = 0
 
         self.persona_influenced: bool = persona_influenced
         self.inferred: bool = inferred
@@ -81,29 +82,29 @@ class Edge:
         self.checkpoint: bool = False
 
     def mark_as_reactivated(self, reset_score: bool = True) -> None:
-        self.active = True
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = True
         self.activation_role = "reactivated"
 
         if reset_score:
             self.activation_score = max(self.activation_score, 1)
+            self.visibility_score = max(self.visibility_score, 1)
 
     def mark_as_asserted(self, reset_score: bool = True) -> None:
-        self.active = True
         self.asserted_this_sentence = True
         self.reactivated_this_sentence = False
         self.activation_role = "asserted"
         if reset_score:
             self.activation_score = self.DEFAULT_ACTIVATION_SCORE
+            self.visibility_score = max(self.visibility_score, 1)
 
     def activate(self, reset_score: bool = True) -> None:
-        self.active = True
+        self.visibility_score = max(self.visibility_score, 1)
         if reset_score:
             self.activation_score = self.DEFAULT_ACTIVATION_SCORE
 
     def deactivate(self) -> None:
-        self.active = False
+        self.visibility_score = 0
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = False
         self.activation_role = None
@@ -112,28 +113,30 @@ class Edge:
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = False
         self.activation_role = None
-        self.active = False
 
     def decay_activation(self) -> None:
         if self.activation_score > 0:
             self.activation_score -= 1
-        self.active = self.activation_score > 0
 
     def reduce_visibility(self) -> None:
-        if self.visibility_score <= 1:
-            self.visibility_score = 1
+        if self.visibility_score <= 0:
+            self.visibility_score = 0
             return
         self.visibility_score -= self.DECAY_STEP
-        if self.visibility_score <= 1:
-            self.visibility_score = 1
+        if self.visibility_score < 0:
+            self.visibility_score = 0
 
     def mark_as_forced_connection(self) -> None:
         self.forced_connection = True
-        self.active = True
+        self.visibility_score = max(self.visibility_score, 1)
         self.asserted_this_sentence = True
         self.reactivated_this_sentence = False
         self.activation_role = "asserted"
         self.activation_score = self.DEFAULT_ACTIVATION_SCORE
+
+    @property
+    def active(self) -> bool:
+        return self.visibility_score > 0
 
     def is_forced_connection(self) -> bool:
         return self.forced_connection

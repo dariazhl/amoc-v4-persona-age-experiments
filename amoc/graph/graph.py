@@ -1,7 +1,6 @@
 from amoc.graph.node import Node
 from amoc.graph.node import NodeType, NodeSource, NodeProvenance
 from amoc.graph.edge import Edge
-from amoc.graph.node_activation_engine import NodeActivationEngine
 from amoc.graph.stability_ops import StabilityOps
 from amoc.graph.provenance_ops import ProvenanceOps
 from typing import List, Set, Dict, Optional, Tuple, Callable
@@ -19,7 +18,6 @@ class Graph:
         self._current_sentence_idx: int = 0
         self._current_sentence_lemmas: Optional[Set[str]] = None
 
-        self._activation_ops = NodeActivationEngine(self)
         self._stability_ops = StabilityOps(self)
         self._provenance_ops = ProvenanceOps(self)
 
@@ -120,16 +118,6 @@ class Graph:
         if not label or not isinstance(label, str) or not label.strip():
             return None
 
-        if inferred:
-            # Prevent inferred edges from attaching to decayed nodes
-            source_visibility_score = getattr(source_node, "visibility_score", None)
-            dest_visibility_score = getattr(dest_node, "visibility_score", None)
-
-            if (
-                source_visibility_score is not None and source_visibility_score <= 0
-            ) or (dest_visibility_score is not None and dest_visibility_score <= 0):
-                return None
-
         edge = Edge(
             source_node,
             dest_node,
@@ -143,11 +131,18 @@ class Graph:
             created_at_sentence=created_at_sentence,
         )
 
-        existing = self._activation_ops.find_and_reinforce_similar_edge(
-            edge, edge_visibility
-        )
-        if existing is not None:
-            return existing
+        if not edge.inferred:
+            for other_edge in self.edges:
+                if (
+                    edge.source_node == other_edge.source_node
+                    and edge.dest_node == other_edge.dest_node
+                    and edge.label.strip().lower() == other_edge.label.strip().lower()
+                ):
+                    other_edge.visibility_score = min(
+                        edge_visibility, other_edge.visibility_score + 1
+                    )
+                    other_edge.mark_as_asserted(reset_score=False)
+                    return other_edge
 
         self.edges.add(edge)
         if edge not in source_node.edges:
@@ -184,7 +179,11 @@ class Graph:
             edge.dest_node.edges.remove(edge)
 
     def get_active_subgraph(self) -> Tuple[Set[Node], Set[Edge]]:
-        return self._activation_ops.get_active_subgraph()
+        active_edges: Set[Edge] = {e for e in self.edges if e.visibility_score > 0}
+        active_nodes: Set[Node] = {e.source_node for e in active_edges} | {
+            e.dest_node for e in active_edges
+        }
+        return active_nodes, active_edges
 
     def to_networkx(self) -> nx.Graph:
         G = nx.Graph()
@@ -216,7 +215,7 @@ class Graph:
         count = 1
         for node in sorted(nodes, key=lambda node: node.score):
             for edge in node.edges:
-                if only_active and edge.active == False:
+                if only_active:
                     continue
                 if edge not in used_edges:
                     if not only_text_based:
@@ -254,7 +253,8 @@ class Graph:
         return s
 
     def deactivate_all_edges(self) -> None:
-        self._activation_ops.deactivate_all_edges()
+        # Attention simulation disabled: do not reset edge activation per sentence.
+        return None
 
     def reactivate_memory_edges_within_distance(
         self,
@@ -262,20 +262,27 @@ class Graph:
         max_distance: int,
         current_sentence: int,
     ) -> Set[Edge]:
-        return self._activation_ops.reactivate_memory_edges_within_distance(
-            explicit_nodes, max_distance, current_sentence
-        )
+        # Attention simulation disabled: no memory-edge reactivation pass.
+        return set()
 
     def get_active_nodes(
         self, score_threshold: int, only_text_based: bool = False
     ) -> List[Node]:
-        return self._activation_ops.get_active_nodes(score_threshold, only_text_based)
+        return [
+            node
+            for node in self.nodes
+            if node.score <= score_threshold
+            and (not only_text_based or node.node_source == NodeSource.TEXT_BASED)
+        ]
 
-    def decay_inactive_edges(self) -> None:
-        self._activation_ops.decay_inactive_edges()
+    def decay_edges(self) -> None:
+        for edge in self.edges:
+            if edge.visibility_score > 0:
+                edge.visibility_score -= 1
 
     def enforce_cumulative_stability(self, explicit_nodes: set) -> None:
-        self._stability_ops.enforce_cumulative_stability(explicit_nodes)
+        # Attention simulation disabled: do not rewrite graph topology from active state.
+        return None
 
     def enforce_carryover_connectivity(self, carryover_nodes: set) -> None:
         self._stability_ops.enforce_carryover_connectivity(carryover_nodes)
@@ -303,9 +310,8 @@ class Graph:
         allow_reactivation: bool = True,
         enforce_cumulative: bool = False,
     ) -> bool:
-        return self._stability_ops.reactivate_to_restore_connectivity(
-            required_nodes, allow_reactivation, enforce_cumulative
-        )
+        # Connectivity forcing disabled.
+        return True
 
     def set_provenance_gate(
         self,

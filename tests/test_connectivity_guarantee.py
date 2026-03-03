@@ -276,7 +276,7 @@ class TestMultiHopChain:
 
     def test_chain_middle_edge_removed(self):
         # Deactivate middle edge
-        self.edge_bc.active = False
+        self.edge_bc.visibility_score = 0
 
         required = {self.node_a, self.node_d}
 
@@ -315,14 +315,14 @@ class TestDecayScenario:
         assert active_required_is_connected(self.graph, required) == True
 
     def test_bridge_deactivated_cumulative_still_connected(self):
-        self.bridge.active = False
+        self.bridge.visibility_score = 0
 
         assert (
             cumulative_is_connected(self.graph) == True
         ), "Cumulative graph should remain connected even with inactive edges"
 
     def test_bridge_deactivated_active_disconnected(self):
-        self.bridge.active = False
+        self.bridge.visibility_score = 0
 
         # Full set should NOT be connected
         required = {self.knight, self.horse, self.dragon, self.treasure}
@@ -340,7 +340,7 @@ class TestDecayScenario:
         assert count_connected_components_active(self.graph) == 1
 
         # After bridge decay, 2 components
-        self.bridge.active = False
+        self.bridge.visibility_score = 0
         assert count_connected_components_active(self.graph) == 2
 
         # Cumulative should always be 1
@@ -452,7 +452,7 @@ class TestHeavyPruningScenario:
             src_idx = int(edge.source_node.lemmas[0].split("_")[1])
             dst_idx = int(edge.dest_node.lemmas[0].split("_")[1])
             if abs(src_idx - dst_idx) != 1:
-                edge.active = False
+                edge.visibility_score = 0
 
         # Cumulative should still be connected
         assert cumulative_is_connected(graph) == True
@@ -483,7 +483,7 @@ class TestHeavyPruningScenario:
         assert active_required_is_connected(graph, all_nodes) == True
 
         # Prune bridge
-        bridge.active = False
+        bridge.visibility_score = 0
 
         # Now should be disconnected
         assert active_required_is_connected(graph, all_nodes) == False
@@ -631,7 +631,7 @@ class TestLargeGraphScenario:
         assert active_required_is_connected(graph, all_nodes) == True
 
         # Deactivate bottleneck
-        bottleneck.active = False
+        bottleneck.visibility_score = 0
 
         # Now disconnected
         assert active_required_is_connected(graph, all_nodes) == False
@@ -689,7 +689,6 @@ class TestEdgeCases:
 
         edge = create_edge(node_a, node_b, "rel")
         edge.visibility_score = 0  # Faded edge
-        edge.active = True  # But marked active
 
         add_edge_to_graph(graph, edge)
 

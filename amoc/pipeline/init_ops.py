@@ -101,9 +101,7 @@ class InitOps:
             )[-1],
             infer_new_relationships_step_0_fn=core._infer_new_relationships_bootstrap,
             add_inferred_relationships_to_graph_step_0_fn=core.add_inferred_relationships_to_graph_step_0,
-            restrict_active_to_current_explicit_fn=lambda en: (
-                core._activation_ops.restrict_active_to_current_explicit(en)
-            ),
+            restrict_active_to_current_explicit_fn=lambda en: None,
         )
         self.set_state_refs(
             explicit_nodes_ref=core._get_explicit_nodes,
@@ -333,7 +331,6 @@ class InitOps:
 
         for node in explicit_nodes_current_sentence:
             node.activation_score = self.ACTIVATION_MAX_DISTANCE
-            node.active = True
 
         for node in explicit_nodes_current_sentence:
             if node not in self.graph.nodes:

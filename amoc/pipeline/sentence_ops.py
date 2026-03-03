@@ -162,13 +162,9 @@ class SentenceOps:
 
         return resolved_sentences, story_lemma_set
 
-    def reset_sentence_state(self, original_text: str) -> Set["Node"]:
-        self._graph.deactivate_all_edges()
+    def reset_sentence_state(self, original_text: str):
         self._current_sentence_text = original_text
-
-        nodes_before_sentence = set(self._graph.nodes)
-        self._explicit_nodes_current_sentence = set()
-        return nodes_before_sentence
+        return set(self._graph.nodes)
 
     def build_per_sentence_view(
         self,
@@ -255,7 +251,6 @@ class SentenceOps:
     ) -> None:
         for node in explicit_nodes:
             node.activation_score = activation_max_distance
-            node.active = True
 
             if node not in self._graph.nodes:
                 self._graph.nodes.add(node)
