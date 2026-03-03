@@ -91,7 +91,7 @@ class InitOps:
             classify_relation_fn=core._classify_relation,
             add_edge_fn=core._add_edge,
             get_nodes_with_active_edges_fn=core._get_active_edge_nodes,
-            get_node_from_text_fn=core.get_node_from_text,
+            get_node_from_text_fn=core._resolve_node_from_text,
             get_sentences_text_based_nodes_fn=core._get_sentences_nodes,
             extract_deterministic_structure_fn=lambda s, n, w: (
                 core._linguistic_ops.set_sentence_context(
@@ -99,7 +99,7 @@ class InitOps:
                 ),
                 core._linguistic_ops.extract_deterministic_structure(s, n, w),
             )[-1],
-            infer_new_relationships_step_0_fn=core.infer_new_relationships_step_0,
+            infer_new_relationships_step_0_fn=core._infer_new_relationships_bootstrap,
             add_inferred_relationships_to_graph_step_0_fn=core.add_inferred_relationships_to_graph_step_0,
             restrict_active_to_current_explicit_fn=lambda en: (
                 core._activation_ops.restrict_active_to_current_explicit(en)

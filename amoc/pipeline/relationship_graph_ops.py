@@ -102,8 +102,8 @@ class RelationshipGraphOps:
             classify_relation_fn=core._classify_relation,
             add_edge_fn=core._add_edge,
             get_nodes_with_active_edges_fn=core._get_active_edge_nodes,
-            get_node_from_text_fn=core.get_node_from_text,
-            get_node_from_new_relationship_fn=core.get_node_from_new_relationship,
+            get_node_from_text_fn=core._resolve_node_from_text,
+            get_node_from_new_relationship_fn=core._resolve_node_from_new_relationship,
             get_concept_lemmas_fn=lambda text: get_concept_lemmas(core.spacy_nlp, text),
             appears_in_story_fn=lambda t, check_graph=False: (
                 core._text_filter_ops.appears_in_story(t, check_graph=check_graph)
@@ -153,16 +153,6 @@ class RelationshipGraphOps:
             )
             obj_node_existing = self.graph.get_node(
                 self._get_concept_lemmas_fn(relationship[2])
-            )
-
-            subj_active = (
-                subj_node_existing is not None
-                and getattr(subj_node_existing, "visibility_score", 0) > 0
-            )
-
-            obj_active = (
-                obj_node_existing is not None
-                and getattr(obj_node_existing, "visibility_score", 0) > 0
             )
 
             active_nodes_set = set(self._get_nodes_with_active_edges_fn())
@@ -434,19 +424,19 @@ class RelationshipGraphOps:
             explicit_keys = {tuple(n.lemmas) for n in explicit_nodes}
 
             new_node_created = False
+            source_created_at_sentence = source_node.__dict__.get("created_at_sentence")
+            dest_created_at_sentence = dest_node.__dict__.get("created_at_sentence")
 
             if (
                 source_node.node_source == NodeSource.INFERENCE_BASED
-                and getattr(source_node, "created_at_sentence", None)
-                == self._current_sentence_index
+                and source_created_at_sentence == self._current_sentence_index
                 and tuple(source_node.lemmas) not in explicit_keys
             ):
                 new_node_created = True
 
             if (
                 dest_node.node_source == NodeSource.INFERENCE_BASED
-                and getattr(dest_node, "created_at_sentence", None)
-                == self._current_sentence_index
+                and dest_created_at_sentence == self._current_sentence_index
                 and tuple(dest_node.lemmas) not in explicit_keys
             ):
                 new_node_created = True

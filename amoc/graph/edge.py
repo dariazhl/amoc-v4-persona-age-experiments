@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 from difflib import SequenceMatcher
+from amoc.graph.node import NodeType
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -138,8 +139,6 @@ class Edge:
         return self.forced_connection
 
     def is_property_edge(self) -> bool:
-        from amoc.graph.node import NodeType
-
         return (
             self.source_node.node_type == NodeType.PROPERTY
             or self.dest_node.node_type == NodeType.PROPERTY

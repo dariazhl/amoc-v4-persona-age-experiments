@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Set, Dict, List, Tuple, Optional
 from collections import deque
+from amoc.graph.node import NodeType, NodeSource
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
@@ -45,7 +46,6 @@ class NodeActivationEngine:
         }
         return active_nodes, active_edges
 
-    # issue
     def deactivate_all_edges(self) -> None:
         for edge in self._graph.edges:
             edge.reset_for_sentence_start()
@@ -56,8 +56,6 @@ class NodeActivationEngine:
         max_distance: int,
         current_sentence: int,
     ) -> Set["Edge"]:
-        from amoc.graph.node import NodeType
-
         if not explicit_nodes or max_distance < 1:
             return set()
 
@@ -119,8 +117,6 @@ class NodeActivationEngine:
         activated_nodes: List["Node"],
         direction: str = "both",
     ) -> Dict["Node", int]:
-        from amoc.graph.node import NodeType
-
         distances = {}
         concept_seeds = [
             node for node in activated_nodes if node.node_type != NodeType.PROPERTY
@@ -156,8 +152,6 @@ class NodeActivationEngine:
     def set_nodes_score_based_on_distance_from_active_nodes(
         self, activated_nodes: List["Node"]
     ) -> None:
-        from amoc.graph.node import NodeType
-
         distances_to_activated_nodes = self.bfs_from_activated_nodes(activated_nodes)
 
         for node in self._graph.nodes:
@@ -172,8 +166,6 @@ class NodeActivationEngine:
     def get_active_nodes(
         self, score_threshold: int, only_text_based: bool = False
     ) -> List["Node"]:
-        from amoc.graph.node import NodeSource
-
         return [
             node
             for node in self._graph.nodes

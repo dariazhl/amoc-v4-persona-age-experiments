@@ -145,10 +145,10 @@ class SentenceProcessingOps:
             restrict_active_to_current_explicit_fn=lambda en: (
                 core._activation_ops.restrict_active_to_current_explicit(en)
             ),
-            get_node_from_new_relationship_fn=core.get_node_from_new_relationship,
-            get_phrase_level_concepts_fn=core.get_phrase_level_concepts,
+            get_node_from_new_relationship_fn=core._resolve_node_from_new_relationship,
+            get_phrase_level_concepts_fn=core._extract_phrase_level_concepts,
             get_sentences_text_based_nodes_fn=core._get_sentences_nodes,
-            infer_new_relationships_fn=core.infer_new_relationships,
+            infer_new_relationships_fn=core._infer_new_relationships_for_sentence,
             add_inferred_relationships_to_graph_fn=core.add_inferred_relationships_to_graph,
             reactivate_relevant_edges_fn=core.reactivate_relevant_edges,
         )

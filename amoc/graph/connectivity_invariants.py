@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Set, Optional, List, Tuple, Dict
 import logging
+import networkx as nx
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
@@ -19,7 +20,6 @@ def assert_cumulative_connected(graph: "Graph") -> bool:
     if not connected:
         # Get component count for diagnostics
         G = graph.to_networkx()
-        import networkx as nx
 
         components = list(nx.connected_components(G))
 

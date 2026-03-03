@@ -11,6 +11,9 @@ if TYPE_CHECKING:
 from amoc.prompts.amoc_prompts import FORCED_CONNECTIVITY_EDGE_PROMPT
 
 
+# Old code: no connectivity enforced
+# New code: same principle applied on new code creates fragmentation
+# Design: enforce connectivity at sentence level, with repair + fallback
 class ConnectivityOps:
     def __init__(
         self,
@@ -43,7 +46,7 @@ class ConnectivityOps:
     def is_cumulative_connected(self) -> bool:
         return self._graph.is_cumulative_connected()
 
-    def enforce_connectivity(
+    def run_connectivity_pipeline(
         self,
         prev_sentences: list,
         current_sentence_text: str,
@@ -125,6 +128,7 @@ class ConnectivityOps:
                 return (
                     n.activation_score,
                     active_degree,
+                    len(n.edges),
                     n.get_text_representer(),  # deterministic
                 )
 
@@ -134,6 +138,8 @@ class ConnectivityOps:
             backbone_node = max(
                 largest_component,
                 key=lambda n: (
+                    n.activation_score,
+                    sum(1 for e in n.edges if e.active),
                     len(n.edges),
                     n.get_text_representer(),
                 ),
@@ -172,6 +178,7 @@ class ConnectivityOps:
                 edge.reactivated_this_sentence = False
                 largest_component.update(comp_set)
 
+    # ensure cumulative graph is connected
     def _apply_cumulative_fallback(self) -> None:
         G_full = self._graph.to_networkx()
 
@@ -183,25 +190,16 @@ class ConnectivityOps:
         if len(components) <= 1:
             return
 
-        # Map string names back to nodes
-        name_to_node = {n.get_text_representer(): n for n in self._graph.nodes}
-
         # Sort by size: largest first
         components = sorted(components, key=len, reverse=True)
         largest = set(components[0])
 
-        # DETERMINISTIC
-        node_large_name = min(largest)
+        # Deterministic representative node (by text)
+        node_large = min(largest, key=lambda n: n.get_text_representer())
 
-        # Connect smallest → largest
+        # Connect smallest - largest
         for comp in sorted(components[1:], key=len):
-            node_small_name = min(comp)
-
-            node_small = name_to_node.get(node_small_name)
-            node_large = name_to_node.get(node_large_name)
-
-            if node_small is None or node_large is None:
-                continue
+            node_small = min(comp, key=lambda n: n.get_text_representer())
 
             edge = self._graph.add_edge(
                 node_small,

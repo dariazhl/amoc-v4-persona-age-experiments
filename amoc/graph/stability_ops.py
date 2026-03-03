@@ -27,13 +27,16 @@ class StabilityOps:
     def _build_cumulative_graph(self) -> nx.Graph:
         return self._graph.to_networkx()
 
-    def is_active_connected(self, required_nodes: Optional[Set["Node"]] = None) -> bool:
+    # Design: ensure active graph is connected
+    def compute_active_connectivity(
+        self, required_nodes: Optional[Set["Node"]] = None
+    ) -> bool:
         G = self._build_active_graph(include_nodes=required_nodes)
         if G.number_of_nodes() <= 1:
             return True
         return nx.is_connected(G)
 
-    def is_cumulative_connected(self) -> bool:
+    def compute_cumulative_connectivity(self) -> bool:
         if not self._graph.edges:
             return True
         G = self._build_cumulative_graph()
@@ -63,7 +66,7 @@ class StabilityOps:
         return (components, focus_idx)
 
     def can_connect_via_cumulative(self, required_nodes: Set["Node"]) -> bool:
-        if self.is_active_connected(required_nodes):
+        if self.compute_active_connectivity(required_nodes):
             return True
 
         G_cumulative = self._build_cumulative_graph()
@@ -95,7 +98,7 @@ class StabilityOps:
         return True
 
     def reconnect_via_cumulative(self, required_nodes: Set["Node"]) -> Set["Edge"]:
-        if self.is_active_connected(required_nodes):
+        if self.compute_active_connectivity(required_nodes):
             return set()
 
         G_cumulative = self._build_cumulative_graph()
@@ -144,15 +147,15 @@ class StabilityOps:
 
         return reactivated
 
-    def enforce_connectivity(
+    def reactivate_to_restore_connectivity(
         self,
         required_nodes: Set["Node"],
         allow_reactivation: bool = True,
         enforce_cumulative: bool = False,
     ) -> bool:
         #  already connected
-        if self.is_active_connected(required_nodes):
-            if enforce_cumulative and not self.is_cumulative_connected():
+        if self.compute_active_connectivity(required_nodes):
+            if enforce_cumulative and not self.compute_cumulative_connectivity():
                 # This should not happen in normal operation
                 logging.warning("Cumulative graph fragmented")
             return True
@@ -161,10 +164,10 @@ class StabilityOps:
         if allow_reactivation:
             reactivated = self.reconnect_via_cumulative(required_nodes)
 
-        active_connected = self.is_active_connected(required_nodes)
+        active_connected = self.compute_active_connectivity(required_nodes)
 
         if active_connected and enforce_cumulative:
-            cumulative_connected = self.is_cumulative_connected()
+            cumulative_connected = self.compute_cumulative_connectivity()
             if not cumulative_connected:
                 logging.warning("Active connected but cumulative fragmented")
 

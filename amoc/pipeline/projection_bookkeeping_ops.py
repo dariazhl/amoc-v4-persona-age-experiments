@@ -97,11 +97,7 @@ class ProjectionBookkeepingOps:
                 filter(
                     None,
                     {
-                        (
-                            n.get_text_representer()
-                            if hasattr(n, "get_text_representer")
-                            else n
-                        )
+                        n.get_text_representer()
                         for n in per_sentence_view.explicit_nodes
                     },
                 )

@@ -121,11 +121,13 @@ class ActivationScheduler:
         active_node_set = set(active_nodes)
 
         if not valid_indices:
-            # Fallback: keep edges that are newly added
             selected = set()
-            connected_nodes = active_node_set
             for idx, edge in enumerate(edges, start=1):
-                if edge in newly_added_edges:
+                if (
+                    edge in newly_added_edges
+                    or edge.source_node in active_node_set
+                    or edge.dest_node in active_node_set
+                ):
                     selected.add(idx)
         else:
             selected = set(valid_indices)

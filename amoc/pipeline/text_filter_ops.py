@@ -71,7 +71,7 @@ class TextFilterOps:
         prev_was_copula = False
 
         for tok in doc:
-            if not getattr(tok, "is_alpha", False):
+            if not tok.is_alpha:
                 continue
 
             pos = tok.pos_
@@ -130,7 +130,7 @@ class TextFilterOps:
             return None
 
         for tok in doc:
-            if not getattr(tok, "is_alpha", False):
+            if not tok.is_alpha:
                 continue
 
             pos = tok.pos_
@@ -139,7 +139,7 @@ class TextFilterOps:
             if not is_subject and pos not in {"NOUN", "PROPN", "PRON"}:
                 continue
 
-            lemma = (getattr(tok, "lemma_", "") or "").strip().lower()
+            lemma = (tok.lemma_ or "").strip().lower()
 
             if not lemma or lemma in self._spacy_nlp.Defaults.stop_words:
                 continue
@@ -157,7 +157,7 @@ class TextFilterOps:
         if not doc:
             return None
 
-        token = next((t for t in doc if getattr(t, "is_alpha", False)), None) or doc[0]
+        token = next((t for t in doc if t.is_alpha), None) or doc[0]
 
         if token.pos_ in {"NOUN", "PROPN"}:
             return NodeType.CONCEPT
