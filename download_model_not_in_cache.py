@@ -1,4 +1,3 @@
-# download_phi.py
 import os
 
 os.environ["HF_HOME"] = "/export/projects/nlp/.cache"
@@ -18,7 +17,6 @@ def main(argv):
 
     MODEL_ID = args.model_name
     print(f"Starting download of {MODEL_ID} into cache...")
-
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)

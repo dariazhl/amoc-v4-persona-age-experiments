@@ -32,9 +32,6 @@ sampling_params = None
 INPUT_FOLDER = "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments/personas_dfs"
 
 
-# ------------------------
-# PROMPTS
-# ------------------------
 SYSTEM_PROMPT_PRIMARY_REFINEMENT = """
 You are a constrained attribute annotator.
 
@@ -193,9 +190,6 @@ REFINEMENT_PROMPTS = {
 }
 
 
-# ------------------------
-# VALIDATION
-# ------------------------
 def age_valid_for_regime(age: int, regime: str) -> bool:
     if regime == "primary":
         return 3 <= age <= 11
@@ -208,9 +202,6 @@ def age_valid_for_regime(age: int, regime: str) -> bool:
     return False
 
 
-# ------------------------
-# LLM CALL
-# ------------------------
 def call_llm_for_batch(
     llm: LLM,
     tokenizer,
@@ -249,9 +240,6 @@ def call_llm_for_batch(
     return results
 
 
-# ------------------------
-# MAIN
-# ------------------------
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--regime", required=True, choices=REFINEMENT_PROMPTS.keys())
@@ -259,7 +247,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--min-confidence", type=int, default=80)
     parser.add_argument("--tensor-parallel-size", type=int, default=4)
-    # sets flag to fals if there is no overwrite
+
     parser.add_argument(
         "--overwrite",
         action="store_true",
@@ -280,9 +268,6 @@ def main():
         if col not in df.columns:
             df[col] = None
 
-    # ------------------------
-    # SPLIT DATA
-    # ------------------------
     if args.overwrite:
         df_to_refine = df.copy()
         df_passthrough = pd.DataFrame(columns=df.columns)
@@ -298,9 +283,7 @@ def main():
     if df_to_refine.empty:
         final_df = df_passthrough
     else:
-        # ------------------------
-        # INIT LLM
-        # ------------------------
+
         llm = LLM(
             model=args.model,
             tensor_parallel_size=args.tensor_parallel_size,
@@ -311,9 +294,6 @@ def main():
 
         valid_rows = []
 
-        # ------------------------
-        # LLM LOOP
-        # ------------------------
         indices = df_to_refine.index.tolist()
 
         accepted = 0
@@ -360,10 +340,6 @@ def main():
             "Total LLM processed:",
             accepted + rejected_null_age + rejected_low_conf + rejected_regime,
         )
-
-    # ------------------------
-    # WRITE OUTPUT
-    # ------------------------
 
     OUTPUT_FOLDER = os.path.join(INPUT_FOLDER, "personas_refined_age")
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)

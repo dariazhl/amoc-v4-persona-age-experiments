@@ -1,10 +1,6 @@
 # python merge_csv_triplet_chunks.py \
 #   --regime primary
 
-# Merge chunked triplet CSVs into per-model, per-regime outputs.
-# Expected chunk naming: model_<model>_triplets_<regime>_partXXXX.csv
-# Outputs: model_<model>_triplets_<regime>.csv
-
 import argparse
 import re
 from pathlib import Path

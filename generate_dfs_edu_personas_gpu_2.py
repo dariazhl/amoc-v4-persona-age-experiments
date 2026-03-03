@@ -15,9 +15,6 @@ from typing import Optional, Dict, Any, List, Tuple
 tokenizer = None
 OUTPUT_FOLDER = "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments/personas_dfs"
 FINAL_HS_FILE = os.path.join(OUTPUT_FOLDER, "highschool_FINAL.csv")
-# -------------------------------------------------------------------
-# Multiprocessing & environment setup
-# -------------------------------------------------------------------
 multiprocessing.set_start_method("spawn", force=True)
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 os.environ["HF_HOME"] = "/export/projects/nlp/.cache"
@@ -487,9 +484,6 @@ HIGH_SCHOOL_ROLE_KEYWORDS = [
 ]
 
 
-# -------------------------------------------------------------------
-# Simple exclusion helpers
-# -------------------------------------------------------------------
 def should_exclude_primary(text: str) -> bool:
     t = text.lower()
     return any(kw in t for kw in PRIMARY_EXCLUDE_KEYWORDS)
@@ -1200,9 +1194,6 @@ def init_llm(model_name: str, tensor_parallel_size: int):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
 
-# -------------------------------------------------------------------
-# Utility functions
-# -------------------------------------------------------------------
 def text_fields(record):
     fields = []
     for k, v in record.items():
@@ -1399,9 +1390,6 @@ def judge_batch_120b(personas: List[str]) -> List[Dict]:
     return results
 
 
-# -------------------------------------------------------------------
-# Main
-# -------------------------------------------------------------------
 def main():
     args = parse_args()
     out_file = args.file
