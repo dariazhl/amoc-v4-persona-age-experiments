@@ -3,6 +3,7 @@ import copy
 import logging
 import re
 import networkx as nx
+from amoc.graph.node import NodeType
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
@@ -162,7 +163,6 @@ class SentenceOps:
         return resolved_sentences, story_lemma_set
 
     def reset_sentence_state(self, original_text: str) -> Set["Node"]:
-        # issue here
         self._graph.deactivate_all_edges()
         self._current_sentence_text = original_text
 
@@ -239,8 +239,6 @@ class SentenceOps:
         sent: "Span",
         text_based_nodes: List["Node"],
     ) -> Set["Node"]:
-        from amoc.graph.node import NodeType
-
         sentence_lemma_set = {token.lemma_.lower() for token in sent}
 
         return {

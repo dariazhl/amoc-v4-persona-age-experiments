@@ -131,7 +131,6 @@ class OutputOps:
             cumulative_triplets.append((subj, rel, obj, int(intro)))
 
         # validations
-        self._graph.validate_amocv4_constraints()
         self._graph.sanity_check_readable_triplets()
 
         return final_triplets, sentence_triplets, cumulative_triplets

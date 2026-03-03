@@ -98,6 +98,7 @@ class AMoCv4:
         self.allow_multi_edges = allow_multi_edges
         self.checkpoint = checkpoint
         self._current_sentence_text: str = ""
+        self._current_sentence_index: Optional[int] = None
         self.cumulative_graph = nx.MultiDiGraph()
         self.active_graph = nx.MultiDiGraph()
         self._triplet_intro: dict[tuple[str, str, str], int] = {}
@@ -107,6 +108,14 @@ class AMoCv4:
         self._ever_admitted_nodes: set[str] = set()
         self._layout_depth = 3
         self._persistent_is_edges: set[tuple[str, str, str]] = set()
+        self._amoc_matrix_records: list[dict] = []
+        self._previous_active_triplets: list[tuple[str, str, str]] = []
+        self._anchor_drop_log: list[tuple[int, str, str, str, str]] = []
+        self._story_lemma_set: set[str] = set()
+        self._sentence_triplets: list[
+            tuple[int, str, str, str, str, bool, bool, int]
+        ] = []
+        self._new_inferred_nodes_count: int = 0
 
         self._get_explicit_nodes = lambda: self._explicit_nodes_current_sentence
         self._get_carryover_nodes = lambda: self._carryover_nodes_current_sentence
@@ -146,7 +155,7 @@ class AMoCv4:
         self._canonicalize_edge_direction = (
             lambda l, s, d: self._text_filter_ops.canonicalize_edge_direction(l, s, d)
         )
-        self._get_sentences_nodes = lambda sents, create_unexistent_nodes=True: self.get_senteces_text_based_nodes(
+        self._get_sentences_nodes = lambda sents, create_unexistent_nodes=True: self._collect_sentence_text_based_nodes(
             sents, create_unexistent_nodes=create_unexistent_nodes
         )
 
@@ -162,7 +171,9 @@ class AMoCv4:
             spacy_nlp=self.spacy_nlp,
             get_explicit_nodes=self._get_explicit_nodes,
             get_carryover_nodes=self._get_carryover_nodes,
-            get_attachable_nodes=lambda: self._get_attachable_nodes_for_sentence(),
+            get_attachable_nodes=lambda: self._sentence_ops.get_attachable_nodes_for_sentence(
+                self._get_active_edge_nodes
+            ),
             edge_visibility=self.edge_visibility,
             allow_multi_edges=self.allow_multi_edges,
             debug=self.debug,
@@ -320,15 +331,16 @@ class AMoCv4:
             self._plot_ops,
             self._activation_ops,
             self._output_ops,
+        ]:
+            ops._graph = self.graph
+
+        for ops in [
             self._relationship_graph_ops,
             self._init_ops,
             self._sentence_processing_ops,
             self._projection_bookkeeping_ops,
         ]:
-            if hasattr(ops, "_graph"):
-                ops._graph = self.graph
-            if hasattr(ops, "graph"):
-                ops.graph = self.graph
+            ops.graph = self.graph
 
     def repair_connectivity_callback(
         self,
@@ -352,7 +364,7 @@ class AMoCv4:
             forced_pair=forced_pair,
         )
 
-    def _build_per_sentence_view(
+    def _construct_per_sentence_view(
         self,
         explicit_nodes: List[Node],
         sentence_index: int,
@@ -364,11 +376,6 @@ class AMoCv4:
         )
         self._per_sentence_view = view
         return view
-
-    def _get_attachable_nodes_for_sentence(self) -> set[Node]:
-        return self._sentence_ops.get_attachable_nodes_for_sentence(
-            self._get_active_edge_nodes
-        )
 
     def _record_sentence_activation(
         self,
@@ -461,9 +468,6 @@ class AMoCv4:
             normalize_edge_label_fn=self._normalize_edge_label,
         )
 
-    def resolve_pronouns(self, text: str) -> str:
-        return self._linguistic_ops.resolve_pronouns(text)
-
     def _record_edge_in_graphs(self, edge: Edge, sentence_idx: Optional[int]) -> None:
         self._edge_ops.record_edge_in_graphs(
             edge=edge,
@@ -509,37 +513,32 @@ class AMoCv4:
         self._viz_positions = self._plot_ops.viz_positions
 
     def _initialize_run_state(self) -> None:
-        if not hasattr(self, "_amoc_matrix_records"):
-            self._amoc_matrix_records = []
         self._previous_active_triplets = []
-        if not hasattr(self, "_viz_positions") or self._viz_positions is None:
-            self._viz_positions = {}
+        self._viz_positions = {}
         self._projection_bookkeeping_ops.reset_state()
 
-    def _resolve_sentences(self, replace_pronouns: bool) -> list:
+    def _resolve_story_sentences(self, replace_pronouns: bool) -> list:
         resolved_sentences, story_lemma_set = self._sentence_ops.resolve_sentences(
             story_text=self.story_text,
             replace_pronouns=replace_pronouns,
-            resolve_pronouns_fn=self.resolve_pronouns,
+            resolve_pronouns_fn=self._linguistic_ops.resolve_pronouns,
         )
         self._story_lemma_set = story_lemma_set
         return resolved_sentences
 
-    def _snapshot_sentence_state(self) -> tuple:
+    def _snapshot_sentence_runtime_state(self) -> tuple:
         return self._sentence_ops.snapshot_sentence_state(
             anchor_nodes=self._anchor_nodes,
             triplet_intro=self._triplet_intro,
-            per_sentence_view=getattr(self, "_per_sentence_view", None),
-            recently_deactivated=getattr(
-                self, "_recently_deactivated_nodes_for_inference", None
-            ),
-            prev_active_nodes=getattr(self, "_prev_active_nodes_for_plot", None),
+            per_sentence_view=self._per_sentence_view,
+            recently_deactivated=self._recently_deactivated_nodes_for_inference,
+            prev_active_nodes=self._prev_active_nodes_for_plot,
         )
 
-    def _reset_sentence_state(self, original_text: str) -> set:
+    def _prepare_sentence_runtime_state(self, original_text: str) -> set:
         nodes_before_sentence = self._sentence_ops.reset_sentence_state(original_text)
         self._current_sentence_text = original_text
-        self._anchor_drop_log: list[tuple[int, str, str, str, str]] = []
+        self._anchor_drop_log = []
         self._explicit_nodes_current_sentence.clear()
         return nodes_before_sentence
 
@@ -595,7 +594,7 @@ class AMoCv4:
         prev_sentences: list,
     ) -> tuple:
         self._new_inferred_nodes_count = 0
-        nodes_before_sentence = self._reset_sentence_state(original_text)
+        nodes_before_sentence = self._prepare_sentence_runtime_state(original_text)
         logging.info("Processing sentence %d: %s", i, resolved_text)
 
         resolved_text, sent = self._sentence_processing_ops.sanitize_json_contamination(
@@ -617,7 +616,7 @@ class AMoCv4:
             )
 
             if not result[1]:
-                # Connectivity enforcement is handled by _enforce_connectivity() in analyze()
+                # Connectivity enforcement is handled by _stabilize_sentence_connectivity() in analyze()
                 self._sentence_processing_ops.apply_post_sentence_processing(
                     explicit_nodes=self._explicit_nodes_current_sentence,
                     carryover_nodes=self._carryover_nodes_current_sentence,
@@ -627,7 +626,7 @@ class AMoCv4:
 
         return result
 
-    def _finalize_outputs(self, matrix_suffix: Optional[str]) -> tuple:
+    def _finalize_run_outputs(self, matrix_suffix: Optional[str]) -> tuple:
         return self._output_ops.finalize_outputs(
             amoc_matrix_records=self._amoc_matrix_records,
             triplet_intro=self._triplet_intro,
@@ -636,14 +635,14 @@ class AMoCv4:
             reconstruct_semantic_triplets_fn=lambda only_active=False, restrict_nodes=None: self._triplet_ops.reconstruct_semantic_triplets(
                 only_active=only_active, restrict_nodes=restrict_nodes
             ),
-            current_sentence_index=getattr(self, "_current_sentence_index", None),
+            current_sentence_index=self._current_sentence_index,
             sentence_triplets=self._sentence_triplets,
             matrix_suffix=matrix_suffix,
         )
 
-    def _enforce_connectivity(self, prev_sentences: list) -> bool:
+    def _stabilize_sentence_connectivity(self, prev_sentences: list) -> bool:
         # Step 1 — deterministic connectivity repair
-        rollback_needed = self._connectivity_ops.enforce_connectivity(
+        rollback_needed = self._connectivity_ops.run_connectivity_pipeline(
             prev_sentences=prev_sentences,
             current_sentence_text=self._current_sentence_text,
             create_forced_edges_fn=self._create_forced_connectivity_edges,
@@ -659,13 +658,18 @@ class AMoCv4:
             if n.node_type == NodeType.CONCEPT
         }
 
+        active_concepts = {
+            n for n in self._get_active_edge_nodes() if n.node_type == NodeType.CONCEPT
+        }
+
         self._anchor_nodes |= explicit_concepts
+        self._anchor_nodes |= active_concepts
 
         # keep only the active nodes
         self._anchor_nodes = {n for n in self._anchor_nodes if n in self.graph.nodes}
 
         # Step 2 — rebuild per-sentence view
-        self._per_sentence_view = self._build_per_sentence_view(
+        self._per_sentence_view = self._construct_per_sentence_view(
             explicit_nodes=list(self._explicit_nodes_current_sentence),
             sentence_index=self._current_sentence_index,
         )
@@ -687,15 +691,15 @@ class AMoCv4:
 
         return False
 
-    def _build_projection(self, sentence_id: int):
+    def _construct_sentence_projection(self, sentence_id: int):
         return self._projection_bookkeeping_ops.build_projection(
             sentence_id,
             self._per_sentence_view,
             self._explicit_nodes_current_sentence,
-            getattr(self, "_previous_active_triplets", []),
+            self._previous_active_triplets,
         )
 
-    def _post_projection_bookkeeping(
+    def _update_post_projection_state(
         self, sentence_id: int, i: int, newly_inferred_nodes: set, per_sentence_view
     ):
         result = self._projection_bookkeeping_ops.post_projection_bookkeeping(
@@ -727,7 +731,7 @@ class AMoCv4:
         previous_prev_active_nodes,
     ) -> None:
         logging.error("Sentence invalid — reverting to previous state.")
-        if plot_after_each_sentence and hasattr(self, "_previous_active_triplets"):
+        if plot_after_each_sentence:
             try:
                 explicit = [
                     n.get_text_representer()
@@ -762,14 +766,14 @@ class AMoCv4:
         self._prev_active_nodes_for_plot = previous_prev_active_nodes
         self._per_sentence_view = previous_per_sentence_view
 
-    def _capture_sentence_triplets(self, original_text: str) -> None:
+    def _record_sentence_triplets(self, original_text: str) -> None:
         self._triplet_ops.capture_sentence_triplets(
             original_text=original_text,
             current_sentence_index=self._current_sentence_index,
             explicit_nodes=self._explicit_nodes_current_sentence,
             nodes_with_active_edges=self._get_active_edge_nodes(),
             sentence_triplets=self._sentence_triplets,
-            anchor_drop_log=getattr(self, "_anchor_drop_log", []),
+            anchor_drop_log=self._anchor_drop_log,
         )
 
     def _plot_sentence(
@@ -820,12 +824,10 @@ class AMoCv4:
 
         self._initialize_run_state()
 
-        resolved_sentences = self._resolve_sentences(replace_pronouns)
+        resolved_sentences = self._resolve_story_sentences(replace_pronouns)
 
         prev_sentences: list[str] = []
-        self._sentence_triplets: list[
-            tuple[int, str, str, str, str, bool, bool, int]
-        ] = []
+        self._sentence_triplets = []
         sentence_counter = 0
         text_prefix_pattern = re.compile(r"^The text is:\s*", re.IGNORECASE)
 
@@ -850,7 +852,7 @@ class AMoCv4:
                 _previous_per_sentence_view,
                 _previous_recently_deactivated,
                 _previous_prev_active_nodes,
-            ) = self._snapshot_sentence_state()
+            ) = self._snapshot_sentence_runtime_state()
 
             nodes_before_sentence, should_skip_sentence = self._process_sentence_core(
                 i, sent, resolved_text, original_text, prev_sentences
@@ -867,7 +869,7 @@ class AMoCv4:
 
             # CONNECTIVITY
             self._connectivity_ops.set_anchor_nodes(self._anchor_nodes)
-            rollback_needed = self._enforce_connectivity(prev_sentences)
+            rollback_needed = self._stabilize_sentence_connectivity(prev_sentences)
 
             if rollback_needed:
                 self._handle_sentence_rollback(
@@ -887,7 +889,7 @@ class AMoCv4:
                 continue
 
             # Build projection AFTER connectivity is guaranteed
-            self._per_sentence_view = self._build_projection(sentence_id)
+            self._per_sentence_view = self._construct_sentence_projection(sentence_id)
 
             # Update carryover nodes from projection
             if self._per_sentence_view is not None:
@@ -903,7 +905,7 @@ class AMoCv4:
                 explicit_nodes_for_plot,
                 salient_nodes_for_plot,
                 inactive_nodes_for_plot,
-            ) = self._post_projection_bookkeeping(
+            ) = self._update_post_projection_state(
                 sentence_id, i, newly_inferred_nodes, self._per_sentence_view
             )
 
@@ -917,23 +919,23 @@ class AMoCv4:
                     salient_nodes_for_plot,
                     largest_component_only,
                 )
-            self._capture_sentence_triplets(original_text)
+            self._record_sentence_triplets(original_text)
 
         # Ensure cumulative graph is connected
         if not self._connectivity_ops.is_cumulative_connected():
             logging.warning(
                 "Cumulative graph disconnected after sentence loop - repairing"
             )
-            self._enforce_connectivity(prev_sentences)
+            self._stabilize_sentence_connectivity(prev_sentences)
 
-        return self._finalize_outputs(matrix_suffix)
+        return self._finalize_run_outputs(matrix_suffix)
 
-    def infer_new_relationships_step_0(
+    def _infer_new_relationships_bootstrap(
         self, sent: Span
     ) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
         return self._inference_ops.infer_new_relationships_step_0(sent)
 
-    def infer_new_relationships(
+    def _infer_new_relationships_for_sentence(
         self,
         text: str,
         current_sentence_text_based_nodes: List[Node],
@@ -969,7 +971,9 @@ class AMoCv4:
         sent: Span,
     ) -> None:
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
-            self.get_senteces_text_based_nodes([sent], create_unexistent_nodes=False)
+            self._collect_sentence_text_based_nodes(
+                [sent], create_unexistent_nodes=False
+            )
         )
         self._relationship_graph_ops.set_current_sentence(self._current_sentence_index)
         self._relationship_graph_ops.add_inferred_relationships_to_graph_step_0(
@@ -999,7 +1003,7 @@ class AMoCv4:
             added_edges=added_edges,
         )
 
-    def get_node_from_text(
+    def _resolve_node_from_text(
         self,
         text: str,
         curr_sentences_nodes: List[Node],
@@ -1015,7 +1019,7 @@ class AMoCv4:
             create_node=create_node,
         )
 
-    def get_node_from_new_relationship(
+    def _resolve_node_from_new_relationship(
         self,
         text: str,
         graph_active_nodes: List[Node],
@@ -1033,7 +1037,7 @@ class AMoCv4:
             create_node=create_node,
         )
 
-    def get_phrase_level_concepts(self, sent):
+    def _extract_phrase_level_concepts(self, sent):
         return self._node_ops.get_phrase_level_concepts(
             sent=sent,
             admit_node_fn=lambda lemma, node_type, provenance, sent=None: self._node_ops.admit_node(
@@ -1041,7 +1045,7 @@ class AMoCv4:
             ),
         )
 
-    def get_senteces_text_based_nodes(
+    def _collect_sentence_text_based_nodes(
         self,
         previous_sentences: List[Span],
         create_unexistent_nodes: bool = True,

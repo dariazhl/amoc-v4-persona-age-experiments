@@ -67,6 +67,9 @@ class LinguisticOps:
 
         return nodes_from_text
 
+    # Old code: all edges + nodes are extracted by the LLM
+    # New code: same principle applied on new code creates great variability
+    # Current design: persona should not influence the LLM extraction of nodes + edges, therefore we extract nodes determinically and we let inference handle variability between personas
     def extract_deterministic_structure(
         self,
         sent,

@@ -121,13 +121,13 @@ class Graph:
             return None
 
         if inferred:
+            # Prevent inferred edges from attaching to decayed nodes
+            source_visibility_score = getattr(source_node, "visibility_score", None)
+            dest_visibility_score = getattr(dest_node, "visibility_score", None)
+
             if (
-                hasattr(source_node, "visibility_score")
-                and source_node.visibility_score <= 0
-            ) or (
-                hasattr(dest_node, "visibility_score")
-                and dest_node.visibility_score <= 0
-            ):
+                source_visibility_score is not None and source_visibility_score <= 0
+            ) or (dest_visibility_score is not None and dest_visibility_score <= 0):
                 return None
 
         edge = Edge(
@@ -281,10 +281,10 @@ class Graph:
         self._stability_ops.enforce_carryover_connectivity(carryover_nodes)
 
     def is_active_connected(self, required_nodes: Optional[Set[Node]] = None) -> bool:
-        return self._stability_ops.is_active_connected(required_nodes)
+        return self._stability_ops.compute_active_connectivity(required_nodes)
 
     def is_cumulative_connected(self) -> bool:
-        return self._stability_ops.is_cumulative_connected()
+        return self._stability_ops.compute_cumulative_connectivity()
 
     def get_disconnected_components(
         self, focus_nodes: Set[Node]
@@ -303,7 +303,7 @@ class Graph:
         allow_reactivation: bool = True,
         enforce_cumulative: bool = False,
     ) -> bool:
-        return self._stability_ops.enforce_connectivity(
+        return self._stability_ops.reactivate_to_restore_connectivity(
             required_nodes, allow_reactivation, enforce_cumulative
         )
 
