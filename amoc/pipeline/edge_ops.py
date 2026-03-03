@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Optional, List, Tuple
 import logging
+import os
 import networkx as nx
 
 from amoc.graph.graph import Graph
@@ -158,8 +159,14 @@ class EdgeOps:
         justification=None,
         persona_influenced: bool = False,
     ) -> Optional["Edge"]:
+        trace = os.getenv("AMOC_EDGE_TRACE", "0") == "1"
         # Reject self-loops - S-V-O triplets require distinct subject and object
         if source_node == dest_node:
+            if trace:
+                print(
+                    "[EDGE_TRACE][DROP][EDGEOPS.add_edge] self-loop "
+                    f"node={source_node.get_text_representer()!r} label={label!r}"
+                )
             return None
 
         attachable = (
@@ -168,6 +175,11 @@ class EdgeOps:
 
         if not bypass_attachment_constraint:
             if source_node not in attachable and dest_node not in attachable:
+                if trace:
+                    print(
+                        "[EDGE_TRACE][DROP][EDGEOPS.add_edge] not-attachable "
+                        f"{source_node.get_text_representer()} -[{label}]-> {dest_node.get_text_representer()}"
+                    )
                 return None
 
         dest_text = dest_node.get_text_representer()
@@ -178,10 +190,17 @@ class EdgeOps:
                 label,
                 dest_text,
             )
+            if trace:
+                print(
+                    "[EDGE_TRACE][DROP][EDGEOPS.add_edge] duplicate-verb-object "
+                    f"{source_node.get_text_representer()} -[{label}]-> {dest_node.get_text_representer()}"
+                )
             return None
 
         label = TextFilterOps.canonicalize_relation_label(label)
         if not label:
+            if trace:
+                print("[EDGE_TRACE][DROP][EDGEOPS.add_edge] canonical-label-empty")
             return None
 
         use_sentence = (
@@ -223,14 +242,30 @@ class EdgeOps:
                     if label.strip().lower() == "is":
                         self._persistent_is_edges.add(trip_id)
 
+                    if trace:
+                        print(
+                            "[EDGE_TRACE][REUSE][EDGEOPS.add_edge] "
+                            f"{source_node.get_text_representer()} -[{label}]-> {dest_node.get_text_representer()} "
+                            f"(vis={existing_edge.visibility_score})"
+                        )
                     return existing_edge
                 else:
+                    if trace:
+                        print(
+                            "[EDGE_TRACE][DROP][EDGEOPS.add_edge] replacing-existing-edge "
+                            f"old={old_label!r} new={label!r}"
+                        )
                     self._graph.remove_edge(existing_edge)
 
         if (
             label == source_node.get_text_representer()
             or label == dest_node.get_text_representer()
         ):
+            if trace:
+                print(
+                    "[EDGE_TRACE][DROP][EDGEOPS.add_edge] label-equals-endpoint "
+                    f"label={label!r}"
+                )
             return None
 
         edge = self.create_edge_with_event_mediation(
@@ -264,6 +299,17 @@ class EdgeOps:
                     edge.dest_node.get_text_representer(),
                 )
                 self._persistent_is_edges.add(trip_id)
+            if trace:
+                print(
+                    "[EDGE_TRACE][ADD][EDGEOPS.add_edge] "
+                    f"{edge.source_node.get_text_representer()} -[{edge.label}]-> {edge.dest_node.get_text_representer()} "
+                    f"(vis={edge.visibility_score})"
+                )
+        elif trace:
+            print(
+                "[EDGE_TRACE][DROP][EDGEOPS.add_edge] create_edge_with_event_mediation returned None "
+                f"{source_node.get_text_representer()} -[{label}]-> {dest_node.get_text_representer()}"
+            )
 
         return edge
 

@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from typing import TYPE_CHECKING, List, Optional, Tuple, Set
 
@@ -268,19 +269,28 @@ class SentenceProcessingOps:
     ) -> list:
 
         added_edges = []
+        trace = os.getenv("AMOC_EDGE_TRACE", "0") == "1"
 
         normalized = []
         for rel in new_relationships or []:
             triple = self._normalize_relationship(rel)
             if triple:
                 normalized.append(triple)
+            elif trace:
+                print(f"[EDGE_TRACE][DROP][SPOPS] malformed relationship={rel!r}")
 
         for subj, rel, obj in normalized:
+            raw_subj, raw_rel, raw_obj = subj, rel, obj
 
             subj = self._normalize_endpoint_text_fn(subj, is_subject=True)
             obj = self._normalize_endpoint_text_fn(obj, is_subject=False)
 
             if not subj or not obj or subj == obj:
+                if trace:
+                    print(
+                        "[EDGE_TRACE][DROP][SPOPS] normalize-endpoints "
+                        f"raw=({raw_subj!r},{raw_rel!r},{raw_obj!r}) norm=({subj!r},{obj!r})"
+                    )
                 continue
 
             if not self._passes_attachment_constraint_fn(
@@ -291,6 +301,11 @@ class SentenceProcessingOps:
                 graph_active_nodes,
                 self._get_nodes_with_active_edges_fn(),
             ):
+                if trace:
+                    print(
+                        "[EDGE_TRACE][DROP][SPOPS] attachment-constraint "
+                        f"({subj!r}) -[{raw_rel!r}]-> ({obj!r})"
+                    )
                 continue
 
             source_node = self._get_node_from_new_relationship_fn(
@@ -312,12 +327,22 @@ class SentenceProcessingOps:
             )
 
             if not source_node or not dest_node:
+                if trace:
+                    print(
+                        "[EDGE_TRACE][DROP][SPOPS] node-resolution "
+                        f"subj={subj!r} src={bool(source_node)} obj={obj!r} dst={bool(dest_node)}"
+                    )
                 continue
 
             edge_label = self._normalize_edge_label_fn(
                 rel.replace("(edge)", "").strip()
             )
             if not self._is_valid_relation_label_fn(edge_label):
+                if trace:
+                    print(
+                        "[EDGE_TRACE][DROP][SPOPS] invalid-label "
+                        f"raw_rel={raw_rel!r} normalized={edge_label!r}"
+                    )
                 continue
 
             canon_label, _, _, swapped = self._canonicalize_edge_direction_fn(
@@ -344,6 +369,17 @@ class SentenceProcessingOps:
 
             if edge:
                 added_edges.append(edge)
+                if trace:
+                    print(
+                        "[EDGE_TRACE][ADD][SPOPS] "
+                        f"{edge.source_node.get_text_representer()} -[{edge.label}]-> {edge.dest_node.get_text_representer()} "
+                        f"(vis={edge.visibility_score})"
+                    )
+            elif trace:
+                print(
+                    "[EDGE_TRACE][DROP][SPOPS] add_edge returned None "
+                    f"{source_node.get_text_representer()} -[{edge_label}]-> {dest_node.get_text_representer()}"
+                )
 
         return added_edges
 

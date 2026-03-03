@@ -3,6 +3,7 @@ from amoc.nlp.spacy_utils import canonicalize_node_text
 from amoc.nlp.spacy_utils import canonicalize_edge_label
 from amoc.graph.node import NodeType
 from amoc.nlp.spacy_utils import get_concept_lemmas
+import os
 import re
 
 if TYPE_CHECKING:
@@ -29,35 +30,72 @@ class TextFilterOps:
         return label.lower().strip()
 
     def normalize_edge_label(self, label: str) -> str:
+        trace = os.getenv("AMOC_EDGE_TRACE", "0") == "1"
+        raw_label = label
 
         if not label or not isinstance(label, str):
+            if trace:
+                print(
+                    f"[EDGE_TRACE][DROP][TFOPS.normalize_edge_label] invalid-raw-label={raw_label!r}"
+                )
             return label
 
         label = label.strip()
         if not label:
+            if trace:
+                print(
+                    f"[EDGE_TRACE][DROP][TFOPS.normalize_edge_label] empty-after-strip raw={raw_label!r}"
+                )
             return label
 
         result = canonicalize_edge_label(self._spacy_nlp, label)
 
         if len(result) > 0:
             if re.search(r"(.)\1{2,}", result):
+                if trace:
+                    print(
+                        "[EDGE_TRACE][DROP][TFOPS.normalize_edge_label] repeated-char "
+                        f"raw={raw_label!r} normalized={result!r}"
+                    )
                 return ""
             words = result.split()
             for word in words:
                 if len(word) > 3 and not re.search(r"[aeiou]", word):
+                    if trace:
+                        print(
+                            "[EDGE_TRACE][DROP][TFOPS.normalize_edge_label] no-vowel-token "
+                            f"raw={raw_label!r} normalized={result!r} token={word!r}"
+                        )
                     return ""
 
+        if trace:
+            print(
+                f"[EDGE_TRACE][PASS][TFOPS.normalize_edge_label] raw={raw_label!r} normalized={result!r}"
+            )
         return result
 
     def is_valid_relation_label(self, label: str) -> bool:
+        trace = os.getenv("AMOC_EDGE_TRACE", "0") == "1"
+        raw_label = label
         # verbs cannot become nodes
         label = (label or "").strip()
         if not label:
+            if trace:
+                print(
+                    f"[EDGE_TRACE][DROP][TFOPS.is_valid_relation_label] empty label raw={raw_label!r}"
+                )
             return False
 
         if not self.is_verb_relation(label):
+            if trace:
+                print(
+                    "[EDGE_TRACE][DROP][TFOPS.is_valid_relation_label] not-verb-like "
+                    f"label={label!r}"
+                )
             return False
 
+        if trace:
+            print(f"[EDGE_TRACE][PASS][TFOPS.is_valid_relation_label] label={label!r}")
         return True
 
     def is_verb_relation(self, label: str) -> bool:

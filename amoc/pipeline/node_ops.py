@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Optional, List, Set
 import logging
+import os
 from amoc.nlp.spacy_utils import (
     get_concept_lemmas,
     canonicalize_node_text,
@@ -305,6 +306,9 @@ class NodeOps:
         graph_active_edge_nodes: Optional[Set["Node"]] = None,
         allow_inference_bridge: bool = False,
     ) -> bool:
+        trace = os.getenv("AMOC_EDGE_TRACE", "0") == "1"
+        raw_subject = subject
+        raw_obj = obj
 
         # Canonicalize
         subject = canonicalize_node_text(self._spacy_nlp, subject)
@@ -314,6 +318,11 @@ class NodeOps:
         obj_key = tuple(get_concept_lemmas(self._spacy_nlp, obj))
 
         if not self._graph.nodes:
+            if trace:
+                print(
+                    "[EDGE_TRACE][PASS][NODEOPS.attachment] empty-graph "
+                    f"raw=({raw_subject!r},{raw_obj!r}) norm=({subject!r},{obj!r})"
+                )
             return True
 
         active_nodes = set(get_nodes_with_active_edges_fn())
@@ -322,13 +331,28 @@ class NodeOps:
 
         # Preserve already-connected relationships
         if subj_key in frontier_keys and obj_key in frontier_keys:
+            if trace:
+                print(
+                    "[EDGE_TRACE][PASS][NODEOPS.attachment] both-in-frontier "
+                    f"subj={subj_key} obj={obj_key}"
+                )
             return True
 
         # Allow if at least one endpoint touches frontier
         if subj_key in frontier_keys or obj_key in frontier_keys:
+            if trace:
+                print(
+                    "[EDGE_TRACE][PASS][NODEOPS.attachment] one-in-frontier "
+                    f"subj={subj_key} obj={obj_key}"
+                )
             return True
 
         # Otherwise reject
+        if trace:
+            print(
+                "[EDGE_TRACE][DROP][NODEOPS.attachment] isolated-edge "
+                f"subj={subj_key} obj={obj_key} frontier_size={len(frontier_keys)}"
+            )
         return False
 
     def get_sentences_text_based_nodes(

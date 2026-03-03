@@ -5,6 +5,7 @@ from amoc.graph.stability_ops import StabilityOps
 from amoc.graph.provenance_ops import ProvenanceOps
 from typing import List, Set, Dict, Optional, Tuple, Callable
 import logging
+import os
 import networkx as nx
 
 
@@ -113,9 +114,19 @@ class Graph:
         persona_influenced: bool = False,
         inferred: bool = False,
     ) -> Optional[Edge]:
+        trace = os.getenv("AMOC_EDGE_TRACE", "0") == "1"
         if source_node == dest_node:
+            if trace:
+                print(
+                    "[EDGE_TRACE][DROP][GRAPH.add_edge] self-loop "
+                    f"node={source_node.get_text_representer()!r} label={label!r}"
+                )
             return None
         if not label or not isinstance(label, str) or not label.strip():
+            if trace:
+                print(
+                    f"[EDGE_TRACE][DROP][GRAPH.add_edge] invalid-label label={label!r}"
+                )
             return None
 
         edge = Edge(
@@ -142,6 +153,12 @@ class Graph:
                         edge_visibility, other_edge.visibility_score + 1
                     )
                     other_edge.mark_as_asserted(reset_score=False)
+                    if trace:
+                        print(
+                            "[EDGE_TRACE][REUSE][GRAPH.add_edge] "
+                            f"{other_edge.source_node.get_text_representer()} -[{other_edge.label}]-> {other_edge.dest_node.get_text_representer()} "
+                            f"(vis={other_edge.visibility_score})"
+                        )
                     return other_edge
 
         self.edges.add(edge)
@@ -149,6 +166,13 @@ class Graph:
             source_node.edges.append(edge)
         if edge not in dest_node.edges:
             dest_node.edges.append(edge)
+
+        if trace:
+            print(
+                "[EDGE_TRACE][ADD][GRAPH.add_edge] "
+                f"{edge.source_node.get_text_representer()} -[{edge.label}]-> {edge.dest_node.get_text_representer()} "
+                f"(vis={edge.visibility_score})"
+            )
 
         return edge
 
