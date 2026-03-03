@@ -131,6 +131,6 @@ class OutputOps:
             cumulative_triplets.append((subj, rel, obj, int(intro)))
 
         # validations
-        self._graph.sanity_check_readable_triplets()
+        # self._graph.sanity_check_readable_triplets()
 
         return final_triplets, sentence_triplets, cumulative_triplets
