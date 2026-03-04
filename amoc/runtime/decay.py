@@ -56,17 +56,22 @@ class Decay:
             if node in explicit_nodes:
                 node.active = True
                 continue
+
             if node.activation_score > 0:
                 node.activation_score -= 1
+
             if node.activation_score <= 0:
                 node.active = False
                 continue
-            has_active_edge = any(
-                e.active and (e.source_node == node or e.dest_node == node)
-                for e in self._graph.edges
-            )
-            if not has_active_edge:
+
+            if not self._node_has_active_edge(node):
                 node.active = False
+
+    def _node_has_active_edge(self, node: "Node") -> bool:
+        return any(
+            e.active and (e.source_node == node or e.dest_node == node)
+            for e in self._graph.edges
+        )
 
     def reactivate_relevant_edges(
         self,
@@ -79,55 +84,102 @@ class Decay:
         )
 
         if not self._strict_reactivate:
-            for edge in edges:
-                if edge.is_property_edge():
-                    continue
-                edge.mark_as_reactivated(reset_score=False)
-                edge.visibility_score = self._edge_visibility
-                if self._record_edge_fn and (
-                    edge.is_asserted() or edge.is_reactivated()
-                ):
-                    self._record_edge_fn(edge, self._current_sentence_index)
+            self._reactivate_all_non_property_edges(edges)
             return
 
+        selected_indices = self._get_llm_selected_indices(
+            edges_text, prev_sentences_text, edges
+        )
+        active_node_set = set(active_nodes)
+
+        if not selected_indices:
+            edges_to_reactivate = self._fallback_edges(
+                edges, newly_added_edges, active_node_set
+            )
+        else:
+            edges_to_reactivate = self._build_edges_to_reactivate(
+                edges, selected_indices, newly_added_edges, active_node_set
+            )
+
+        self._apply_reactivation_or_decay(edges, edges_to_reactivate)
+
+    def _reactivate_all_non_property_edges(self, edges: List["Edge"]) -> None:
+        for edge in edges:
+            if edge.is_property_edge():
+                continue
+            edge.mark_as_reactivated(reset_score=False)
+            edge.visibility_score = self._edge_visibility
+            if self._record_edge_fn and (edge.is_asserted() or edge.is_reactivated()):
+                self._record_edge_fn(edge, self._current_sentence_index)
+
+    def _get_llm_selected_indices(
+        self, edges_text: str, prev_sentences_text: str, edges: List["Edge"]
+    ) -> List[int]:
         raw_indices = self._llm.get_relevant_edges(
             edges_text, prev_sentences_text, None
         )
-
-        valid_indices = []
+        valid = []
         for idx in raw_indices:
             try:
                 i = int(idx)
-            except Exception:
+            except ValueError:
                 continue
             if 1 <= i <= len(edges):
-                valid_indices.append(i)
+                valid.append(i)
+        return valid[: self._nr_relevant_edges]
 
-        valid_indices = valid_indices[: self._nr_relevant_edges]
+    def _fallback_edges(
+        self,
+        edges: List["Edge"],
+        newly_added_edges: List["Edge"],
+        active_node_set: Set["Node"],
+    ) -> Set["Edge"]:
+        fallback = set()
+        for idx, edge in enumerate(edges, start=1):
+            if (
+                edge in newly_added_edges
+                or edge.source_node in active_node_set
+                or edge.dest_node in active_node_set
+            ):
+                fallback.add(edge)
+        return fallback
 
-        active_node_set = set(active_nodes)
-
-        if not valid_indices:
-            selected = set()
-            for idx, edge in enumerate(edges, start=1):
-                if (
-                    edge in newly_added_edges
-                    or edge.source_node in active_node_set
-                    or edge.dest_node in active_node_set
-                ):
-                    selected.add(idx)
-        else:
-            selected = set(valid_indices)
-            for i in selected:
-                edge = edges[i - 1]
-                edge.visibility_score = self._edge_visibility
-                if not edge.is_property_edge():
-                    continue
+    def _build_edges_to_reactivate(
+        self,
+        edges: List["Edge"],
+        selected_indices: List[int],
+        newly_added_edges: List["Edge"],
+        active_node_set: Set["Node"],
+    ) -> Set["Edge"]:
+        edges_to_reactivate = set()
+        for i in selected_indices:
+            edge = edges[i - 1]
+            edge.visibility_score = self._edge_visibility
+            if edge.is_property_edge():
                 if self._record_edge_fn:
                     self._record_edge_fn(edge, self._current_sentence_index)
+            else:
+                edges_to_reactivate.add(edge)
+
+        for edge in newly_added_edges:
+            if not edge.is_property_edge():
+                edges_to_reactivate.add(edge)
 
         for idx, edge in enumerate(edges, start=1):
-            if idx in selected or edge in newly_added_edges:
+            if idx not in selected_indices:
+                if (
+                    edge.source_node in active_node_set
+                    or edge.dest_node in active_node_set
+                ) and not edge.is_property_edge():
+                    edges_to_reactivate.add(edge)
+
+        return edges_to_reactivate
+
+    def _apply_reactivation_or_decay(
+        self, edges: List["Edge"], edges_to_reactivate: Set["Edge"]
+    ) -> None:
+        for edge in edges:
+            if edge in edges_to_reactivate:
                 if edge.is_property_edge():
                     continue
                 edge.mark_as_reactivated(reset_score=False)
@@ -143,7 +195,6 @@ class Decay:
         self,
         current_sentence: int,
     ) -> Set["Edge"]:
-        # Reactivate memory edges within distance from explicit nodes
         explicit_nodes = self._get_explicit_nodes()
         if not explicit_nodes:
             return set()
@@ -183,6 +234,15 @@ class Decay:
             "carryover_nodes": [n.get_text_representer() for n in carryover_nodes],
         }
 
+    @staticmethod
+    def _to_landscape_score(raw_score: float) -> float:
+        val = 5.0 - float(raw_score)
+        if val < 0.0:
+            return 0.0
+        if val > 5.0:
+            return 5.0
+        return val
+
     def record_sentence_activation_matrix(
         self,
         sentence_id: int,
@@ -192,16 +252,6 @@ class Decay:
         node_token_fn: callable,
         append_record_fn: callable,
     ) -> None:
-
-        def _to_landscape_score(raw_score: float) -> float:
-            # Transform AMoC "distance" style (0 -> most active) into Landscape style (5 -> most active).
-            val = 5.0 - float(raw_score)
-            if val < 0.0:
-                return 0.0
-            if val > 5.0:
-                return 5.0
-            return val
-
         explicit_set = set(explicit_nodes)
         distances = self.distances_from_sources_active_edges(
             explicit_set, max_distance=max_distance
@@ -216,7 +266,6 @@ class Decay:
                 token_to_raw_score[token] = 0
                 node_raw_score[node] = 0
 
-        # newly inferred nodes start at 1
         for node in newly_inferred_nodes:
             if node in explicit_set:
                 continue
@@ -233,13 +282,12 @@ class Decay:
                 token_to_raw_score[token] = dist
                 node_raw_score[node] = dist
 
-        # Convert node scores to Landscape scale and record
         for token, raw_score in token_to_raw_score.items():
             append_record_fn(
                 {
                     "sentence": sentence_id,
                     "token": token,
-                    "score": _to_landscape_score(raw_score),
+                    "score": self._to_landscape_score(raw_score),
                 }
             )
 
@@ -262,8 +310,8 @@ class Decay:
             dst_raw = node_raw_score.get(
                 edge.dest_node, edge.dest_node.activation_score
             )
-            src_act = _to_landscape_score(src_raw)
-            dst_act = _to_landscape_score(dst_raw)
+            src_act = self._to_landscape_score(src_raw)
+            dst_act = self._to_landscape_score(dst_raw)
             verb_act = max(src_act, dst_act) - 0.5
             if verb_act < 0.0:
                 verb_act = 0.0
@@ -301,14 +349,8 @@ class Decay:
     def restrict_active_to_current_explicit(self, explicit_nodes: List["Node"]) -> None:
         explicit_set = set(explicit_nodes)
         for node in self._graph.nodes:
-            has_active_edge = any(
-                e.active and (e.source_node == node or e.dest_node == node)
-                for e in self._graph.edges
-            )
-            if node in explicit_set:
-                node.active = has_active_edge
-            else:
-                node.active = has_active_edge
+            has_active_edge = self._node_has_active_edge(node)
+            node.active = has_active_edge
 
     def has_active_attachment(self, lemma: str) -> bool:
         active_nodes = {n for n in self._graph.nodes if n.active}

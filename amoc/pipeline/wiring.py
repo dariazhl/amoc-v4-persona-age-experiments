@@ -158,6 +158,8 @@ def wire_core_dependencies(core) -> None:
             cumulative_graph=core.cumulative_graph,
             active_graph=core.active_graph,
             cumulative_triplet_records=core._cumulative_triplet_records,
+            cumulative_graph_builder=core.cumulative_graph_builder,
+            active_graph_builder=core.active_graph_builder,
         ),
     )
     core._output_ops = OutputFinalizer(

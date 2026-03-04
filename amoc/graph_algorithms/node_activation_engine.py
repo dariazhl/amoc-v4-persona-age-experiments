@@ -1,6 +1,8 @@
 from typing import TYPE_CHECKING, Set, Dict, List, Tuple, Optional
 from collections import deque
 from amoc.graph.node import NodeType, NodeSource
+from amoc.config.constants import MAX_REACTIVATION_COUNT
+
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
@@ -9,8 +11,6 @@ if TYPE_CHECKING:
 
 
 class NodeActivationEngine:
-    MAX_REACTIVATION_COUNT: int = 6
-
     def __init__(self, graph_ref: "Graph"):
         self._graph = graph_ref
 

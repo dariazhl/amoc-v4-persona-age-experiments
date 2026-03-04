@@ -19,7 +19,6 @@ from .paths import (
 )
 
 __all__ = [
-    # AMoC hyperparameters
     "MAX_DISTANCE_FROM_ACTIVE_NODES",
     "MAX_NEW_CONCEPTS",
     "MAX_NEW_PROPERTIES",
@@ -28,12 +27,14 @@ __all__ = [
     "NR_RELEVANT_EDGES",
     "DEBUG",
     "STORY_TEXT",
-    # Paths
     "INPUT_DIR",
     "OUTPUT_DIR",
     "OUTPUT_ANALYSIS_DIR",
-    # Model shortcuts
     "VLLM_MODELS",
     "AGE_REGIMES",
     "BLUE_NODES",
+    "MAX_REACTIVATION_COUNT",
+    "MAX_EDGES_PER_NODE",
+    "DEFAULT_ACTIVATION_SCORE",
+    "DECAY_STEP",
 ]

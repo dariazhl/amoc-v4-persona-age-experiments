@@ -1,6 +1,5 @@
-from typing import TYPE_CHECKING, Optional, List, Tuple
+from typing import TYPE_CHECKING, Optional, List, Tuple, Any
 import logging
-import networkx as nx
 
 from amoc.graph.graph import Graph
 from amoc.graph.node import Node, NodeType, NodeSource
@@ -366,9 +365,11 @@ class EdgeAdmission:
         self,
         edge: "Edge",
         sentence_idx: Optional[int],
-        cumulative_graph: nx.MultiDiGraph,
-        active_graph: nx.MultiDiGraph,
+        cumulative_graph: Any,
+        active_graph: Any,
         cumulative_triplet_records: list,
+        cumulative_graph_builder: Any = None,
+        active_graph_builder: Any = None,
     ) -> None:
         u, v, lbl = self.edge_key(edge)
 
@@ -396,15 +397,21 @@ class EdgeAdmission:
                 }
             )
 
-        if not cumulative_graph.has_edge(u, v, key=edge_key):
-            cumulative_graph.add_edge(u, v, key=edge_key, label=lbl)
-
-        if edge.active:
-            if not active_graph.has_edge(u, v, key=edge_key):
-                active_graph.add_edge(u, v, key=edge_key, label=lbl)
+        if cumulative_graph_builder is not None:
+            cumulative_graph_builder.sync_edge(edge=edge, introduced_at=int(introduced))
         else:
-            if active_graph.has_edge(u, v, key=edge_key):
-                active_graph.remove_edge(u, v, key=edge_key)
+            if not cumulative_graph.has_edge(u, v, key=edge_key):
+                cumulative_graph.add_edge(u, v, key=edge_key, label=lbl)
+
+        if active_graph_builder is not None:
+            active_graph_builder.sync_edge(edge=edge, introduced_at=int(introduced))
+        else:
+            if edge.active:
+                if not active_graph.has_edge(u, v, key=edge_key):
+                    active_graph.add_edge(u, v, key=edge_key, label=lbl)
+            else:
+                if active_graph.has_edge(u, v, key=edge_key):
+                    active_graph.remove_edge(u, v, key=edge_key)
 
     def infer_edges_to_recently_deactivated(
         self,

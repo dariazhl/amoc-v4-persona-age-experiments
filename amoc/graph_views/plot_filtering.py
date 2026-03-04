@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING, List, Set, Dict, Optional, Tuple
+from amoc.config.constants import MAX_EDGES_PER_NODE
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
@@ -7,8 +8,6 @@ if TYPE_CHECKING:
 
 
 class PlotFiltering:
-    MAX_EDGES_PER_NODE: int = 5
-
     def __init__(self, graph_ref: "Graph"):
         self._graph = graph_ref
 

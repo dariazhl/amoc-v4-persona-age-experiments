@@ -1,5 +1,4 @@
-from typing import TYPE_CHECKING, List, Tuple, Set, Optional, Dict
-import networkx as nx
+from typing import TYPE_CHECKING, List, Tuple, Set, Optional, Dict, Any
 
 if TYPE_CHECKING:
     from amoc.graph.graph import Graph
@@ -11,8 +10,8 @@ class TripletRecorder:
     def __init__(
         self,
         graph_ref: "Graph",
-        cumulative_graph_ref: nx.MultiDiGraph,
-        active_graph_ref: nx.MultiDiGraph,
+        cumulative_graph_ref: Any,
+        active_graph_ref: Any,
         triplet_intro_ref: Dict[Tuple[str, str, str], int],
     ):
         self._graph = graph_ref
@@ -43,7 +42,7 @@ class TripletRecorder:
             )
         return triplets
 
-    def graph_to_triplets(self, graph: nx.MultiDiGraph) -> List[Tuple[str, str, str]]:
+    def graph_to_triplets(self, graph: Any) -> List[Tuple[str, str, str]]:
         triplets = []
         for u, v, data in graph.edges(data=True):
             label = data.get("label", "")

@@ -28,3 +28,7 @@ BLUE_NODES = [
     "beautiful",
     "scorched",
 ]
+DEFAULT_ACTIVATION_SCORE: int = 2
+DECAY_STEP = 1
+MAX_REACTIVATION_COUNT: int = 6
+MAX_EDGES_PER_NODE: int = 5

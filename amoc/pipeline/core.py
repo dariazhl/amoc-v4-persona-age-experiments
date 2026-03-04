@@ -2,19 +2,25 @@ import logging
 import re
 from typing import List, Tuple, Optional, Iterable
 
-import networkx as nx
 from spacy.tokens import Span
 
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
 from amoc.graph import Graph, Node, Edge, NodeType, NodeSource
-from amoc.graph_views.per_sentence_graph import PerSentenceGraph, build_per_sentence_graph
+from amoc.graph_views.per_sentence_graph import (
+    PerSentenceGraph,
+    build_per_sentence_graph,
+)
+from amoc.graph_views.active_graph import ActiveGraph
+from amoc.graph_views.cumulative_graph import CumulativeGraph
+from amoc.graph_views.active_graph_builder import ActiveGraphBuilder
+from amoc.graph_views.cumulative_graph_builder import CumulativeGraphBuilder
 from amoc.llm.vllm_client import VLLMClient
 from amoc.pipeline.wiring import wire_core_dependencies
+from amoc.config.constants import MAX_DISTANCE_FROM_ACTIVE_NODES
 
 
 class AMoCv4:
     ENFORCE_ATTACHMENT_CONSTRAINT = True
-    ACTIVATION_MAX_DISTANCE = 2
 
     def __init__(
         self,
@@ -84,9 +90,12 @@ class AMoCv4:
         self.checkpoint = checkpoint
         self._current_sentence_text = ""
         self._current_sentence_index = None
-        self.cumulative_graph = nx.MultiDiGraph()
-        self.active_graph = nx.MultiDiGraph()
+        self.cumulative_graph = CumulativeGraph()
+        self.active_graph = ActiveGraph()
+        self.cumulative_graph_builder = CumulativeGraphBuilder(self.cumulative_graph)
+        self.active_graph_builder = ActiveGraphBuilder(self.active_graph)
         self._triplet_intro = {}
+        self._persistent_is_edges = set()
         self._cumulative_triplet_records = []
         self._per_sentence_view = None
         self._ever_admitted_nodes = set()
@@ -101,7 +110,7 @@ class AMoCv4:
         self._get_explicit_nodes = lambda: self._explicit_nodes_current_sentence
         self._get_carryover_nodes = lambda: self._carryover_nodes_current_sentence
         self._get_active_edge_nodes = (
-            self._connectivity_ops._get_nodes_with_active_edges
+            lambda: self._connectivity_ops._get_nodes_with_active_edges()
         )
 
         self._setup_ops_classes()
@@ -177,7 +186,7 @@ class AMoCv4:
             sentence_id=sentence_id,
             explicit_nodes=explicit_nodes,
             newly_inferred_nodes=newly_inferred_nodes,
-            max_distance=self.ACTIVATION_MAX_DISTANCE,
+            max_distance=MAX_DISTANCE_FROM_ACTIVE_NODES,
             node_token_fn=lambda n: self._node_ops.node_token_for_matrix(n),
             append_record_fn=self._amoc_matrix_records.append,
         )
@@ -265,6 +274,8 @@ class AMoCv4:
             cumulative_graph=self.cumulative_graph,
             active_graph=self.active_graph,
             cumulative_triplet_records=self._cumulative_triplet_records,
+            cumulative_graph_builder=self.cumulative_graph_builder,
+            active_graph_builder=self.active_graph_builder,
         )
 
     def _plot_graph_snapshot(
@@ -624,7 +635,7 @@ class AMoCv4:
             sentence_counter += 1
             original_text = text_prefix_pattern.sub("", original_text)
             resolved_text = text_prefix_pattern.sub("", resolved_text)
-            self.active_graph = nx.MultiDiGraph()
+            self.active_graph.reset()
             self._current_sentence_index = sentence_counter
 
             self._sentence_ops.configure_graph_for_sentence(

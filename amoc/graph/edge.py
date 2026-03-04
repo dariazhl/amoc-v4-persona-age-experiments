@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 from difflib import SequenceMatcher
 from amoc.graph.node import NodeType
+from amoc.config.constants import DEFAULT_ACTIVATION_SCORE, DECAY_STEP
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -35,9 +36,6 @@ def _maybe_embed(text: str) -> Optional["np.ndarray"]:
 
 
 class Edge:
-    DEFAULT_ACTIVATION_SCORE: int = 2
-    DECAY_STEP = 1
-
     def __init__(
         self,
         source_node: "Node",
