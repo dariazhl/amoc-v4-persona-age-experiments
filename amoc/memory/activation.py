@@ -46,8 +46,15 @@ class NodeActivationEngine:
         }
         return active_nodes, active_edges
 
-    def deactivate_all_edges(self) -> None:
+    def deactivate_all_edges(self):
         for edge in self._graph.edges:
+
+            # Keep cumulative backbone edges alive
+            if edge.created_at_sentence is not None:
+                if edge.created_at_sentence < self._graph.current_sentence_index:
+                    continue
+
+            # Otherwise reset
             edge.reset_for_sentence_start()
 
     def reactivate_memory_edges_within_distance(
