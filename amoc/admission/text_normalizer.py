@@ -39,22 +39,7 @@ class TextNormalizer:
         result = canonicalize_edge_label(self._spacy_nlp, cleaned)
         if not result:
             return result
-        if self._has_repeated_chars(result):
-            return ""
-        if self._has_invalid_consonant_tokens(result):
-            return ""
         return result
-
-    @staticmethod
-    def _has_repeated_chars(text: str) -> bool:
-        return bool(re.search(r"(.)\1{2,}", text))
-
-    @staticmethod
-    def _has_invalid_consonant_tokens(text: str) -> bool:
-        for word in text.split():
-            if len(word) > 3 and not re.search(r"[aeiou]", word):
-                return True
-        return False
 
     def is_valid_relation_label(self, label: str) -> bool:
         # verbs cannot become nodes
@@ -222,66 +207,62 @@ class TextNormalizer:
         # No inverse lexical overrides anymore
         return (label, source_text, dest_text, False)
 
-    @staticmethod
-    def canonicalize_relation_label(label: str) -> str:
-        # Canonicalize relation labels before edge creation.
-        # Removes dependency prefixes, trailing punctuation, repeated characters,and words without vowels = garbage
+def canonicalize_relation_label(label: str) -> str:
+    if not label or not isinstance(label, str):
+        return ""
 
-        if not label or not isinstance(label, str):
-            return ""
+    label = label.strip()
+    if not label:
+        return ""
 
-        label = label.strip()
-        if not label:
-            return ""
+    prefixes_to_remove = [
+        "nsubj:",
+        "dobj:",
+        "pobj:",
+        "prep:",
+        "amod:",
+        "advmod:",
+        "ROOT:",
+        "VERB:",
+        "NOUN:",
+        "ADJ:",
+        "dep:",
+        "compound:",
+        "agent:",
+        "xcomp:",
+        "ccomp:",
+        "aux:",
+        "auxpass:",
+    ]
+    for prefix in prefixes_to_remove:
+        if label.lower().startswith(prefix.lower()):
+            label = label[len(prefix) :]
 
-        prefixes_to_remove = [
-            "nsubj:",
-            "dobj:",
-            "pobj:",
-            "prep:",
-            "amod:",
-            "advmod:",
-            "ROOT:",
-            "VERB:",
-            "NOUN:",
-            "ADJ:",
-            "dep:",
-            "compound:",
-            "agent:",
-            "xcomp:",
-            "ccomp:",
-            "aux:",
-            "auxpass:",
-        ]
-        for prefix in prefixes_to_remove:
-            if label.lower().startswith(prefix.lower()):
-                label = label[len(prefix) :]
+    label = re.sub(r"[^\w\s]+$", "", label)
+    label = label.strip()
+    label = re.sub(r"\s+", " ", label)
 
-        label = re.sub(r"[^\w\s]+$", "", label)
-        label = label.strip()
-        label = re.sub(r"\s+", " ", label)
+    if len(label) > 0:
+        if re.search(r"(.)\1{2,}", label):
+            label = re.sub(r"([bcdfghjklmnpqrstvwxyz])\1+$", r"\1", label)
 
-        if len(label) > 0:
-            if re.search(r"(.)\1{2,}", label):
-                label = re.sub(r"([bcdfghjklmnpqrstvwxyz])\1+$", r"\1", label)
-
-            words = label.split()
-            cleaned_words = []
-            for word in words:
-                if len(word) <= 2:
-                    cleaned_words.append(word.lower())
-                    continue
-                if not re.search(r"[aeiou]", word.lower()):
-                    continue
+        words = label.split()
+        cleaned_words = []
+        for word in words:
+            if len(word) <= 2:
                 cleaned_words.append(word.lower())
+                continue
+            if not re.search(r"[aeiou]", word.lower()):
+                continue
+            cleaned_words.append(word.lower())
 
-            if not cleaned_words:
-                return ""
-            label = " ".join(cleaned_words)
-
-        label = label.lower().strip()
-
-        if len(label) < 2:
+        if not cleaned_words:
             return ""
+        label = " ".join(cleaned_words)
 
-        return label
+    label = label.lower().strip()
+
+    if len(label) < 2:
+        return ""
+
+    return label

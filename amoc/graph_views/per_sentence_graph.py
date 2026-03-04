@@ -1,7 +1,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Set, List, Dict, Optional, Tuple, FrozenSet, Callable
 from collections import deque
-from dataclasses import dataclass, field
 import networkx as nx
 import logging
 
@@ -13,30 +12,33 @@ if TYPE_CHECKING:
 from amoc.graph.node import NodeType
 
 
-@dataclass
 class PerSentenceGraph:
-    sentence_index: int
-    explicit_nodes: FrozenSet[Node]
-    carryover_nodes: FrozenSet[Node]
-    active_nodes: FrozenSet[Node]
-    active_edges: FrozenSet[Edge]
-    anchor_nodes: FrozenSet[Node]
+    def __init__(
+        self,
+        sentence_index: int,
+        explicit_nodes: FrozenSet[Node],
+        carryover_nodes: FrozenSet[Node],
+        active_nodes: FrozenSet[Node],
+        active_edges: FrozenSet[Edge],
+        anchor_nodes: FrozenSet[Node],
+    ) -> None:
+        self.sentence_index = sentence_index
+        self.explicit_nodes = explicit_nodes
+        self.carryover_nodes = carryover_nodes
+        self.active_nodes = active_nodes
+        self.active_edges = active_edges
+        self.anchor_nodes = anchor_nodes
 
-    _adjacency: Dict[Node, Set[Node]] = field(default_factory=dict)
-    _node_degrees: Dict[Node, int] = field(default_factory=dict)
-    _nx_graph: Optional[nx.Graph] = field(default=None)
-
-    def __post_init__(self):
         adjacency = {n: set() for n in self.active_nodes}
         for edge in self.active_edges:
             if edge.source_node in adjacency and edge.dest_node in adjacency:
                 adjacency[edge.source_node].add(edge.dest_node)
                 adjacency[edge.dest_node].add(edge.source_node)
-        object.__setattr__(self, "_adjacency", adjacency)
+        self._adjacency: Dict[Node, Set[Node]] = adjacency
 
         # Compute degrees
         degrees = {n: len(neighbors) for n, neighbors in adjacency.items()}
-        object.__setattr__(self, "_node_degrees", degrees)
+        self._node_degrees: Dict[Node, int] = degrees
 
         # Build NetworkX graph for connectivity
         G = nx.Graph()
@@ -44,15 +46,13 @@ class PerSentenceGraph:
             G.add_node(node)
         for edge in self.active_edges:
             G.add_edge(edge.source_node, edge.dest_node, edge=edge)
-        object.__setattr__(self, "_nx_graph", G)
+        self._nx_graph: Optional[nx.Graph] = G
 
-    @property
     def is_connected(self) -> bool:
         if self._nx_graph.number_of_nodes() <= 1:
             return True
         return nx.is_connected(self._nx_graph)
 
-    @property
     def is_empty(self) -> bool:
         return len(self.active_edges) == 0
 

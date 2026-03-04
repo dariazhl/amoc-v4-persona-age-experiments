@@ -70,8 +70,8 @@ class ProjectionStateManager:
 
         if (
             per_sentence_view is not None
-            and not per_sentence_view.is_empty
-            and not per_sentence_view.is_connected
+            and not per_sentence_view.is_empty()
+            and not per_sentence_view.is_connected()
         ):
             logging.error(
                 "Per-sentence graph disconnected at sentence %s for persona '%s'",
@@ -153,7 +153,7 @@ class ProjectionStateManager:
 
         if (
             per_sentence_view is not None
-            and per_sentence_view.is_empty
+            and per_sentence_view.is_empty()
             and previous_active_triplets
         ):
             logging.debug("Per-sentence view empty — preserving previous projection.")
@@ -166,7 +166,7 @@ class ProjectionStateManager:
                 len(per_sentence_view.explicit_nodes),
                 len(per_sentence_view.carryover_nodes),
                 len(per_sentence_view.active_edges),
-                per_sentence_view.is_connected,
+                per_sentence_view.is_connected(),
             )
 
         return per_sentence_view

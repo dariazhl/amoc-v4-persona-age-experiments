@@ -13,8 +13,7 @@ class ActiveGraphBuilder:
     def __init__(self, active_graph: ActiveGraph):
         self._active_graph = active_graph
 
-    @staticmethod
-    def _edge_key(label: str, introduced_at: int) -> str:
+    def _edge_key(self, label: str, introduced_at: int) -> str:
         return f"{label}__introduced_{introduced_at}"
 
     def reset(self) -> None:

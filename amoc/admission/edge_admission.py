@@ -4,7 +4,7 @@ import logging
 from amoc.graph.graph import Graph
 from amoc.graph.node import Node, NodeType, NodeSource
 from amoc.graph.edge import Edge
-from amoc.admission.text_normalizer import TextNormalizer
+from amoc.admission.text_normalizer import TextNormalizer, canonicalize_relation_label
 
 if TYPE_CHECKING:
     from amoc.pipeline.core import AMoCv4
@@ -119,7 +119,7 @@ class EdgeAdmission:
             else self._current_sentence_index
         )
 
-        label = TextNormalizer.canonicalize_relation_label(label)
+        label = canonicalize_relation_label(label)
         if not label:
             return None
 
@@ -167,7 +167,7 @@ class EdgeAdmission:
             )
             return None
 
-        label = TextNormalizer.canonicalize_relation_label(label)
+        label = canonicalize_relation_label(label)
         if not label:
             return None
 

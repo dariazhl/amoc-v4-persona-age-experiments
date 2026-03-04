@@ -13,8 +13,7 @@ class CumulativeGraphBuilder:
     def __init__(self, cumulative_graph: CumulativeGraph):
         self._cumulative_graph = cumulative_graph
 
-    @staticmethod
-    def _edge_key(label: str, introduced_at: int) -> str:
+    def _edge_key(self, label: str, introduced_at: int) -> str:
         return f"{label}__introduced_{introduced_at}"
 
     def sync_edge(self, edge: "Edge", introduced_at: int) -> None:
@@ -25,7 +24,6 @@ class CumulativeGraphBuilder:
             self._cumulative_graph.add_edge(u, v, key=key, label=edge.label)
 
     def rebuild_from_graph(self, graph: "Graph", triplet_intro: dict) -> None:
-        # CumulativeGraph is append-oriented in current design.
         for edge in graph.edges:
             label = edge.label or ""
             if not label.strip():
@@ -35,6 +33,8 @@ class CumulativeGraphBuilder:
             introduced = triplet_intro.get((u, label, v))
             if introduced is None:
                 introduced = (
-                    edge.created_at_sentence if edge.created_at_sentence is not None else -1
+                    edge.created_at_sentence
+                    if edge.created_at_sentence is not None
+                    else -1
                 )
             self.sync_edge(edge=edge, introduced_at=int(introduced))

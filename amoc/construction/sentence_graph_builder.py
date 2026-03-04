@@ -465,7 +465,6 @@ class SentenceGraphBuilder:
         nodes_from_text = self._append_adjectival_hints_fn(nodes_from_text, sent)
 
         new_relationships = self.llm.get_new_relationships(
-            nodes_from_text,
             active_nodes_text,
             active_nodes_edges_text,
             current_all_text,

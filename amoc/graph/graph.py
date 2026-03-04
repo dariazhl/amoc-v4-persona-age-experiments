@@ -10,67 +10,19 @@ import logging
 import networkx as nx
 
 
-class RuntimeContext:
-    def __init__(
-        self,
-        story_lemmas: Optional[Set[str]],
-        persona_only_lemmas: Optional[Set[str]],
-        current_sentence_idx: int,
-        current_sentence_lemmas: Optional[Set[str]],
-    ) -> None:
-        self.story_lemmas = story_lemmas
-        self.persona_only_lemmas = persona_only_lemmas
-        self.current_sentence_idx = current_sentence_idx
-        self.current_sentence_lemmas = current_sentence_lemmas
-
-
 class Graph:
     def __init__(self) -> None:
         self.nodes: Set[Node] = set()
         self.edges: Set[Edge] = set()
 
-        self._context = RuntimeContext(
-            story_lemmas=None,
-            persona_only_lemmas=None,
-            current_sentence_idx=0,
-            current_sentence_lemmas=None,
-        )
+        self._story_lemmas: Optional[Set[str]] = None
+        self._persona_only_lemmas: Optional[Set[str]] = None
+        self._current_sentence_idx: int = 0
+        self._current_sentence_lemmas: Optional[Set[str]] = None
 
         self._activation_ops = NodeActivationEngine(self)
         self._stability_ops = ConnectivityRepair(self)
         self._provenance_ops = ProvenanceValidation(self)
-
-    @property
-    def _story_lemmas(self) -> Optional[Set[str]]:
-        return self._context.story_lemmas
-
-    @_story_lemmas.setter
-    def _story_lemmas(self, value: Optional[Set[str]]) -> None:
-        self._context.story_lemmas = value
-
-    @property
-    def _persona_only_lemmas(self) -> Optional[Set[str]]:
-        return self._context.persona_only_lemmas
-
-    @_persona_only_lemmas.setter
-    def _persona_only_lemmas(self, value: Optional[Set[str]]) -> None:
-        self._context.persona_only_lemmas = value
-
-    @property
-    def _current_sentence_idx(self) -> int:
-        return self._context.current_sentence_idx
-
-    @_current_sentence_idx.setter
-    def _current_sentence_idx(self, value: int) -> None:
-        self._context.current_sentence_idx = value
-
-    @property
-    def _current_sentence_lemmas(self) -> Optional[Set[str]]:
-        return self._context.current_sentence_lemmas
-
-    @_current_sentence_lemmas.setter
-    def _current_sentence_lemmas(self, value: Optional[Set[str]]) -> None:
-        self._context.current_sentence_lemmas = value
 
     def set_current_sentence_lemmas(self, lemmas: Set[str]) -> None:
         self._current_sentence_lemmas = {l.lower() for l in lemmas}

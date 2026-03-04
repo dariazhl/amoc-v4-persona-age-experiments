@@ -97,8 +97,7 @@ class ConnectivityStabilizer:
 
         return False
 
-    @staticmethod
-    def _node_sort_key(node, edge_pool):
+    def _node_sort_key(self, node, edge_pool):
         degree = sum(
             1 for e in edge_pool if e.source_node == node or e.dest_node == node
         )

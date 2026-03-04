@@ -311,7 +311,7 @@ class AMoCv4:
             active_triplets_for_overlay=active_triplets_for_overlay,
             property_nodes=property_nodes,
         )
-        self._viz_positions = self._plot_ops.viz_positions
+        self._viz_positions = self._plot_ops.get_viz_positions()
 
     def _initialize_run_state(self) -> None:
         self._previous_active_triplets = []
@@ -598,7 +598,7 @@ class AMoCv4:
                 only_active=only_active, restrict_nodes=restrict_nodes
             ),
         )
-        self._viz_positions = self._plot_ops.viz_positions
+        self._viz_positions = self._plot_ops.get_viz_positions()
         self._previous_active_triplets = self._plot_ops._previous_active_triplets
 
     def analyze(

@@ -91,8 +91,8 @@ class RelationshipGraphBuilder:
                     l, t, allow_bootstrap=allow_bootstrap
                 )
             ),
-            admit_node_fn=lambda l, nt, p, s=None: core._node_ops.admit_node(
-                l, nt, p, s
+            admit_node_fn=lambda l, nt, s=None: core._node_ops.admit_node(
+                l, nt, s
             ),
             passes_attachment_constraint_fn=core.passes_attachment_constraint_wrapper,
             canonicalize_edge_direction_fn=core._canonicalize_edge_direction,

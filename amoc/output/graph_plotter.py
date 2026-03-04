@@ -66,12 +66,10 @@ class GraphPlotter:
         self._story_lemmas = story_lemmas
         self._persona_only_lemmas = persona_only_lemmas
 
-    @property
-    def viz_positions(self) -> Dict[str, Tuple[float, float]]:
+    def get_viz_positions(self) -> Dict[str, Tuple[float, float]]:
         return self._viz_positions
 
-    @viz_positions.setter
-    def viz_positions(self, value: Dict[str, Tuple[float, float]]):
+    def set_viz_positions(self, value: Dict[str, Tuple[float, float]]) -> None:
         self._viz_positions = value
 
     def set_layout_depth(self, depth: int):

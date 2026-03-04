@@ -204,8 +204,7 @@ class Decay:
             edge.source_node.active = True
             edge.dest_node.active = True
 
-    @staticmethod
-    def _to_landscape_score(raw_score: float) -> float:
+    def _to_landscape_score(self, raw_score: float) -> float:
         val = 5.0 - float(raw_score)
         if val < 0.0:
             return 0.0
