@@ -5,12 +5,12 @@ import math
 import networkx as nx
 import re
 
-from amoc.graph.node import NodeType, NodeSource
+from amoc.core.node import NodeType, NodeSource
 from amoc.viz.graph_plots import plot_amoc_triplets
 
 if TYPE_CHECKING:
-    from amoc.graph.graph import Graph
-    from amoc.graph.node import Node
+    from amoc.core.graph import Graph
+    from amoc.core.node import Node
 
 
 class GraphPlotter:

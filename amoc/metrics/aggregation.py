@@ -8,7 +8,7 @@ import pandas as pd
 from amoc.metrics.lexical import simple_sentiment_score
 from amoc.metrics.lexical import compute_lexical_metrics
 from amoc.metrics.graph_metrics import compute_graph_metrics
-from amoc.nlp.spacy_utils import load_spacy
+from amoc.utils.spacy_utils import load_spacy
 
 
 _NLP = None

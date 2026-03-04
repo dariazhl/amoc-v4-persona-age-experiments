@@ -1,8 +1,8 @@
 import logging
 from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
-from amoc.graph.node import Node, NodeSource
-from amoc.graph_views.per_sentence_graph import PerSentenceGraph
+from amoc.core.node import Node, NodeSource
+from amoc.graph_views.per_sentence import PerSentenceGraph
 
 
 class ProjectionStateManager:

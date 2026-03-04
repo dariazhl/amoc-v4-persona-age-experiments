@@ -1,13 +1,13 @@
 from typing import TYPE_CHECKING, Optional, List, Set, Callable
-from amoc.graph.node import NodeType, NodeSource, NodeProvenance
-from amoc.nlp.spacy_utils import (
+from amoc.core.node import NodeType, NodeSource, NodeProvenance
+from amoc.utils.spacy_utils import (
     extract_adjectival_modifiers,
     extract_deterministic_relation_candidates,
 )
 
 if TYPE_CHECKING:
-    from amoc.graph.graph import Graph
-    from amoc.graph.node import Node
+    from amoc.core.graph import Graph
+    from amoc.core.node import Node
     from spacy.tokens import Span
 
 

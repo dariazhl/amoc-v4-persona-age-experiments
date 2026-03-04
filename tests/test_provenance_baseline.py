@@ -25,8 +25,8 @@ def load_module_directly(name, path):
     return module
 
 # Load modules directly
-base_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/graph"
-algorithms_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/graph_algorithms"
+base_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/core"
+admission_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/admission"
 if "amoc" not in sys.modules:
     sys.modules["amoc"] = types.ModuleType("amoc")
 if "amoc.graph" not in sys.modules:
@@ -37,11 +37,11 @@ if "amoc.graph_algorithms" not in sys.modules:
     amoc_graph_algorithms = types.ModuleType("amoc.graph_algorithms")
     sys.modules["amoc.graph_algorithms"] = amoc_graph_algorithms
     sys.modules["amoc"].graph_algorithms = amoc_graph_algorithms
-node_module = load_module_directly("amoc.graph.node", f"{base_path}/node.py")
-edge_module = load_module_directly("amoc.graph.edge", f"{base_path}/edge.py")
+node_module = load_module_directly("amoc.core.node", f"{base_path}/node.py")
+edge_module = load_module_directly("amoc.core.edge", f"{base_path}/edge.py")
 provenance_module = load_module_directly(
-    "amoc.graph_algorithms.provenance_validation",
-    f"{algorithms_path}/provenance_validation.py",
+    "amoc.admission.provenance",
+    f"{admission_path}/provenance.py",
 )
 
 Node = node_module.Node
@@ -317,7 +317,7 @@ class TestBlocklistCategories:
         3. Are abstract linguistic categories (pronoun, noun)
         4. Are meta-references to the narrative (story, narrative, sentence)
         """
-        from amoc.graph_algorithms.provenance_validation import SemanticCategory
+        from amoc.admission.provenance import SemanticCategory
 
         expected = {
             "student", "persona", "relation", "context", "object", "place",
@@ -334,7 +334,7 @@ class TestBlocklistCategories:
         2. "mention", "mentions" - references to textual occurrence
         3. "narration", "story" - meta-references to the narrative itself
         """
-        from amoc.graph_algorithms.provenance_validation import SemanticCategory
+        from amoc.admission.provenance import SemanticCategory
 
         expected = {
             "text", "sentence", "paragraph", "mention", "mentions", "narration", "story",
@@ -350,7 +350,7 @@ class TestBlocklistCategories:
         3. Generic type references (type, kind, thing)
         4. Overly broad categories (person, approach)
         """
-        from amoc.graph_algorithms.provenance_validation import SemanticCategory
+        from amoc.admission.provenance import SemanticCategory
 
         expected = {
             "edge", "node", "relation", "property", "label", "target",

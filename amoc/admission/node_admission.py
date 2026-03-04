@@ -1,15 +1,15 @@
 from typing import TYPE_CHECKING, Optional, List, Set
 import logging
-from amoc.nlp.spacy_utils import (
+from amoc.utils.spacy_utils import (
     get_concept_lemmas,
     canonicalize_node_text,
     get_content_words_from_sent,
 )
-from amoc.graph.node import NodeType, NodeSource, NodeProvenance
+from amoc.core.node import NodeType, NodeSource, NodeProvenance
 
 if TYPE_CHECKING:
-    from amoc.graph.graph import Graph
-    from amoc.graph.node import Node
+    from amoc.core.graph import Graph
+    from amoc.core.node import Node
     from spacy.tokens import Span
 
 
@@ -46,6 +46,7 @@ class NodeAdmission:
         self,
         lemma: str,
         node_type: "NodeType",
+        provenance: str = "STORY_EXPLICIT",
         sent: Optional["Span"] = None,
     ) -> bool:
         lemma = (lemma or "").lower().strip()
@@ -55,9 +56,19 @@ class NodeAdmission:
         if not self._graph._provenance_ops.passes_length_policy(lemma):
             return False
 
-        is_explicit = sent is not None
+        # Reject nodes from internal provenance
+        if provenance in {
+            "LLM_PROMPT",
+            "GRAPH_SERIALIZATION",
+            "CSV",
+            "PLOTTING",
+            "META",
+        }:
+            return False
 
-        if is_explicit:
+        if provenance == "STORY_EXPLICIT":
+            if sent is None:
+                return False
             token_matches = [tok for tok in sent if tok.lemma_.lower() == lemma]
             if not token_matches:
                 return False
@@ -65,6 +76,7 @@ class NodeAdmission:
                 if tok.pos_ in {"VERB", "AUX"}:
                     return False
 
+        if provenance == "STORY_EXPLICIT":
             if lemma not in self._story_lemmas:
                 if not (lemma.endswith("s") and lemma[:-1] in self._story_lemmas):
                     return False
@@ -81,19 +93,23 @@ class NodeAdmission:
             if not grounded:
                 return False
 
-        if not is_explicit:
-            if lemma not in self._story_lemmas:
-                return False
-            if (
-                not self._has_active_attachment_fn
-                or not self._has_active_attachment_fn(lemma)
-            ):
-                return False
+        # Inference admission
+        is_story_grounded = lemma in self._story_lemmas
+        is_allowed_inference = (
+            provenance in {"INFERRED_RELATION", "INFERENCE_BASED"}
+            and is_story_grounded
+            and self._has_active_attachment_fn
+            and self._has_active_attachment_fn(lemma)
+        )
 
+        if provenance != "STORY_EXPLICIT" and not is_allowed_inference:
+            return False
+
+        # Track new node admission
         is_new = lemma not in self._ever_admitted_nodes
         self._ever_admitted_nodes.add(lemma)
 
-        # IMPROVEMENT: limit no. new nodes
+        # Set limits max no. nodes
         if is_new:
             total_nodes = len(self._ever_admitted_nodes)
             if total_nodes > 40:
@@ -137,7 +153,7 @@ class NodeAdmission:
 
         return False
 
-    def get_node_from_text(
+    def resolve_node_from_sentence_text(
         self,
         text: str,
         curr_sentences_nodes: List["Node"],
@@ -159,12 +175,13 @@ class NodeAdmission:
         if not self.admit_node(
             lemma=canon,
             node_type=inferred_type,
+            provenance="TEXT_FALLBACK",
         ):
             return None
 
         return self._graph.add_or_get_node(lemmas, canon, inferred_type, node_source)
 
-    def get_node_from_new_relationship(
+    def resolve_node_from_relationship_text(
         self,
         text: str,
         graph_active_nodes: List["Node"],
@@ -202,6 +219,7 @@ class NodeAdmission:
         if not self.admit_node(
             lemma=lemmas[0],
             node_type=inferred_type,
+            provenance=NodeProvenance.STORY_TEXT,
         ):
             return None
 
@@ -266,7 +284,7 @@ class NodeAdmission:
         # Otherwise reject
         return False
 
-    def get_sentences_text_based_nodes(
+    def extract_sentence_text_based_nodes(
         self,
         previous_sentences: List["Span"],
         current_sentence_index: int,
@@ -359,6 +377,7 @@ class NodeAdmission:
             if not admit_node_fn(
                 lemma=lemma,
                 node_type=NodeType.CONCEPT,
+                provenance="STORY_TEXT",
             ):
                 continue
             node = self._graph.add_or_get_node(

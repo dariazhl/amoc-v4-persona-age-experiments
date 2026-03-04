@@ -5,9 +5,9 @@ import re
 import json
 
 if TYPE_CHECKING:
-    from amoc.graph.graph import Graph
-    from amoc.graph.node import Node
-    from amoc.graph.edge import Edge
+    from amoc.core.graph import Graph
+    from amoc.core.node import Node
+    from amoc.core.edge import Edge
 from amoc.prompts.amoc_prompts import FORCED_CONNECTIVITY_EDGE_PROMPT
 
 

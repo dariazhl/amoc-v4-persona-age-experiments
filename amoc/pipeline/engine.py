@@ -2,7 +2,7 @@ from typing import List, Tuple, Iterable, Optional
 
 import pandas as pd
 
-from amoc.pipeline.core import AMoCv4
+from amoc.pipeline.orchestrator import AMoCv4
 from amoc.llm.vllm_client import VLLMClient
 from amoc.config.constants import (
     MAX_DISTANCE_FROM_ACTIVE_NODES,

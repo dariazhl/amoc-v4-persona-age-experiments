@@ -1,10 +1,10 @@
 from typing import TYPE_CHECKING, Set, Optional, List, Tuple
 import logging
 import re
-from amoc.graph.node import NodeType, NodeProvenance
+from amoc.core.node import NodeType, NodeProvenance
 
 if TYPE_CHECKING:
-    from amoc.graph.graph import Graph
+    from amoc.core.graph import Graph
 
 
 class ProvenanceValidation:
@@ -23,6 +23,7 @@ class ProvenanceValidation:
             return (False, "empty_lemmas")
 
         primary_lemma = lemmas[0].lower()
+        all_lemmas = [l.lower() for l in lemmas if l]
 
         if len(primary_lemma) <= 1:
             return (False, "lemma_too_short")
@@ -37,13 +38,11 @@ class ProvenanceValidation:
             return (False, "persona_only_lemma")
 
         if is_new_node and self._graph._story_lemmas is not None:
-
             ed_stem = (
                 primary_lemma[:-2]
                 if primary_lemma.endswith("ed") and len(primary_lemma) > 2
                 else None
             )
-
             ing_stem = (
                 primary_lemma[:-3]
                 if primary_lemma.endswith("ing") and len(primary_lemma) > 3
@@ -76,8 +75,6 @@ class ProvenanceValidation:
         if not lemma:
             return False
         lemma_lower = lemma.lower()
-
-        # single char always rejected
         if len(lemma_lower) <= 1:
             return False
         return True
@@ -86,16 +83,6 @@ class ProvenanceValidation:
         if self._graph._current_sentence_lemmas is None:
             return True
         return primary_lemma.lower() in self._graph._current_sentence_lemmas
-
-    def set_provenance_gate(
-        self,
-        story_lemmas: Set[str],
-        persona_only_lemmas: Optional[Set[str]] = None,
-    ) -> None:
-        self._graph._story_lemmas = {s.lower() for s in story_lemmas}
-        self._graph._persona_only_lemmas = (
-            {s.lower() for s in persona_only_lemmas} if persona_only_lemmas else set()
-        )
 
     def sanity_check_provenance(
         self,
@@ -110,7 +97,7 @@ class ProvenanceValidation:
 
                 if lemma_lower in persona_only_lemmas:
                     warnings.append(
-                        f"PROVENANCE VIOLATION: Node '{node.get_text_representer()}' "
+                        f"Node '{node.get_text_representer()}' "
                         f"contains lemma '{lemma_lower}' which appears ONLY in persona, "
                         f"not in story text. Provenance: {node.provenance}"
                     )
@@ -119,7 +106,7 @@ class ProvenanceValidation:
                     if node.provenance == NodeProvenance.STORY_TEXT:
                         if any(lemma not in story_lemmas for lemma in node.lemmas):
                             logging.warning(
-                                "PROVENANCE WARNING: Node '%s' lemma(s) %s not found in story lemma set.",
+                                "Node '%s' lemma(s) %s not found in story lemma set.",
                                 node.get_text_representer(),
                                 node.lemmas,
                             )

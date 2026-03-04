@@ -2,9 +2,9 @@ from typing import TYPE_CHECKING, List, Set, Dict, Optional, Tuple
 from amoc.config.constants import MAX_EDGES_PER_NODE
 
 if TYPE_CHECKING:
-    from amoc.graph.graph import Graph
-    from amoc.graph.node import Node
-    from amoc.graph.edge import Edge
+    from amoc.core.graph import Graph
+    from amoc.core.node import Node
+    from amoc.core.edge import Edge
 
 
 class PlotFiltering:

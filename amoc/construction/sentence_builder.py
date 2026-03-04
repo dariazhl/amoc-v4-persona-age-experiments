@@ -4,10 +4,10 @@ import re
 from typing import TYPE_CHECKING, List, Optional, Tuple, Set
 import networkx as nx
 
-from amoc.graph.node import NodeType, NodeSource, NodeProvenance
+from amoc.core.node import NodeType, NodeSource, NodeProvenance
 
 if TYPE_CHECKING:
-    from amoc.pipeline.core import AMoCv4
+    from amoc.pipeline.orchestrator import AMoCv4
 
 
 class SentenceGraphBuilder:
@@ -43,6 +43,7 @@ class SentenceGraphBuilder:
         self._propagate_activation_from_edges_fn = None
         self._restrict_active_to_current_explicit_fn = None
         self._get_node_from_new_relationship_fn = None
+        self._get_node_from_text_fn = None
         self._get_phrase_level_concepts_fn = None
         self._get_sentences_text_based_nodes_fn = None
         self._infer_new_relationships_fn = None
@@ -75,6 +76,7 @@ class SentenceGraphBuilder:
         propagate_activation_from_edges_fn,
         restrict_active_to_current_explicit_fn,
         get_node_from_new_relationship_fn,
+        get_node_from_text_fn,
         get_phrase_level_concepts_fn,
         get_sentences_text_based_nodes_fn,
         infer_new_relationships_fn,
@@ -102,6 +104,7 @@ class SentenceGraphBuilder:
             restrict_active_to_current_explicit_fn
         )
         self._get_node_from_new_relationship_fn = get_node_from_new_relationship_fn
+        self._get_node_from_text_fn = get_node_from_text_fn
         self._get_phrase_level_concepts_fn = get_phrase_level_concepts_fn
         self._get_sentences_text_based_nodes_fn = get_sentences_text_based_nodes_fn
         self._infer_new_relationships_fn = infer_new_relationships_fn
@@ -155,6 +158,7 @@ class SentenceGraphBuilder:
                 core._activation_ops.restrict_active_to_current_explicit(en)
             ),
             get_node_from_new_relationship_fn=core.resolve_node_from_new_relationship_wrapper,
+            get_node_from_text_fn=core.resolve_node_from_text_wrapper,
             get_phrase_level_concepts_fn=core.extract_phrase_level_concepts_wrapper,
             get_sentences_text_based_nodes_fn=core._get_sentences_nodes,
             infer_new_relationships_fn=core.infer_new_relationships_for_sentence_wrapper,
@@ -465,6 +469,7 @@ class SentenceGraphBuilder:
         nodes_from_text = self._append_adjectival_hints_fn(nodes_from_text, sent)
 
         new_relationships = self.llm.get_new_relationships(
+            nodes_from_text,
             active_nodes_text,
             active_nodes_edges_text,
             current_all_text,
@@ -605,6 +610,74 @@ class SentenceGraphBuilder:
         )
 
         return (nodes_before_sentence, should_skip)
+
+    def _handle_single_explicit_bridge(
+        self,
+        explicit_nodes_current_sentence: set,
+    ) -> None:
+        if len(explicit_nodes_current_sentence) != 1:
+            return
+
+        node = next(iter(explicit_nodes_current_sentence))
+        active_nodes = set(self._get_nodes_with_active_edges_fn())
+        if node in active_nodes or not active_nodes:
+            return
+
+        anchor = min(active_nodes, key=lambda n: n.get_text_representer())
+        if anchor == node:
+            return
+
+        edge = self.add_edge_wrapper_fn(
+            anchor,
+            node,
+            "relates_to",
+            self.edge_visibility,
+        )
+        if edge:
+            edge.asserted_this_sentence = False
+            edge.reactivated_this_sentence = False
+
+    def _ensure_explicit_nodes_have_edges(
+        self,
+        explicit_nodes_current_sentence: set,
+        current_sentence_text: str,
+    ) -> None:
+        if not explicit_nodes_current_sentence:
+            return
+
+        for node in explicit_nodes_current_sentence:
+            active_nodes = set(self._get_nodes_with_active_edges_fn())
+            if node in active_nodes:
+                continue
+            anchor = next((n for n in active_nodes if n != node), None)
+            if anchor is None:
+                continue
+            edge = self.add_edge_wrapper_fn(
+                anchor,
+                node,
+                "relates_to",
+                self.edge_visibility,
+            )
+            if edge:
+                edge.asserted_this_sentence = False
+                edge.reactivated_this_sentence = False
+
+    def _handle_empty_projection_retry(
+        self,
+        explicit_nodes_current_sentence: set,
+        current_sentence_text_based_nodes: list,
+        current_sentence_text_based_words: list,
+        graph_active_nodes: list,
+        current_all_text: str,
+        nodes_from_text: str,
+        _graph_snapshot,
+        _anchor_snapshot,
+        _triplet_intro_snapshot,
+        anchor_nodes: set,
+        triplet_intro: dict,
+        nodes_before_sentence: set,
+    ) -> bool:
+        return False
 
     def _normalize_relationship(self, relationship):
         # Normalize LLM output into (subj, rel, obj)

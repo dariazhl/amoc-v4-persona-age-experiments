@@ -1,18 +1,18 @@
 from amoc.admission.edge_admission import EdgeAdmission
 from amoc.admission.node_admission import NodeAdmission
 from amoc.admission.text_normalizer import TextNormalizer
-from amoc.construction.relationship_graph_builder import RelationshipGraphBuilder
-from amoc.construction.sentence_graph_builder import SentenceGraphBuilder
-from amoc.extraction.linguistic_processing import LinguisticProcessing
+from amoc.construction.relationship_builder import RelationshipGraphBuilder
+from amoc.construction.sentence_builder import SentenceGraphBuilder
+from amoc.extraction.linguistic import LinguisticProcessing
 from amoc.extraction.llm_extractor import LLMExtractor
 from amoc.extraction.relationship_inference import RelationshipInference
-from amoc.output.graph_plotter import GraphPlotter
-from amoc.output.output_finalizer import OutputFinalizer
-from amoc.output.triplet_recorder import TripletRecorder
-from amoc.projection.projection_state_manager import ProjectionStateManager
+from amoc.output.plotter import GraphPlotter
+from amoc.output.finalizer import OutputFinalizer
+from amoc.output.recorder import TripletRecorder
+from amoc.projection.state_manager import ProjectionStateManager
 from amoc.runtime.sentence_runtime import SentenceRuntime
-from amoc.runtime.decay import Decay
-from amoc.connectivity.connectivity_stabilizer import ConnectivityStabilizer
+from amoc.memory.decay import Decay
+from amoc.connectivity.stabilizer import ConnectivityStabilizer
 
 
 def wire_core_dependencies(core) -> None:

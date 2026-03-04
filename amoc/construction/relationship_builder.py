@@ -1,11 +1,11 @@
 import logging
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
-from amoc.graph.node import NodeType, NodeSource, NodeProvenance
-from amoc.nlp.spacy_utils import get_concept_lemmas
+from amoc.core.node import NodeType, NodeSource, NodeProvenance
+from amoc.utils.spacy_utils import get_concept_lemmas
 
 if TYPE_CHECKING:
-    from amoc.pipeline.core import AMoCv4
+    from amoc.pipeline.orchestrator import AMoCv4
 
 
 class RelationshipGraphBuilder:
@@ -91,8 +91,11 @@ class RelationshipGraphBuilder:
                     l, t, allow_bootstrap=allow_bootstrap
                 )
             ),
-            admit_node_fn=lambda l, nt, s=None: core._node_ops.admit_node(
-                l, nt, s
+            admit_node_fn=lambda l, nt, p, s=None: core._node_ops.admit_node(
+                lemma=l,
+                node_type=nt,
+                provenance=p,
+                sent=s,
             ),
             passes_attachment_constraint_fn=core.passes_attachment_constraint_wrapper,
             canonicalize_edge_direction_fn=core._canonicalize_edge_direction,

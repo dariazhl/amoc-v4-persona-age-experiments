@@ -3,13 +3,13 @@ import copy
 import logging
 import re
 import networkx as nx
-from amoc.graph.node import NodeType
+from amoc.core.node import NodeType
 
 if TYPE_CHECKING:
-    from amoc.graph.graph import Graph
-    from amoc.graph.node import Node
-    from amoc.graph.edge import Edge
-    from amoc.graph_views.per_sentence_graph import PerSentenceGraph
+    from amoc.core.graph import Graph
+    from amoc.core.node import Node
+    from amoc.core.edge import Edge
+    from amoc.graph_views.per_sentence import PerSentenceGraph
     from spacy.tokens import Span
 
 

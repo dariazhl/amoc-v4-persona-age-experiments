@@ -32,30 +32,31 @@ if "amoc.connectivity" not in sys.modules:
     sys.modules["amoc"].connectivity = amoc_connectivity
 
 # Load modules in dependency order (bottom-up)
-base_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/graph"
-algorithms_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/graph_algorithms"
+base_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/core"
+algorithms_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/memory"
 connectivity_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/connectivity"
+admission_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/admission"
 
 # 1. Load leaf modules first (no internal amoc dependencies)
-node_module = load_module_directly("amoc.graph.node", f"{base_path}/node.py")
-edge_module = load_module_directly("amoc.graph.edge", f"{base_path}/edge.py")
+node_module = load_module_directly("amoc.core.node", f"{base_path}/node.py")
+edge_module = load_module_directly("amoc.core.edge", f"{base_path}/edge.py")
 
 # 2. Load ops modules (depend on node/edge via TYPE_CHECKING only)
 activation_ops_module = load_module_directly(
-    "amoc.graph_algorithms.node_activation_engine",
-    f"{algorithms_path}/node_activation_engine.py",
+    "amoc.memory.activation",
+    f"{algorithms_path}/activation.py",
 )
 stability_ops_module = load_module_directly(
-    "amoc.connectivity.connectivity_repair",
-    f"{connectivity_path}/connectivity_repair.py",
+    "amoc.connectivity.repair",
+    f"{connectivity_path}/repair.py",
 )
 provenance_module = load_module_directly(
-    "amoc.graph_algorithms.provenance_validation",
-    f"{algorithms_path}/provenance_validation.py",
+    "amoc.admission.provenance",
+    f"{admission_path}/provenance.py",
 )
 
 # 3. Finally load graph module (imports all the above)
-graph_module = load_module_directly("amoc.graph.graph", f"{base_path}/graph.py")
+graph_module = load_module_directly("amoc.core.graph", f"{base_path}/graph.py")
 
 Node = node_module.Node
 NodeType = node_module.NodeType

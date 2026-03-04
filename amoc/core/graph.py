@@ -1,12 +1,11 @@
 from __future__ import annotations
-from amoc.graph.node import Node
-from amoc.graph.node import NodeType, NodeSource, NodeProvenance
-from amoc.graph.edge import Edge
-from amoc.graph_algorithms.node_activation_engine import NodeActivationEngine
-from amoc.connectivity.connectivity_repair import ConnectivityRepair
-from amoc.graph_algorithms.provenance_validation import ProvenanceValidation
-from typing import List, Set, Dict, Optional, Tuple, Callable
-import logging
+from amoc.core.node import Node
+from amoc.core.node import NodeType, NodeSource, NodeProvenance
+from amoc.core.edge import Edge
+from amoc.memory.activation import NodeActivationEngine
+from amoc.connectivity.repair import ConnectivityRepair
+from amoc.admission.provenance import ProvenanceValidation
+from typing import List, Set, Optional, Tuple, Callable
 import networkx as nx
 
 
@@ -98,11 +97,6 @@ class Graph:
                 return node
         return None
 
-    def get_explicit_nodes_for_sentence(self, sentence_id: int):
-        return [
-            node for node in self.nodes if node.is_explicit_in_sentence(sentence_id)
-        ]
-
     def add_edge(
         self,
         source_node: Node,
@@ -156,24 +150,6 @@ class Graph:
 
         return edge
 
-    def get_edge(self, edge: Edge) -> Optional[Edge]:
-        for other_edge in self.edges:
-            if edge == other_edge:
-                return other_edge
-        return None
-
-    def get_edge_by_nodes_and_label(
-        self, source_node: Node, dest_node: Node, label: str
-    ) -> Optional[Edge]:
-        for edge in self.edges:
-            if (
-                edge.source_node == source_node
-                and edge.dest_node == dest_node
-                and edge.label == label
-            ):
-                return edge
-        return None
-
     def remove_edge(self, edge: Edge) -> None:
         if edge in self.edges:
             self.edges.remove(edge)
@@ -190,12 +166,6 @@ class Graph:
         for edge in self.edges:
             G.add_edge(edge.source_node, edge.dest_node, edge=edge)
         return G
-
-    def get_word_lemma_score(self, word_lemmas: List[str]) -> Optional[float]:
-        for node in self.nodes:
-            if node.lemmas == word_lemmas:
-                return node.score
-        return None
 
     def get_nodes_str(self, nodes: List[Node]) -> str:
         nodes_str = ""
@@ -238,19 +208,6 @@ class Graph:
                             count += 1
         return edges_str, list(used_edges)
 
-    def get_active_graph_repr(self) -> str:
-        edges = [edge for edge in self.edges if edge.active]
-        nodes = {edge.source_node for edge in edges} | {
-            edge.dest_node for edge in edges
-        }
-        s = "nodes:\n"
-        for node in nodes:
-            s += str(node) + "\n"
-        s += "\nedges:\n"
-        for edge in edges:
-            s += str(edge) + "\n"
-        return s
-
     def deactivate_all_edges_wrapper(self) -> None:
         self._activation_ops.deactivate_all_edges()
 
@@ -269,14 +226,8 @@ class Graph:
     ) -> List[Node]:
         return self._activation_ops.get_active_nodes(score_threshold, only_text_based)
 
-    def decay_inactive_edges_wrapper(self) -> None:
-        self._activation_ops.decay_inactive_edges()
-
     def enforce_cumulative_stability_wrapper(self, explicit_nodes: set) -> None:
         self._stability_ops.enforce_cumulative_stability(explicit_nodes)
-
-    def enforce_carryover_connectivity_wrapper(self, carryover_nodes: set) -> None:
-        self._stability_ops.enforce_carryover_connectivity(carryover_nodes)
 
     def is_active_connected(self, required_nodes: Optional[Set[Node]] = None) -> bool:
         return self._stability_ops.compute_active_connectivity(required_nodes)
@@ -289,12 +240,6 @@ class Graph:
     ) -> Tuple[List[Set[Node]], int]:
         return self._stability_ops.get_disconnected_components(focus_nodes)
 
-    def can_connect_via_cumulative_wrapper(self, required_nodes: Set[Node]) -> bool:
-        return self._stability_ops.can_connect_via_cumulative(required_nodes)
-
-    def reconnect_via_cumulative_wrapper(self, required_nodes: Set[Node]) -> Set[Edge]:
-        return self._stability_ops.reconnect_via_cumulative(required_nodes)
-
     def enforce_connectivity(
         self,
         required_nodes: Set[Node],
@@ -304,13 +249,6 @@ class Graph:
         return self._stability_ops.reactivate_to_restore_connectivity(
             required_nodes, allow_reactivation, enforce_cumulative
         )
-
-    def set_provenance_gate_wrapper(
-        self,
-        story_lemmas: Set[str],
-        persona_only_lemmas: Optional[Set[str]] = None,
-    ) -> None:
-        self._provenance_ops.set_provenance_gate(story_lemmas, persona_only_lemmas)
 
     def sanity_check_provenance_wrapper(
         self,

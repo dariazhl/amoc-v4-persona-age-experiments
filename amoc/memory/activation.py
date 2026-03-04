@@ -1,13 +1,13 @@
 from typing import TYPE_CHECKING, Set, Dict, List, Tuple, Optional
 from collections import deque
-from amoc.graph.node import NodeType, NodeSource
+from amoc.core.node import NodeType, NodeSource
 from amoc.config.constants import MAX_REACTIVATION_COUNT
 
 
 if TYPE_CHECKING:
-    from amoc.graph.graph import Graph
-    from amoc.graph.node import Node
-    from amoc.graph.edge import Edge
+    from amoc.core.graph import Graph
+    from amoc.core.node import Node
+    from amoc.core.edge import Edge
 
 
 class NodeActivationEngine:
@@ -98,7 +98,7 @@ class NodeActivationEngine:
         candidates.sort(key=lambda x: x[0])
         reactivated = set()
 
-        for dist, edge in candidates[: self.MAX_REACTIVATION_COUNT]:
+        for dist, edge in candidates[:MAX_REACTIVATION_COUNT]:
             edge.mark_as_reactivated(reset_score=False)
             reactivated.add(edge)
 

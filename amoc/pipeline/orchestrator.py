@@ -5,15 +5,15 @@ from typing import List, Tuple, Optional, Iterable
 from spacy.tokens import Span
 
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
-from amoc.graph import Graph, Node, Edge, NodeType, NodeSource
-from amoc.graph_views.per_sentence_graph import (
+from amoc.core import Graph, Node, Edge, NodeType, NodeSource
+from amoc.graph_views.per_sentence import (
     PerSentenceGraph,
     build_per_sentence_graph,
 )
-from amoc.graph_views.active_graph import ActiveGraph
-from amoc.graph_views.cumulative_graph import CumulativeGraph
-from amoc.graph_views.active_graph_builder import ActiveGraphBuilder
-from amoc.graph_views.cumulative_graph_builder import CumulativeGraphBuilder
+from amoc.graph_views.active import ActiveGraph
+from amoc.graph_views.cumulative import CumulativeGraph
+from amoc.graph_views.active import ActiveGraphBuilder
+from amoc.graph_views.cumulative import CumulativeGraphBuilder
 from amoc.llm.vllm_client import VLLMClient
 from amoc.pipeline.wiring import wire_core_dependencies
 from amoc.config.constants import MAX_DISTANCE_FROM_ACTIVE_NODES
@@ -267,7 +267,9 @@ class AMoCv4:
             normalize_edge_label_fn=self._normalize_edge_label,
         )
 
-    def record_edge_in_graphs_wrapper(self, edge: Edge, sentence_idx: Optional[int]) -> None:
+    def record_edge_in_graphs_wrapper(
+        self, edge: Edge, sentence_idx: Optional[int]
+    ) -> None:
         self._edge_ops.record_edge_in_graphs(
             edge=edge,
             sentence_idx=sentence_idx,
@@ -809,7 +811,7 @@ class AMoCv4:
         node_source: NodeSource,
         create_node: bool,
     ) -> Optional[Node]:
-        return self._node_ops.get_node_from_text(
+        return self._node_ops.resolve_node_from_sentence_text(
             text=text,
             curr_sentences_nodes=curr_sentences_nodes,
             curr_sentences_words=curr_sentences_words,
@@ -826,7 +828,7 @@ class AMoCv4:
         node_source: NodeSource,
         create_node: bool,
     ) -> Optional[Node]:
-        return self._node_ops.get_node_from_new_relationship(
+        return self._node_ops.resolve_node_from_relationship_text(
             text=text,
             graph_active_nodes=graph_active_nodes,
             curr_sentences_nodes=curr_sentences_nodes,
@@ -838,8 +840,11 @@ class AMoCv4:
     def extract_phrase_level_concepts_wrapper(self, sent):
         return self._node_ops.get_phrase_level_concepts(
             sent=sent,
-            admit_node_fn=lambda lemma, node_type, sent=None: self._node_ops.admit_node(
-                lemma, node_type, sent
+            admit_node_fn=lambda lemma, node_type, provenance, sent=None: self._node_ops.admit_node(
+                lemma=lemma,
+                node_type=node_type,
+                provenance=provenance,
+                sent=sent,
             ),
         )
 
@@ -848,7 +853,7 @@ class AMoCv4:
         previous_sentences: List[Span],
         create_unexistent_nodes: bool = True,
     ) -> Tuple[List[Node], List[str]]:
-        return self._node_ops.get_sentences_text_based_nodes(
+        return self._node_ops.extract_sentence_text_based_nodes(
             previous_sentences=previous_sentences,
             current_sentence_index=self._current_sentence_index,
             create_unexistent_nodes=create_unexistent_nodes,

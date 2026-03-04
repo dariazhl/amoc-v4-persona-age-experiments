@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
-from amoc.nlp.spacy_utils import canonicalize_node_text
+from amoc.utils.spacy_utils import canonicalize_node_text
 
 
 # extract blue nodes for new texts

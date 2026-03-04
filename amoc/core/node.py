@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from amoc.graph.node import Node
+    from amoc.core.node import Node
 
 from enum import Enum
 from typing import List, Dict, Set

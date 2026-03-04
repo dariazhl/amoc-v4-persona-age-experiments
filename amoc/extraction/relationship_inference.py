@@ -1,9 +1,9 @@
 from typing import TYPE_CHECKING, Optional, List, Tuple
 
 if TYPE_CHECKING:
-    from amoc.graph.graph import Graph
-    from amoc.graph.node import Node
-    from amoc.graph.edge import Edge
+    from amoc.core.graph import Graph
+    from amoc.core.node import Node
+    from amoc.core.edge import Edge
     from spacy.tokens import Span
 
 

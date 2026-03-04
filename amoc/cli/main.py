@@ -23,7 +23,7 @@ from amoc.config import (
 from amoc.pipeline.runner import process_persona_csv
 from amoc.analysis.statistics import run_statistical_analysis
 from amoc.nlp import load_spacy
-from amoc.nlp.highlights import blue_nodes_from_text
+from amoc.utils.highlights import blue_nodes_from_text
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:

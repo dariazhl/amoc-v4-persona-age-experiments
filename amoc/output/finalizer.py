@@ -5,8 +5,8 @@ import pandas as pd
 import re
 
 if TYPE_CHECKING:
-    from amoc.graph.graph import Graph
-    from amoc.graph.node import Node
+    from amoc.core.graph import Graph
+    from amoc.core.node import Node
 
 
 class OutputFinalizer:

@@ -11,7 +11,7 @@ from amoc.llm.vllm_client import VLLMClient
 from amoc.config.constants import DEBUG
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
 from datetime import datetime
-from amoc.pipeline.io import (
+from amoc.utils.io import (
     robust_read_persona_csv,
     get_checkpoint_path,
     load_checkpoint,

@@ -1,8 +1,9 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 from difflib import SequenceMatcher
-from amoc.graph.node import NodeType
+from amoc.core.node import NodeType
 from amoc.config.constants import DEFAULT_ACTIVATION_SCORE, DECAY_STEP
+
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -15,7 +16,7 @@ except Exception:
     _EMB_MODEL = None
 
 if TYPE_CHECKING:
-    from amoc.graph.node import Node
+    from amoc.core.node import Node
 
 
 def _maybe_embed(text: str) -> Optional["np.ndarray"]:
@@ -95,46 +96,19 @@ class Edge:
         if reset_score:
             self.activation_score = DEFAULT_ACTIVATION_SCORE
 
-    def activate(self, reset_score: bool = True) -> None:
-        self.active = True
-        if reset_score:
-            self.activation_score = DEFAULT_ACTIVATION_SCORE
-
-    def deactivate(self) -> None:
-        self.active = False
-        self.asserted_this_sentence = False
-        self.reactivated_this_sentence = False
-        self.activation_role = None
-
     def reset_for_sentence_start(self) -> None:
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = False
         self.activation_role = None
         self.active = False
 
-    def decay_activation(self) -> None:
-        if self.activation_score > 0:
-            self.activation_score -= 1
-        self.active = self.activation_score > 0
-
     def reduce_visibility(self) -> None:
         if self.visibility_score <= 1:
             self.visibility_score = 1
             return
-        self.visibility_score -= self.DECAY_STEP
+        self.visibility_score -= DECAY_STEP
         if self.visibility_score <= 1:
             self.visibility_score = 1
-
-    def mark_as_forced_connection(self) -> None:
-        self.forced_connection = True
-        self.active = True
-        self.asserted_this_sentence = True
-        self.reactivated_this_sentence = False
-        self.activation_role = "asserted"
-        self.activation_score = DEFAULT_ACTIVATION_SCORE
-
-    def is_forced_connection(self) -> bool:
-        return self.forced_connection
 
     def is_property_edge(self) -> bool:
         return (
@@ -160,34 +134,6 @@ class Edge:
                 return True
 
         return SequenceMatcher(None, a, b).ratio() >= self.similarity_threshold
-
-    def matches_directed(self, other_edge: "Edge") -> bool:
-        same_direction = (
-            self.source_node == other_edge.source_node
-            and self.dest_node == other_edge.dest_node
-        )
-        return same_direction and self.is_similar(other_edge)
-
-    def is_inverse_of(self, other_edge: "Edge") -> bool:
-        opposite_direction = (
-            self.source_node == other_edge.dest_node
-            and self.dest_node == other_edge.source_node
-        )
-        return opposite_direction and self.is_similar(other_edge)
-
-    def get_directed_key(self) -> tuple:
-        src_key = tuple(self.source_node.lemmas)
-        dst_key = tuple(self.dest_node.lemmas)
-        label_key = (self.label or "").strip().lower()
-        return (src_key, dst_key, label_key)
-
-    def get_undirected_key(self) -> tuple:
-        src_key = tuple(self.source_node.lemmas)
-        dst_key = tuple(self.dest_node.lemmas)
-        label_key = (self.label or "").strip().lower()
-        if src_key <= dst_key:
-            return (src_key, dst_key, label_key)
-        return (dst_key, src_key, label_key)
 
     def __eq__(self, other: "Edge") -> bool:
         return self is other

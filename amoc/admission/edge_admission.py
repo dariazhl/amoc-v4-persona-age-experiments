@@ -1,13 +1,13 @@
 from typing import TYPE_CHECKING, Optional, List, Tuple, Any
 import logging
 
-from amoc.graph.graph import Graph
-from amoc.graph.node import Node, NodeType, NodeSource
-from amoc.graph.edge import Edge
+from amoc.core.graph import Graph
+from amoc.core.node import Node, NodeType, NodeSource
+from amoc.core.edge import Edge
 from amoc.admission.text_normalizer import TextNormalizer, canonicalize_relation_label
 
 if TYPE_CHECKING:
-    from amoc.pipeline.core import AMoCv4
+    from amoc.pipeline.orchestrator import AMoCv4
 
 
 class EdgeAdmission:
@@ -44,7 +44,7 @@ class EdgeAdmission:
         self._classify_relation_fn: Optional[callable] = None
         self._persona: str = ""
 
-    def set_inference_callbacks(
+    def configure_edge_inference_callbacks(
         self,
         normalize_endpoint_text_fn: callable,
         normalize_edge_label_fn: callable,
@@ -62,7 +62,7 @@ class EdgeAdmission:
         self._classify_relation_fn = classify_relation_fn
         self._persona = persona
 
-    def set_edge_state_refs(
+    def configure_edge_state_refs(
         self,
         triplet_intro: dict,
         persistent_is_edges: set,
@@ -71,7 +71,7 @@ class EdgeAdmission:
         self._persistent_is_edges = persistent_is_edges
 
     def configure_edge_admission_with_core(self, core: "AMoCv4") -> None:
-        self.set_inference_callbacks(
+        self.configure_edge_inference_callbacks(
             normalize_endpoint_text_fn=core._normalize_endpoint_text,
             normalize_edge_label_fn=core._normalize_edge_label,
             is_valid_relation_label_fn=core._is_valid_relation_label,
@@ -80,7 +80,7 @@ class EdgeAdmission:
             classify_relation_fn=core._classify_relation,
             persona=core.persona,
         )
-        self.set_edge_state_refs(
+        self.configure_edge_state_refs(
             triplet_intro=core._triplet_intro,
             persistent_is_edges=core._persistent_is_edges,
         )
@@ -88,14 +88,14 @@ class EdgeAdmission:
     def set_edge_sentence_context(self, idx: int):
         self._current_sentence_index = idx
 
-    def edge_key(self, edge: "Edge") -> Tuple[str, str, str]:
+    def build_edge_triplet_key(self, edge: "Edge") -> Tuple[str, str, str]:
         return (
             edge.source_node.get_text_representer(),
             edge.dest_node.get_text_representer(),
             edge.label,
         )
 
-    def get_existing_edge_between_nodes(
+    def find_existing_directed_edge(
         self, source_node: "Node", dest_node: "Node"
     ) -> Optional["Edge"]:
         for edge in self._graph.edges:
@@ -103,7 +103,7 @@ class EdgeAdmission:
                 return edge
         return None
 
-    def insert_edge(
+    def insert_normalized_edge(
         self,
         source_node: "Node",
         dest_node: "Node",
@@ -178,7 +178,7 @@ class EdgeAdmission:
         )
 
         if not self._allow_multi_edges:
-            existing_edge = self.get_existing_edge_between_nodes(source_node, dest_node)
+            existing_edge = self.find_existing_directed_edge(source_node, dest_node)
             if existing_edge is not None:
                 old_label = existing_edge.label
 
@@ -220,7 +220,7 @@ class EdgeAdmission:
         ):
             return None
 
-        edge = self.insert_edge(
+        edge = self.insert_normalized_edge(
             source_node,
             dest_node,
             label,
@@ -332,7 +332,7 @@ class EdgeAdmission:
         cumulative_graph_builder: Any = None,
         active_graph_builder: Any = None,
     ) -> None:
-        u, v, lbl = self.edge_key(edge)
+        u, v, lbl = self.build_edge_triplet_key(edge)
 
         if not lbl or not lbl.strip():
             return

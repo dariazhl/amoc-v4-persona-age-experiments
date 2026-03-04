@@ -6,10 +6,15 @@ class LLMExtractor:
         self._client = client
 
     def get_new_relationships(
-        self, nodes_from_graph: str, edges_from_graph: str, text: str, persona: str
+        self,
+        nodes_from_text: str,
+        nodes_from_graph: str,
+        edges_from_graph: str,
+        text: str,
+        persona: str,
     ):
         return self._client.get_new_relationships(
-            nodes_from_graph, edges_from_graph, text, persona
+            nodes_from_text, nodes_from_graph, edges_from_graph, text, persona
         )
 
     def get_new_relationships_first_sentence(

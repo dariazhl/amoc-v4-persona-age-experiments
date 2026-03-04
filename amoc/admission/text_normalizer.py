@@ -1,13 +1,13 @@
 from typing import TYPE_CHECKING, Optional, Set
-from amoc.nlp.spacy_utils import canonicalize_node_text
-from amoc.nlp.spacy_utils import canonicalize_edge_label
-from amoc.graph.node import NodeType
-from amoc.nlp.spacy_utils import get_concept_lemmas
+from amoc.utils.spacy_utils import canonicalize_node_text
+from amoc.utils.spacy_utils import canonicalize_edge_label
+from amoc.core.node import NodeType
+from amoc.utils.spacy_utils import get_concept_lemmas
 import re
 
 if TYPE_CHECKING:
-    from amoc.graph.graph import Graph
-    from amoc.graph.node import Node
+    from amoc.core.graph import Graph
+    from amoc.core.node import Node
 
 
 class TextNormalizer:
