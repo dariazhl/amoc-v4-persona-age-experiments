@@ -84,49 +84,65 @@ class Decay:
         )
 
         if not self._strict_reactivate:
-            self._reactivate_all_non_property_edges(edges)
+            for edge in edges:
+                if edge.is_property_edge():
+                    continue
+                edge.mark_as_reactivated(reset_score=False)
+                edge.visibility_score = self._edge_visibility
+                if self._record_edge_fn and (
+                    edge.is_asserted() or edge.is_reactivated()
+                ):
+                    self._record_edge_fn(edge, self._current_sentence_index)
             return
 
-        selected_indices = self._get_llm_selected_indices(
-            edges_text, prev_sentences_text, edges
-        )
-        active_node_set = set(active_nodes)
-
-        if not selected_indices:
-            edges_to_reactivate = self._fallback_edges(
-                edges, newly_added_edges, active_node_set
-            )
-        else:
-            edges_to_reactivate = self._build_edges_to_reactivate(
-                edges, selected_indices, newly_added_edges, active_node_set
-            )
-
-        self._apply_reactivation_or_decay(edges, edges_to_reactivate)
-
-    def _reactivate_all_non_property_edges(self, edges: List["Edge"]) -> None:
-        for edge in edges:
-            if edge.is_property_edge():
-                continue
-            edge.mark_as_reactivated(reset_score=False)
-            edge.visibility_score = self._edge_visibility
-            if self._record_edge_fn and (edge.is_asserted() or edge.is_reactivated()):
-                self._record_edge_fn(edge, self._current_sentence_index)
-
-    def _get_llm_selected_indices(
-        self, edges_text: str, prev_sentences_text: str, edges: List["Edge"]
-    ) -> List[int]:
         raw_indices = self._llm.get_relevant_edges(
             edges_text, prev_sentences_text, None
         )
-        valid = []
+
+        valid_indices = []
         for idx in raw_indices:
             try:
                 i = int(idx)
-            except ValueError:
+            except Exception:
                 continue
             if 1 <= i <= len(edges):
-                valid.append(i)
-        return valid[: self._nr_relevant_edges]
+                valid_indices.append(i)
+
+        valid_indices = valid_indices[: self._nr_relevant_edges]
+
+        active_node_set = set(active_nodes)
+
+        if not valid_indices:
+            selected = set()
+            for idx, edge in enumerate(edges, start=1):
+                if (
+                    edge in newly_added_edges
+                    or edge.source_node in active_node_set
+                    or edge.dest_node in active_node_set
+                ):
+                    selected.add(idx)
+        else:
+            selected = set(valid_indices)
+            for i in selected:
+                edge = edges[i - 1]
+                edge.visibility_score = self._edge_visibility
+                if not edge.is_property_edge():
+                    continue
+                if self._record_edge_fn:
+                    self._record_edge_fn(edge, self._current_sentence_index)
+
+        for idx, edge in enumerate(edges, start=1):
+            if idx in selected or edge in newly_added_edges:
+                if edge.is_property_edge():
+                    continue
+                edge.mark_as_reactivated(reset_score=False)
+                edge.visibility_score = self._edge_visibility
+                if self._record_edge_fn and (
+                    edge.is_asserted() or edge.is_reactivated()
+                ):
+                    self._record_edge_fn(edge, self._current_sentence_index)
+            else:
+                edge.reduce_visibility()
 
     def _fallback_edges(
         self,

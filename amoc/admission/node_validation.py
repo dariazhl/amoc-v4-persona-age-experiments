@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from amoc.core.graph import Graph
 
 
-class ProvenanceValidation:
+class NodeValidation:
     def __init__(self, graph_ref: "Graph"):
         self._graph = graph_ref
 

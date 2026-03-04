@@ -191,13 +191,13 @@ class AMoCv4:
             append_record_fn=self._amoc_matrix_records.append,
         )
 
-    def infer_edges_to_recently_deactivated_wrapper(
+    def link_to_recently_faded_nodes_wrapper(
         self,
         current_sentence_nodes: List[Node],
         current_sentence_words: List[str],
         current_text: str,
     ) -> List[Edge]:
-        return self._edge_ops.infer_edges_to_recently_deactivated(
+        return self._edge_ops.link_to_recently_faded_nodes(
             current_sentence_nodes=current_sentence_nodes,
             current_sentence_words=current_sentence_words,
             current_text=current_text,
@@ -205,7 +205,7 @@ class AMoCv4:
             enforce_attachment=self.ENFORCE_ATTACHMENT_CONSTRAINT,
         )
 
-    def passes_attachment_constraint_wrapper(
+    def is_attachable_wrapper(
         self,
         subject: str,
         obj: str,
@@ -215,7 +215,7 @@ class AMoCv4:
         graph_active_edge_nodes: Optional[set[Node]] = None,
         allow_inference_bridge: bool = False,
     ) -> bool:
-        return self._node_ops.passes_attachment_constraint(
+        return self._node_ops.is_attachable(
             subject=subject,
             obj=obj,
             current_sentence_words=current_sentence_words,
@@ -811,7 +811,7 @@ class AMoCv4:
         node_source: NodeSource,
         create_node: bool,
     ) -> Optional[Node]:
-        return self._node_ops.resolve_node_from_sentence_text(
+        return self._node_ops.get_or_create_node_from_text(
             text=text,
             curr_sentences_nodes=curr_sentences_nodes,
             curr_sentences_words=curr_sentences_words,
@@ -828,7 +828,7 @@ class AMoCv4:
         node_source: NodeSource,
         create_node: bool,
     ) -> Optional[Node]:
-        return self._node_ops.resolve_node_from_relationship_text(
+        return self._node_ops.get_or_create_node_from_relationship(
             text=text,
             graph_active_nodes=graph_active_nodes,
             curr_sentences_nodes=curr_sentences_nodes,
@@ -838,7 +838,7 @@ class AMoCv4:
         )
 
     def extract_phrase_level_concepts_wrapper(self, sent):
-        return self._node_ops.get_phrase_level_concepts(
+        return self._node_ops.extract_main_nouns(
             sent=sent,
             admit_node_fn=lambda lemma, node_type, provenance, sent=None: self._node_ops.admit_node(
                 lemma=lemma,
@@ -853,7 +853,7 @@ class AMoCv4:
         previous_sentences: List[Span],
         create_unexistent_nodes: bool = True,
     ) -> Tuple[List[Node], List[str]]:
-        return self._node_ops.extract_sentence_text_based_nodes(
+        return self._node_ops.extract_explicit_nodes(
             previous_sentences=previous_sentences,
             current_sentence_index=self._current_sentence_index,
             create_unexistent_nodes=create_unexistent_nodes,

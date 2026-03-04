@@ -88,11 +88,11 @@ class Edge:
         if reset_score:
             self.activation_score = max(self.activation_score, 1)
 
-    def mark_as_asserted(self, reset_score: bool = True) -> None:
+    def mark_as_current_sentence(self, reset_score: bool = True) -> None:
         self.active = True
         self.asserted_this_sentence = True
         self.reactivated_this_sentence = False
-        self.activation_role = "asserted"
+        self.activation_role = "current_sentence"
         if reset_score:
             self.activation_score = DEFAULT_ACTIVATION_SCORE
 
@@ -144,7 +144,7 @@ class Edge:
     def __str__(self) -> str:
         if self.active:
             if self.asserted_this_sentence:
-                status = "asserted"
+                status = "current_sentence"
             elif self.reactivated_this_sentence:
                 status = "reactivated"
             else:

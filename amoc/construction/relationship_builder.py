@@ -25,9 +25,9 @@ class RelationshipGraphBuilder:
         self._normalize_endpoint_text_fn = None
         self._normalize_edge_label_fn = None
         self._is_valid_relation_label_fn = None
-        self._validate_node_provenance_fn = None
+        self._is_node_allowed_fn = None
         self._admit_node_fn = None
-        self.passes_attachment_constraint_wrapper_fn = None
+        self.is_attachable_wrapper_fn = None
         self._canonicalize_edge_direction_fn = None
         self._canonicalize_and_classify_node_text_fn = None
         self._classify_relation_fn = None
@@ -47,9 +47,9 @@ class RelationshipGraphBuilder:
         normalize_endpoint_text_fn,
         normalize_edge_label_fn,
         is_valid_relation_label_fn,
-        validate_node_provenance_fn,
+        is_node_allowed_fn,
         admit_node_fn,
-        passes_attachment_constraint_fn,
+        is_attachable_fn,
         canonicalize_edge_direction_fn,
         canonicalize_and_classify_node_text_fn,
         classify_relation_fn,
@@ -63,9 +63,9 @@ class RelationshipGraphBuilder:
         self._normalize_endpoint_text_fn = normalize_endpoint_text_fn
         self._normalize_edge_label_fn = normalize_edge_label_fn
         self._is_valid_relation_label_fn = is_valid_relation_label_fn
-        self._validate_node_provenance_fn = validate_node_provenance_fn
+        self._is_node_allowed_fn = is_node_allowed_fn
         self._admit_node_fn = admit_node_fn
-        self.passes_attachment_constraint_wrapper_fn = passes_attachment_constraint_fn
+        self.is_attachable_wrapper_fn = is_attachable_fn
         self._canonicalize_edge_direction_fn = canonicalize_edge_direction_fn
         self._canonicalize_and_classify_node_text_fn = (
             canonicalize_and_classify_node_text_fn
@@ -86,10 +86,8 @@ class RelationshipGraphBuilder:
             normalize_endpoint_text_fn=core._normalize_endpoint_text,
             normalize_edge_label_fn=core._normalize_edge_label,
             is_valid_relation_label_fn=core._is_valid_relation_label,
-            validate_node_provenance_fn=lambda l, t=None, allow_bootstrap=False: (
-                core._node_ops.validate_node_provenance(
-                    l, t, allow_bootstrap=allow_bootstrap
-                )
+            is_node_allowed_fn=lambda l, t=None, bypass=False: (
+                core._node_ops.is_node_allowed(l, t, bypass=bypass)
             ),
             admit_node_fn=lambda l, nt, p, s=None: core._node_ops.admit_node(
                 lemma=l,
@@ -97,7 +95,7 @@ class RelationshipGraphBuilder:
                 provenance=p,
                 sent=s,
             ),
-            passes_attachment_constraint_fn=core.passes_attachment_constraint_wrapper,
+            is_attachable_fn=core.is_attachable_wrapper,
             canonicalize_edge_direction_fn=core._canonicalize_edge_direction,
             canonicalize_and_classify_node_text_fn=lambda t: (
                 core._text_filter_ops.canonicalize_and_classify_node_text(t)
@@ -160,7 +158,7 @@ class RelationshipGraphBuilder:
 
             active_nodes_set = set(self._get_nodes_with_active_edges_fn())
 
-            attachment_ok = self.passes_attachment_constraint_wrapper_fn(
+            attachment_ok = self.is_attachable_wrapper_fn(
                 relationship[0],
                 relationship[2],
                 current_sentence_text_based_words,
@@ -214,9 +212,9 @@ class RelationshipGraphBuilder:
                 continue
 
             if source_node is None:
-                if not self._validate_node_provenance_fn(
+                if not self._is_node_allowed_fn(
                     subj,
-                    allow_bootstrap=(
+                    bypass=(
                         dest_node is not None
                         and (
                             dest_node in explicit_nodes
@@ -240,14 +238,14 @@ class RelationshipGraphBuilder:
                 )
 
             if dest_node is None:
-                allow_bootstrap = source_node is not None and (
+                bypass = source_node is not None and (
                     source_node in explicit_nodes
                     or source_node in self._get_nodes_with_active_edges_fn()
                 )
 
-                if not self._validate_node_provenance_fn(
+                if not self._is_node_allowed_fn(
                     obj,
-                    allow_bootstrap=allow_bootstrap,
+                    bypass=bypass,
                 ):
                     continue
 
@@ -315,7 +313,7 @@ class RelationshipGraphBuilder:
             if norm_subj is None or norm_obj is None:
                 continue
 
-            if not self.passes_attachment_constraint_wrapper_fn(
+            if not self.is_attachable_wrapper_fn(
                 relationship[0],
                 relationship[2],
                 curr_sentences_words,
@@ -360,11 +358,9 @@ class RelationshipGraphBuilder:
                 continue
 
             if source_node is None:
-                if not self._validate_node_provenance_fn(
+                if not self._is_node_allowed_fn(
                     subj,
-                    allow_bootstrap=(
-                        dest_node is not None and dest_node in explicit_nodes
-                    ),
+                    bypass=(dest_node is not None and dest_node in explicit_nodes),
                 ):
                     continue
 
@@ -377,9 +373,7 @@ class RelationshipGraphBuilder:
                 )
 
             if dest_node is None:
-                if not self._validate_node_provenance_fn(
-                    obj, allow_bootstrap=(source_node is not None)
-                ):
+                if not self._is_node_allowed_fn(obj, bypass=(source_node is not None)):
                     continue
 
                 dest_node = self.graph.add_or_get_node(

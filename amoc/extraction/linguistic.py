@@ -82,12 +82,14 @@ class LinguisticProcessing:
 
         sentence_node_map = {tuple(node.lemmas): node for node in sentence_nodes}
 
-        def get_node_by_lemma(lemma: str):
+        def get_node(lemma: str):
             if not lemma:
                 return None
-            from_sentence = sentence_node_map.get((lemma,))
-            if from_sentence is not None:
-                return from_sentence
+            # Check sentence nodes first
+            node = sentence_node_map.get((lemma,))
+            if node is not None:
+                return node
+            # Fall back to graph
             return self._graph.get_node([lemma])
 
         def assert_edge(src, dst, label):
@@ -99,14 +101,14 @@ class LinguisticProcessing:
                 created_at_sentence=self._current_sentence_index,
             )
             if edge:
-                edge.mark_as_asserted(reset_score=True)
+                edge.mark_as_current_sentence(reset_score=True)
 
         for candidate in extract_deterministic_relation_candidates(sent):
-            subj_node = get_node_by_lemma(candidate.subject_lemma)
+            subj_node = get_node(candidate.subject_lemma)
             if subj_node is None:
                 continue
 
-            obj_node = get_node_by_lemma(candidate.object_lemma)
+            obj_node = get_node(candidate.object_lemma)
             if obj_node is None and candidate.object_is_property:
                 obj_node = self._graph.add_or_get_node(
                     [candidate.object_lemma],

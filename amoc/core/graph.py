@@ -4,7 +4,7 @@ from amoc.core.node import NodeType, NodeSource, NodeProvenance
 from amoc.core.edge import Edge
 from amoc.memory.activation import NodeActivationEngine
 from amoc.connectivity.repair import ConnectivityRepair
-from amoc.admission.provenance import ProvenanceValidation
+from amoc.admission.node_validation import NodeValidation
 from typing import List, Set, Optional, Tuple, Callable
 import networkx as nx
 
@@ -21,7 +21,7 @@ class Graph:
 
         self._activation_ops = NodeActivationEngine(self)
         self._stability_ops = ConnectivityRepair(self)
-        self._provenance_ops = ProvenanceValidation(self)
+        self._provenance_ops = NodeValidation(self)
 
     def set_current_sentence_lemmas(self, lemmas: Set[str]) -> None:
         self._current_sentence_lemmas = {l.lower() for l in lemmas}

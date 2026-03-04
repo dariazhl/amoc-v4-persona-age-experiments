@@ -32,19 +32,19 @@ class SentenceGraphBuilder:
         self._normalize_endpoint_text_fn = None
         self._normalize_edge_label_fn = None
         self._is_valid_relation_label_fn = None
-        self.passes_attachment_constraint_wrapper_fn = None
+        self.is_attachable_wrapper_fn = None
         self._canonicalize_edge_direction_fn = None
         self._classify_relation_fn = None
         self.add_edge_wrapper_fn = None
         self._get_nodes_with_active_edges_fn = None
         self._append_adjectival_hints_fn = None
         self._extract_deterministic_structure_fn = None
-        self.infer_edges_to_recently_deactivated_wrapper_fn = None
+        self.link_to_recently_faded_nodes_wrapper_fn = None
         self._propagate_activation_from_edges_fn = None
         self._restrict_active_to_current_explicit_fn = None
         self._get_node_from_new_relationship_fn = None
         self._get_node_from_text_fn = None
-        self._get_phrase_level_concepts_fn = None
+        self._extract_main_nouns_fn = None
         self._get_sentences_text_based_nodes_fn = None
         self._infer_new_relationships_fn = None
         self._add_inferred_relationships_to_graph_fn = None
@@ -65,19 +65,19 @@ class SentenceGraphBuilder:
         normalize_endpoint_text_fn,
         normalize_edge_label_fn,
         is_valid_relation_label_fn,
-        passes_attachment_constraint_fn,
+        is_attachable_fn,
         canonicalize_edge_direction_fn,
         classify_relation_fn,
         add_edge_fn,
         get_nodes_with_active_edges_fn,
         append_adjectival_hints_fn,
         extract_deterministic_structure_fn,
-        infer_edges_to_recently_deactivated_fn,
+        link_to_recently_faded_nodes_fn,
         propagate_activation_from_edges_fn,
         restrict_active_to_current_explicit_fn,
         get_node_from_new_relationship_fn,
         get_node_from_text_fn,
-        get_phrase_level_concepts_fn,
+        extract_main_nouns_fn,
         get_sentences_text_based_nodes_fn,
         infer_new_relationships_fn,
         add_inferred_relationships_to_graph_fn,
@@ -89,23 +89,21 @@ class SentenceGraphBuilder:
         self._normalize_endpoint_text_fn = normalize_endpoint_text_fn
         self._normalize_edge_label_fn = normalize_edge_label_fn
         self._is_valid_relation_label_fn = is_valid_relation_label_fn
-        self.passes_attachment_constraint_wrapper_fn = passes_attachment_constraint_fn
+        self.is_attachable_wrapper_fn = is_attachable_fn
         self._canonicalize_edge_direction_fn = canonicalize_edge_direction_fn
         self._classify_relation_fn = classify_relation_fn
         self.add_edge_wrapper_fn = add_edge_fn
         self._get_nodes_with_active_edges_fn = get_nodes_with_active_edges_fn
         self._append_adjectival_hints_fn = append_adjectival_hints_fn
         self._extract_deterministic_structure_fn = extract_deterministic_structure_fn
-        self.infer_edges_to_recently_deactivated_wrapper_fn = (
-            infer_edges_to_recently_deactivated_fn
-        )
+        self.link_to_recently_faded_nodes_wrapper_fn = link_to_recently_faded_nodes_fn
         self._propagate_activation_from_edges_fn = propagate_activation_from_edges_fn
         self._restrict_active_to_current_explicit_fn = (
             restrict_active_to_current_explicit_fn
         )
         self._get_node_from_new_relationship_fn = get_node_from_new_relationship_fn
         self._get_node_from_text_fn = get_node_from_text_fn
-        self._get_phrase_level_concepts_fn = get_phrase_level_concepts_fn
+        self._extract_main_nouns_fn = extract_main_nouns_fn
         self._get_sentences_text_based_nodes_fn = get_sentences_text_based_nodes_fn
         self._infer_new_relationships_fn = infer_new_relationships_fn
         self._add_inferred_relationships_to_graph_fn = (
@@ -136,7 +134,7 @@ class SentenceGraphBuilder:
             normalize_endpoint_text_fn=core._normalize_endpoint_text,
             normalize_edge_label_fn=core._normalize_edge_label,
             is_valid_relation_label_fn=core._is_valid_relation_label,
-            passes_attachment_constraint_fn=core.passes_attachment_constraint_wrapper,
+            is_attachable_fn=core.is_attachable_wrapper,
             canonicalize_edge_direction_fn=core._canonicalize_edge_direction,
             classify_relation_fn=core._classify_relation,
             add_edge_fn=core.add_edge_wrapper,
@@ -150,7 +148,7 @@ class SentenceGraphBuilder:
                 ),
                 core._linguistic_ops.extract_deterministic_structure(s, n, w),
             )[-1],
-            infer_edges_to_recently_deactivated_fn=core.infer_edges_to_recently_deactivated_wrapper,
+            link_to_recently_faded_nodes_fn=core.link_to_recently_faded_nodes_wrapper,
             propagate_activation_from_edges_fn=lambda: (
                 core._activation_ops.propagate_activation_from_edges()
             ),
@@ -159,7 +157,7 @@ class SentenceGraphBuilder:
             ),
             get_node_from_new_relationship_fn=core.resolve_node_from_new_relationship_wrapper,
             get_node_from_text_fn=core.resolve_node_from_text_wrapper,
-            get_phrase_level_concepts_fn=core.extract_phrase_level_concepts_wrapper,
+            extract_main_nouns_fn=core.extract_phrase_level_concepts_wrapper,
             get_sentences_text_based_nodes_fn=core._get_sentences_nodes,
             infer_new_relationships_fn=core.infer_new_relationships_for_sentence_wrapper,
             add_inferred_relationships_to_graph_fn=core.add_inferred_relationships_to_graph_wrapper,
@@ -176,13 +174,13 @@ class SentenceGraphBuilder:
             persona=core.persona,
         )
 
-    def _build_nodes_from_text(self, nodes, words) -> str:
+    def build_nodes_from_text(self, nodes, words) -> str:
         result = ""
         for i, node in enumerate(nodes):
             result += f" - ({words[i]}, {node.node_type})\n"
         return result
 
-    def _add_relationship_from_tuple(
+    def add_relationship_from_tuple(
         self,
         rel_tuple,
         current_nodes,
@@ -201,7 +199,7 @@ class SentenceGraphBuilder:
         if norm_subj is None or norm_obj is None:
             return False
 
-        if not self.passes_attachment_constraint_wrapper_fn(
+        if not self.is_attachable_wrapper_fn(
             norm_subj,
             norm_obj,
             current_words,
@@ -263,14 +261,14 @@ class SentenceGraphBuilder:
 
         self._extract_deterministic_structure_fn(sent, current_nodes, current_words)
 
-        nodes_from_text = self._build_nodes_from_text(current_nodes, current_words)
+        nodes_from_text = self.build_nodes_from_text(current_nodes, current_words)
 
         relationships = self.llm.get_new_relationships_first_sentence(
             nodes_from_text, sent.text, self.persona
         )
 
         for rel in relationships:
-            self._add_relationship_from_tuple(rel, current_nodes, current_words)
+            self.add_relationship_from_tuple(rel, current_nodes, current_words)
 
         for node in explicit_nodes:
             degree = sum(
@@ -281,12 +279,12 @@ class SentenceGraphBuilder:
             if degree > 0:
                 continue
 
-            nodes_from_text = self._build_nodes_from_text(current_nodes, current_words)
+            nodes_from_text = self.build_nodes_from_text(current_nodes, current_words)
             extra_relationships = self.llm.get_new_relationships_first_sentence(
                 nodes_from_text, sent.text, self.persona
             )
             for rel in extra_relationships:
-                self._add_relationship_from_tuple(rel, current_nodes, current_words)
+                self.add_relationship_from_tuple(rel, current_nodes, current_words)
 
     def handle_first_sentence(
         self,
@@ -346,7 +344,7 @@ class SentenceGraphBuilder:
 
         if not any(edge.active for edge in self.graph.edges):
             for edge in self.graph.edges:
-                edge.mark_as_asserted(reset_score=True)
+                edge.mark_as_current_sentence(reset_score=True)
 
         self._restrict_active_to_current_explicit_fn(
             list(explicit_nodes_current_sentence)
@@ -418,7 +416,7 @@ class SentenceGraphBuilder:
         if len(prev_sentences) > self.context_length:
             prev_sentences.pop(0)
 
-        phrase_nodes = self._get_phrase_level_concepts_fn(current_sentence)
+        phrase_nodes = self._extract_main_nouns_fn(current_sentence)
 
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
             self._get_sentences_text_based_nodes_fn(
@@ -546,8 +544,9 @@ class SentenceGraphBuilder:
             added_edges,
         )
 
+        # trouble
         if self.ENFORCE_ATTACHMENT_CONSTRAINT:
-            targeted_edges = self.infer_edges_to_recently_deactivated_wrapper_fn(
+            targeted_edges = self.link_to_recently_faded_nodes_wrapper_fn(
                 current_sentence_text_based_nodes,
                 current_sentence_text_based_words,
                 current_all_text,
@@ -615,52 +614,79 @@ class SentenceGraphBuilder:
         self,
         explicit_nodes_current_sentence: set,
     ) -> None:
-        if len(explicit_nodes_current_sentence) != 1:
-            return
+        if len(explicit_nodes_current_sentence) == 1:
+            node = next(iter(explicit_nodes_current_sentence))
 
-        node = next(iter(explicit_nodes_current_sentence))
-        active_nodes = set(self._get_nodes_with_active_edges_fn())
-        if node in active_nodes or not active_nodes:
-            return
+            active_nodes = self._get_nodes_with_active_edges_fn()
+            if node not in active_nodes and active_nodes:
+                anchor = min(
+                    active_nodes,
+                    key=lambda n: n.get_text_representer(),
+                )
 
-        anchor = min(active_nodes, key=lambda n: n.get_text_representer())
-        if anchor == node:
-            return
-
-        edge = self.add_edge_wrapper_fn(
-            anchor,
-            node,
-            "relates_to",
-            self.edge_visibility,
-        )
-        if edge:
-            edge.asserted_this_sentence = False
-            edge.reactivated_this_sentence = False
+                if anchor != node:
+                    edge = self.add_edge_wrapper_fn(
+                        anchor,
+                        node,
+                        "appears",
+                        self.edge_visibility,
+                    )
+                    if edge:
+                        edge.mark_as_current_sentence(reset_score=True)
 
     def _ensure_explicit_nodes_have_edges(
         self,
         explicit_nodes_current_sentence: set,
         current_sentence_text: str,
     ) -> None:
-        if not explicit_nodes_current_sentence:
-            return
+        active_nodes = self._get_nodes_with_active_edges_fn()
 
         for node in explicit_nodes_current_sentence:
-            active_nodes = set(self._get_nodes_with_active_edges_fn())
-            if node in active_nodes:
-                continue
-            anchor = next((n for n in active_nodes if n != node), None)
-            if anchor is None:
-                continue
-            edge = self.add_edge_wrapper_fn(
-                anchor,
-                node,
-                "relates_to",
-                self.edge_visibility,
-            )
-            if edge:
-                edge.asserted_this_sentence = False
-                edge.reactivated_this_sentence = False
+            if node not in active_nodes:
+                repair_relationships = self.llm.get_new_relationships(
+                    node.get_text_representer(),
+                    self.graph.get_nodes_str(self.graph.nodes),
+                    self.graph.get_edges_str(self.graph.nodes)[0],
+                    current_sentence_text,
+                    self.persona,
+                )
+
+                for relationship in repair_relationships:
+                    if (
+                        isinstance(relationship, (list, tuple))
+                        and len(relationship) == 3
+                    ):
+                        subj, rel, obj = relationship
+
+                        source_node = self._get_node_from_new_relationship_fn(
+                            subj,
+                            self.graph.nodes,
+                            [],
+                            [],
+                            node_source=NodeSource.TEXT_BASED,
+                            create_node=False,
+                        )
+
+                        dest_node = self._get_node_from_new_relationship_fn(
+                            obj,
+                            self.graph.nodes,
+                            [],
+                            [],
+                            node_source=NodeSource.TEXT_BASED,
+                            create_node=False,
+                        )
+
+                        if source_node and dest_node:
+                            edge = self.add_edge_wrapper_fn(
+                                source_node,
+                                dest_node,
+                                rel,
+                                self.edge_visibility,
+                            )
+
+                            if edge:
+                                edge.mark_as_current_sentence(reset_score=True)
+                                break
 
     def _handle_empty_projection_retry(
         self,
@@ -727,7 +753,7 @@ class SentenceGraphBuilder:
             if not subj or not obj or subj == obj:
                 continue
 
-            if not self.passes_attachment_constraint_wrapper_fn(
+            if not self.is_attachable_wrapper_fn(
                 subj,
                 obj,
                 current_sentence_text_based_words,
@@ -824,6 +850,7 @@ class SentenceGraphBuilder:
 
         return resolved_text, sents[0]
 
+    # decay first, then connect
     def apply_post_sentence_processing(
         self,
         explicit_nodes: set,

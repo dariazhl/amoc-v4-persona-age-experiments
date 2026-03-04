@@ -121,12 +121,12 @@ class NodeAdmission:
 
         return True
 
-    def validate_node_provenance(
+    def is_node_allowed(
         self,
         lemma: str,
         current_sentence_text: Optional[str] = None,
         *,
-        allow_bootstrap: bool = False,
+        bypass: bool = False,
     ) -> bool:
         lemma_lower = lemma.lower()
 
@@ -148,12 +148,12 @@ class NodeAdmission:
         if existing_node is not None:
             return True
 
-        if allow_bootstrap:
+        if bypass:
             return True
 
         return False
 
-    def resolve_node_from_sentence_text(
+    def get_or_create_node_from_text(
         self,
         text: str,
         curr_sentences_nodes: List["Node"],
@@ -181,7 +181,7 @@ class NodeAdmission:
 
         return self._graph.add_or_get_node(lemmas, canon, inferred_type, node_source)
 
-    def resolve_node_from_relationship_text(
+    def get_or_create_node_from_relationship(
         self,
         text: str,
         graph_active_nodes: List["Node"],
@@ -245,7 +245,7 @@ class NodeAdmission:
     def node_token_for_matrix(self, node: "Node") -> str:
         return (node.get_text_representer() or "").strip().lower()
 
-    def passes_attachment_constraint(
+    def is_attachable(
         self,
         subject: str,
         obj: str,
@@ -284,7 +284,7 @@ class NodeAdmission:
         # Otherwise reject
         return False
 
-    def extract_sentence_text_based_nodes(
+    def extract_explicit_nodes(
         self,
         previous_sentences: List["Span"],
         current_sentence_index: int,
@@ -354,7 +354,7 @@ class NodeAdmission:
 
         return unique_nodes, unique_words
 
-    def get_phrase_level_concepts(
+    def extract_main_nouns(
         self,
         sent: "Span",
         admit_node_fn: callable,

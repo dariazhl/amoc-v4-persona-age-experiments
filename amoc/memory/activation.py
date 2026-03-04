@@ -32,7 +32,7 @@ class NodeActivationEngine:
                     edge_visibility, other_edge.visibility_score + 1
                 )
                 other_edge.active = True
-                other_edge.mark_as_asserted(reset_score=False)
+                other_edge.mark_as_current_sentence(reset_score=False)
                 return other_edge
 
         return None

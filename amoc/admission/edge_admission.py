@@ -186,7 +186,7 @@ class EdgeAdmission:
                     existing_edge.label = label
                     existing_edge.visibility_score = edge_forget
                     existing_edge.created_at_sentence = use_sentence
-                    existing_edge.mark_as_asserted(reset_score=True)
+                    existing_edge.mark_as_current_sentence(reset_score=True)
 
                     if self._debug:
                         logging.debug(
@@ -232,7 +232,7 @@ class EdgeAdmission:
 
         if edge:
             if use_sentence == self._current_sentence_index:
-                edge.mark_as_asserted(reset_score=True)
+                edge.mark_as_current_sentence(reset_score=True)
 
             trip_id = (
                 edge.source_node.get_text_representer(),
@@ -374,7 +374,8 @@ class EdgeAdmission:
                 if active_graph.has_edge(u, v, key=edge_key):
                     active_graph.remove_edge(u, v, key=edge_key)
 
-    def infer_edges_to_recently_deactivated(
+    # trouble
+    def link_to_recently_faded_nodes(
         self,
         current_sentence_nodes: List["Node"],
         current_sentence_words: List[str],
