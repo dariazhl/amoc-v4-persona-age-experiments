@@ -22,9 +22,19 @@ if "amoc.graph" not in sys.modules:
     amoc_graph = types.ModuleType("amoc.graph")
     sys.modules["amoc.graph"] = amoc_graph
     sys.modules["amoc"].graph = amoc_graph
+if "amoc.graph_algorithms" not in sys.modules:
+    amoc_graph_algorithms = types.ModuleType("amoc.graph_algorithms")
+    sys.modules["amoc.graph_algorithms"] = amoc_graph_algorithms
+    sys.modules["amoc"].graph_algorithms = amoc_graph_algorithms
+if "amoc.connectivity" not in sys.modules:
+    amoc_connectivity = types.ModuleType("amoc.connectivity")
+    sys.modules["amoc.connectivity"] = amoc_connectivity
+    sys.modules["amoc"].connectivity = amoc_connectivity
 
 # Load modules in dependency order (bottom-up)
 base_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/graph"
+algorithms_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/graph_algorithms"
+connectivity_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/connectivity"
 
 # 1. Load leaf modules first (no internal amoc dependencies)
 node_module = load_module_directly("amoc.graph.node", f"{base_path}/node.py")
@@ -32,13 +42,16 @@ edge_module = load_module_directly("amoc.graph.edge", f"{base_path}/edge.py")
 
 # 2. Load ops modules (depend on node/edge via TYPE_CHECKING only)
 activation_ops_module = load_module_directly(
-    "amoc.graph.activation_ops", f"{base_path}/activation_ops.py"
+    "amoc.graph_algorithms.node_activation_engine",
+    f"{algorithms_path}/node_activation_engine.py",
 )
 stability_ops_module = load_module_directly(
-    "amoc.graph.stability_ops", f"{base_path}/stability_ops.py"
+    "amoc.connectivity.connectivity_repair",
+    f"{connectivity_path}/connectivity_repair.py",
 )
 provenance_module = load_module_directly(
-    "amoc.graph.provenance_ops", f"{base_path}/provenance_ops.py"
+    "amoc.graph_algorithms.provenance_validation",
+    f"{algorithms_path}/provenance_validation.py",
 )
 
 # 3. Finally load graph module (imports all the above)

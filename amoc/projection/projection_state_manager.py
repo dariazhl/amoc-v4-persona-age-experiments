@@ -2,10 +2,10 @@ import logging
 from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
 from amoc.graph.node import Node, NodeSource
-from amoc.graph.per_sentence_graph import PerSentenceGraph
+from amoc.graph_views.per_sentence_graph import PerSentenceGraph
 
 
-class ProjectionBookkeepingOps:
+class ProjectionStateManager:
 
     def __init__(
         self,

@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from amoc.graph.edge import Edge
 
 
-class StabilityOps:
+class ConnectivityRepair:
     def __init__(self, graph_ref: "Graph"):
         self._graph = graph_ref
 
@@ -81,19 +81,13 @@ class StabilityOps:
 
         for i, comp_a in enumerate(components):
             for comp_b in components[i + 1 :]:
-                can_connect = False
-                for node_a in comp_a:
-                    if node_a not in G_cumulative:
-                        continue
-                    for node_b in comp_b:
-                        if node_b not in G_cumulative:
-                            continue
-                        if nx.has_path(G_cumulative, node_a, node_b):
-                            can_connect = True
-                            break
-                    if can_connect:
-                        break
-                if not can_connect:
+                if not any(
+                    node_a in G_cumulative
+                    and node_b in G_cumulative
+                    and nx.has_path(G_cumulative, node_a, node_b)
+                    for node_a in comp_a
+                    for node_b in comp_b
+                ):
                     return False
         return True
 
@@ -110,7 +104,7 @@ class StabilityOps:
 
         components = sorted(components, key=len, reverse=True)
         focus_comp = set(components[0])
-        reactivated: Set["Edge"] = set()
+        reactivated = set()
 
         for comp in components[1:]:
             best_path = None
@@ -162,13 +156,12 @@ class StabilityOps:
 
         # deterministic repair via cumulative edge reactivation
         if allow_reactivation:
-            reactivated = self.reconnect_via_cumulative(required_nodes)
+            self.reconnect_via_cumulative(required_nodes)
 
         active_connected = self.compute_active_connectivity(required_nodes)
 
         if active_connected and enforce_cumulative:
-            cumulative_connected = self.compute_cumulative_connectivity()
-            if not cumulative_connected:
+            if not self.compute_cumulative_connectivity():
                 logging.warning("Active connected but cumulative fragmented")
 
         return active_connected
@@ -177,8 +170,7 @@ class StabilityOps:
         self,
         explicit_nodes: set,
     ) -> None:
-        # connectivity for cumulative graph
-        active_nodes, active_edges = self._graph.get_active_subgraph()
+        active_nodes, active_edges = self._graph.get_active_subgraph_wrapper()
 
         active_empty = len(active_nodes) == 0
         explicit_active = any(node.active for node in explicit_nodes)
@@ -189,14 +181,11 @@ class StabilityOps:
 
         if active_empty:
             visible_edges = {e for e in self._graph.edges if e.visibility_score > 0}
-
             visible_nodes = {e.source_node for e in visible_edges} | {
                 e.dest_node for e in visible_edges
             }
-
             new_nodes = set(visible_nodes)
             new_edges = set(visible_edges)
-
         else:
             new_nodes = set(active_nodes)
             new_edges = set(active_edges)

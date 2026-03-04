@@ -38,10 +38,10 @@ class NodeActivationEngine:
         return None
 
     def get_active_subgraph(self) -> Tuple[Set["Node"], Set["Edge"]]:
-        active_edges: Set["Edge"] = {
+        active_edges = {
             e for e in self._graph.edges if e.active and e.visibility_score > 0
         }
-        active_nodes: Set["Node"] = {e.source_node for e in active_edges} | {
+        active_nodes = {e.source_node for e in active_edges} | {
             e.dest_node for e in active_edges
         }
         return active_nodes, active_edges
@@ -60,14 +60,13 @@ class NodeActivationEngine:
             return set()
 
         concept_seeds = {n for n in explicit_nodes if n.node_type != NodeType.PROPERTY}
-
         if not concept_seeds:
             return set()
 
-        reachable_nodes: Dict["Node", int] = {n: 0 for n in concept_seeds}
-        queue: deque = deque(concept_seeds)
-        visited_edges: Set["Edge"] = set()
-        candidate_edges: list[tuple[int, "Edge"]] = []
+        reachable_nodes = {n: 0 for n in concept_seeds}
+        queue = deque(concept_seeds)
+        visited_edges = set()
+        candidates = []
 
         while queue:
             node = queue.popleft()
@@ -81,15 +80,13 @@ class NodeActivationEngine:
                     continue
                 if edge.forced_connection:
                     continue
-                visited_edges.add(edge)
-
                 if edge.visibility_score <= 0:
                     continue
-
                 if edge.active:
                     continue
 
-                candidate_edges.append((dist, edge))
+                visited_edges.add(edge)
+                candidates.append((dist, edge))
 
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
@@ -98,10 +95,10 @@ class NodeActivationEngine:
                     reachable_nodes[neighbor] = dist + 1
                     queue.append(neighbor)
 
-        candidate_edges.sort(key=lambda x: x[0])
-        reactivated: Set["Edge"] = set()
+        candidates.sort(key=lambda x: x[0])
+        reactivated = set()
 
-        for dist, edge in candidate_edges[: self.MAX_REACTIVATION_COUNT]:
+        for dist, edge in candidates[: self.MAX_REACTIVATION_COUNT]:
             edge.mark_as_reactivated(reset_score=False)
             reactivated.add(edge)
 
@@ -118,48 +115,45 @@ class NodeActivationEngine:
         direction: str = "both",
     ) -> Dict["Node", int]:
         distances = {}
-        concept_seeds = [
-            node for node in activated_nodes if node.node_type != NodeType.PROPERTY
-        ]
+        queue = deque(
+            (node, 0) for node in activated_nodes if node.node_type != NodeType.PROPERTY
+        )
 
-        queue = deque([(node, 0) for node in concept_seeds])
         while queue:
             curr_node, curr_distance = queue.popleft()
-            if curr_node not in distances:
-                distances[curr_node] = curr_distance
-                for edge in curr_node.edges:
-                    if not edge.active:
-                        continue
+            if curr_node in distances:
+                continue
+            distances[curr_node] = curr_distance
+            for edge in curr_node.edges:
+                if not edge.active:
+                    continue
 
-                    next_node = None
-                    if direction == "both":
-                        next_node = (
-                            edge.dest_node
-                            if edge.source_node == curr_node
-                            else edge.source_node
-                        )
-                    elif direction == "outgoing":
-                        if edge.source_node == curr_node:
-                            next_node = edge.dest_node
-                    elif direction == "incoming":
-                        if edge.dest_node == curr_node:
-                            next_node = edge.source_node
+                next_node = None
+                if direction == "both":
+                    next_node = (
+                        edge.dest_node
+                        if edge.source_node == curr_node
+                        else edge.source_node
+                    )
+                elif direction == "outgoing" and edge.source_node == curr_node:
+                    next_node = edge.dest_node
+                elif direction == "incoming" and edge.dest_node == curr_node:
+                    next_node = edge.source_node
 
-                    if next_node is not None:
-                        queue.append((next_node, curr_distance + 1))
+                if next_node is not None:
+                    queue.append((next_node, curr_distance + 1))
         return distances
 
     def set_nodes_score_based_on_distance_from_active_nodes(
         self, activated_nodes: List["Node"]
     ) -> None:
-        distances_to_activated_nodes = self.bfs_from_activated_nodes(activated_nodes)
+        distances = self.bfs_from_activated_nodes(activated_nodes)
 
         for node in self._graph.nodes:
             if node.node_type == NodeType.PROPERTY:
                 continue
-
-            if node in distances_to_activated_nodes:
-                node.score = distances_to_activated_nodes[node]
+            if node in distances:
+                node.score = distances[node]
             else:
                 node.score = min(node.score + 1, 100)
 

@@ -6,7 +6,7 @@ if TYPE_CHECKING:
     from amoc.graph.edge import Edge
 
 
-class PlotFilterOps:
+class PlotFiltering:
     MAX_EDGES_PER_NODE: int = 5
 
     def __init__(self, graph_ref: "Graph"):
@@ -24,18 +24,13 @@ class PlotFilterOps:
         for edge in self._graph.edges:
             if active_only and not edge.active:
                 continue
-
             if exclude_connective and edge.forced_connection:
                 continue
-
             if exclude_inferred and edge.inferred:
                 continue
-
             if exclude_persona_influenced and edge.persona_influenced:
                 continue
-
             plot_edges.append(edge)
-
         return plot_edges
 
     def get_edges_with_degree_cap(
@@ -46,23 +41,19 @@ class PlotFilterOps:
         if max_edges_per_node is None:
             max_edges_per_node = self.MAX_EDGES_PER_NODE
 
-        node_edge_count: Dict["Node", List["Edge"]] = {}
+        incident_edges: Dict["Node", List["Edge"]] = {}
         for edge in edges:
-            if edge.source_node not in node_edge_count:
-                node_edge_count[edge.source_node] = []
-            if edge.dest_node not in node_edge_count:
-                node_edge_count[edge.dest_node] = []
-            node_edge_count[edge.source_node].append(edge)
-            node_edge_count[edge.dest_node].append(edge)
+            incident_edges.setdefault(edge.source_node, []).append(edge)
+            incident_edges.setdefault(edge.dest_node, []).append(edge)
 
         def edge_priority(edge: "Edge") -> Tuple[int, int]:
             forced_score = 1 if edge.forced_connection else 0
             inferred_score = 1 if edge.inferred else 0
             return (forced_score, inferred_score)
 
-        edges_to_keep: Set["Edge"] = set()
+        edges_to_keep = set()
 
-        for node, node_edges in node_edge_count.items():
+        for node, node_edges in incident_edges.items():
             if len(node_edges) <= max_edges_per_node:
                 edges_to_keep.update(node_edges)
             else:
@@ -90,8 +81,7 @@ class PlotFilterOps:
 
         if apply_degree_cap:
             filtered = self.get_edges_with_degree_cap(
-                filtered,
-                max_edges_per_node=max_edges_per_node,
+                filtered, max_edges_per_node=max_edges_per_node
             )
 
         return filtered

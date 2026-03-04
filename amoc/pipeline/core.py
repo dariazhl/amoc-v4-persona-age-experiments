@@ -1,4 +1,3 @@
-import copy
 import logging
 import re
 from typing import List, Tuple, Optional, Iterable
@@ -8,24 +7,9 @@ from spacy.tokens import Span
 
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
 from amoc.graph import Graph, Node, Edge, NodeType, NodeSource
-from amoc.graph.per_sentence_graph import PerSentenceGraph, build_per_sentence_graph
+from amoc.graph_views.per_sentence_graph import PerSentenceGraph, build_per_sentence_graph
 from amoc.llm.vllm_client import VLLMClient
-
-from amoc.pipeline.connectivity_ops import ConnectivityOps
-from amoc.pipeline.text_filter_ops import TextFilterOps
-from amoc.pipeline.triplet_ops import TripletOps
-from amoc.pipeline.edge_ops import EdgeOps
-from amoc.pipeline.node_ops import NodeOps
-from amoc.pipeline.sentence_ops import SentenceOps
-from amoc.pipeline.inference_ops import InferenceOps
-from amoc.pipeline.linguistic_ops import LinguisticOps
-from amoc.pipeline.plot_ops import PlotOps
-from amoc.pipeline.activation_scheduler import ActivationScheduler
-from amoc.pipeline.output_ops import OutputOps
-from amoc.pipeline.sentence_processing_ops import SentenceProcessingOps
-from amoc.pipeline.relationship_graph_ops import RelationshipGraphOps
-from amoc.pipeline.init_ops import InitOps
-from amoc.pipeline.projection_bookkeeping_ops import ProjectionBookkeepingOps
+from amoc.pipeline.wiring import wire_core_dependencies
 
 
 class AMoCv4:
@@ -85,242 +69,49 @@ class AMoCv4:
         self._persona_only_lemmas = {
             tok.lemma_.lower() for tok in persona_doc if tok.is_alpha
         } - self.story_lemmas
-        self._prev_active_nodes_for_plot: set[Node] = set()
-        self._cumulative_deactivated_nodes_for_plot: set[Node] = set()
-        self._viz_positions: dict[str, tuple[float, float]] = {}
-        self._recently_deactivated_nodes_for_inference: set[Node] = set()
-        self._anchor_nodes: set[Node] = set()
-        self._explicit_nodes_current_sentence: set[Node] = set()
-        self._carryover_nodes_current_sentence: set[Node] = set()
+
+        self._prev_active_nodes_for_plot = set()
+        self._cumulative_deactivated_nodes_for_plot = set()
+        self._viz_positions = {}
+        self._recently_deactivated_nodes_for_inference = set()
+        self._anchor_nodes = set()
+        self._explicit_nodes_current_sentence = set()
+        self._carryover_nodes_current_sentence = set()
         self.strict_reactivate_function = strict_reactivate_function
         self.strict_attachament_constraint = strict_attachament_constraint
         self.single_anchor_hub = single_anchor_hub
         self.allow_multi_edges = allow_multi_edges
         self.checkpoint = checkpoint
-        self._current_sentence_text: str = ""
-        self._current_sentence_index: Optional[int] = None
+        self._current_sentence_text = ""
+        self._current_sentence_index = None
         self.cumulative_graph = nx.MultiDiGraph()
         self.active_graph = nx.MultiDiGraph()
-        self._triplet_intro: dict[tuple[str, str, str], int] = {}
-        self._cumulative_triplet_records: list[dict] = []
-        self._fixed_hub = None
-        self._per_sentence_view: Optional[PerSentenceGraph] = None
-        self._ever_admitted_nodes: set[str] = set()
+        self._triplet_intro = {}
+        self._cumulative_triplet_records = []
+        self._per_sentence_view = None
+        self._ever_admitted_nodes = set()
         self._layout_depth = 3
-        self._persistent_is_edges: set[tuple[str, str, str]] = set()
-        self._amoc_matrix_records: list[dict] = []
-        self._previous_active_triplets: list[tuple[str, str, str]] = []
-        self._anchor_drop_log: list[tuple[int, str, str, str, str]] = []
-        self._story_lemma_set: set[str] = set()
-        self._sentence_triplets: list[
-            tuple[int, str, str, str, str, bool, bool, int]
-        ] = []
-        self._new_inferred_nodes_count: int = 0
+        self._amoc_matrix_records = []
+        self._previous_active_triplets = []
+        self._anchor_drop_log = []
+        self._story_lemma_set = set()
+        self._sentence_triplets = []
+        self._new_inferred_nodes_count = 0
 
         self._get_explicit_nodes = lambda: self._explicit_nodes_current_sentence
         self._get_carryover_nodes = lambda: self._carryover_nodes_current_sentence
         self._get_active_edge_nodes = (
-            lambda: self._connectivity_ops._get_nodes_with_active_edges()
+            self._connectivity_ops._get_nodes_with_active_edges
         )
 
         self._setup_ops_classes()
 
     def _setup_ops_classes(self):
-        self._connectivity_ops = ConnectivityOps(
-            graph_ref=self.graph,
-            get_explicit_nodes=self._get_explicit_nodes,
-            get_carryover_nodes=self._get_carryover_nodes,
-            edge_visibility=self.edge_visibility,
-            client_ref=self.client,
-        )
-        self._text_filter_ops = TextFilterOps(
-            spacy_nlp=self.spacy_nlp,
-            graph_ref=self.graph,
-            story_lemmas=self.story_lemmas,
-            persona_only_lemmas=self._persona_only_lemmas,
-        )
-
-        self._normalize_edge_label = (
-            lambda l: self._text_filter_ops.normalize_edge_label(l)
-        )
-        self._is_valid_relation_label = (
-            lambda l: self._text_filter_ops.is_valid_relation_label(l)
-        )
-        self._classify_relation = lambda l: self._text_filter_ops.classify_relation(l)
-        self._normalize_endpoint_text = (
-            lambda text, is_subject: self._text_filter_ops.normalize_endpoint_text(
-                text, is_subject
-            )
-        )
-        self._canonicalize_edge_direction = (
-            lambda l, s, d: self._text_filter_ops.canonicalize_edge_direction(l, s, d)
-        )
-        self._get_sentences_nodes = lambda sents, create_unexistent_nodes=True: self._collect_sentence_text_based_nodes(
-            sents, create_unexistent_nodes=create_unexistent_nodes
-        )
-
-        self._triplet_ops = TripletOps(
-            graph_ref=self.graph,
-            cumulative_graph_ref=self.cumulative_graph,
-            active_graph_ref=self.active_graph,
-            triplet_intro_ref=self._triplet_intro,
-        )
-        self._edge_ops = EdgeOps(
-            graph_ref=self.graph,
-            client_ref=self.client,
-            spacy_nlp=self.spacy_nlp,
-            get_explicit_nodes=self._get_explicit_nodes,
-            get_carryover_nodes=self._get_carryover_nodes,
-            get_attachable_nodes=lambda: self._sentence_ops.get_attachable_nodes_for_sentence(
-                self._get_active_edge_nodes
-            ),
-            edge_visibility=self.edge_visibility,
-            allow_multi_edges=self.allow_multi_edges,
-            debug=self.debug,
-        )
-        self._node_ops = NodeOps(
-            graph_ref=self.graph,
-            spacy_nlp=self.spacy_nlp,
-            story_lemmas=self.story_lemmas,
-            persona_only_lemmas=self._persona_only_lemmas,
-            max_distance_from_active_nodes=self.max_distance_from_active_nodes,
-            debug=self.debug,
-        )
-        self._node_ops.set_callbacks(
-            has_active_attachment_fn=lambda l: self._activation_ops.has_active_attachment(
-                l
-            ),
-            canonicalize_and_classify_fn=lambda t: self._text_filter_ops.canonicalize_and_classify_node_text(
-                t
-            ),
-        )
-        self._sentence_ops = SentenceOps(
-            graph_ref=self.graph,
-            spacy_nlp=self.spacy_nlp,
-            story_lemmas=self.story_lemmas,
-            max_distance_from_active_nodes=self.max_distance_from_active_nodes,
-            edge_visibility=self.edge_visibility,
-            strict_attachment_constraint=self.strict_attachament_constraint,
-        )
-        self._sentence_ops.set_state_refs(
-            anchor_nodes=self._anchor_nodes,
-            explicit_nodes=self._explicit_nodes_current_sentence,
-            triplet_intro=self._triplet_intro,
-        )
-        self._inference_ops = InferenceOps(
-            graph_ref=self.graph,
-            client_ref=self.client,
-            spacy_nlp=self.spacy_nlp,
-            max_new_concepts=self.max_new_concepts,
-            max_new_properties=self.max_new_properties,
-            persona=self.persona,
-        )
-        self._inference_ops.set_callbacks(
-            append_adjectival_hints_fn=lambda n, s: self._linguistic_ops.append_adjectival_hints(
-                n, s
-            ),
-            get_sentences_text_based_nodes_fn=self._get_sentences_nodes,
-        )
-        self._linguistic_ops = LinguisticOps(
-            graph_ref=self.graph,
-            spacy_nlp=self.spacy_nlp,
-            client_ref=self.client,
-            story_lemmas=self.story_lemmas,
-            persona=self.persona,
-        )
-        self._linguistic_ops.set_callbacks(
-            add_edge_fn=self._add_edge,
-            classify_relation_fn=self._classify_relation,
-        )
-        self._plot_ops = PlotOps(
-            graph_ref=self.graph,
-            output_dir=self.matrix_dir_base,
-            model_name=self.model_name,
-            persona=self.persona,
-            persona_age=self.persona_age,
-            layout_depth=self._layout_depth,
-            allow_multi_edges=self.allow_multi_edges,
-        )
-        self._plot_ops.set_callbacks(
-            get_explicit_nodes_fn=self._get_explicit_nodes,
-            get_edge_activation_scores_fn=lambda: self._triplet_ops.get_edge_activation_scores(),
-            graph_edges_to_triplets_fn=lambda only_active=False: self._triplet_ops.graph_edges_to_triplets(
-                only_active
-            ),
-            enforce_cumulative_connectivity_fn=lambda: self._connectivity_ops.warn_if_cumulative_disconnected(),
-        )
-        self._plot_ops.set_lemmas(
-            story_lemmas=self.story_lemmas,
-            persona_only_lemmas=self._persona_only_lemmas,
-        )
-        self._activation_ops = ActivationScheduler(
-            graph_ref=self.graph,
-            client_ref=self.client,
-            get_explicit_nodes=self._get_explicit_nodes,
-            max_distance=self.max_distance_from_active_nodes,
-            edge_visibility=self.edge_visibility,
-            nr_relevant_edges=self.nr_relevant_edges,
-            strict_reactivate=self.strict_reactivate_function,
-        )
-        self._activation_ops.set_state_refs(
-            anchor_nodes=self._anchor_nodes,
-            record_edge_fn=lambda e, i: self._edge_ops.record_edge_in_graphs(
-                edge=e,
-                sentence_idx=i,
-                cumulative_graph=self.cumulative_graph,
-                active_graph=self.active_graph,
-                cumulative_triplet_records=self._cumulative_triplet_records,
-            ),
-        )
-        self._output_ops = OutputOps(
-            graph_ref=self.graph,
-            model_name=self.model_name,
-            persona=self.persona,
-            persona_age=self.persona_age,
-            story_text=self.story_text,
-            matrix_dir_base=self.matrix_dir_base,
-        )
-        self._relationship_graph_ops = RelationshipGraphOps(
-            graph_ref=self.graph,
-            spacy_nlp=self.spacy_nlp,
-            edge_visibility=self.edge_visibility,
-            debug=self.debug,
-        )
-        self._init_ops = InitOps(
-            graph_ref=self.graph,
-            client_ref=self.client,
-            spacy_nlp=self.spacy_nlp,
-            edge_visibility=self.edge_visibility,
-            debug=self.debug,
-        )
-        self._sentence_processing_ops = SentenceProcessingOps(
-            graph_ref=self.graph,
-            client_ref=self.client,
-            spacy_nlp=self.spacy_nlp,
-            max_distance_from_active_nodes=self.max_distance_from_active_nodes,
-            edge_visibility=self.edge_visibility,
-            context_length=self.context_length,
-            debug=self.debug,
-        )
-        # Configure ops classes
-        self._edge_ops.configure_with_core(self)
-        self._relationship_graph_ops.configure_with_core(self)
-        self._init_ops.configure_with_core(self)
-        self._sentence_processing_ops.configure_with_core(self)
-        self._projection_bookkeeping_ops = ProjectionBookkeepingOps(
-            graph_ref=self.graph,
-            max_distance=self.max_distance_from_active_nodes,
-            enforce_attachment_constraint=self.ENFORCE_ATTACHMENT_CONSTRAINT,
-            debug=self.debug,
-        )
-        self._projection_bookkeeping_ops.set_callbacks(
-            record_sentence_activation_fn=self._record_sentence_activation,
-        )
+        wire_core_dependencies(self)
 
     def _rebind_ops_graph_refs(self) -> None:
         for ops in [
             self._connectivity_ops,
-            self._decay_ops,
             self._text_filter_ops,
             self._triplet_ops,
             self._edge_ops,
@@ -336,7 +127,6 @@ class AMoCv4:
 
         for ops in [
             self._relationship_graph_ops,
-            self._init_ops,
             self._sentence_processing_ops,
             self._projection_bookkeeping_ops,
         ]:
@@ -414,7 +204,7 @@ class AMoCv4:
         current_sentence_nodes: List[Node],
         graph_active_nodes: List[Node],
         graph_active_edge_nodes: Optional[set[Node]] = None,
-        allow_inference_bridge: bool = False,  # inference is low in early sentences, want to boost it
+        allow_inference_bridge: bool = False,
     ) -> bool:
         return self._node_ops.passes_attachment_constraint(
             subject=subject,
@@ -441,7 +231,7 @@ class AMoCv4:
         justification=None,
         persona_influenced: bool = False,
     ) -> Optional[Edge]:
-        self._edge_ops.set_current_sentence(self._current_sentence_index)
+        self._edge_ops.set_edge_sentence_context(self._current_sentence_index)
         edge = self._edge_ops.add_edge(
             source_node=source_node,
             dest_node=dest_node,
@@ -549,7 +339,7 @@ class AMoCv4:
         prev_sentences: list,
         nodes_before_sentence: set,
     ) -> tuple:
-        result = self._init_ops.handle_first_sentence(
+        result = self._sentence_processing_ops.handle_first_sentence(
             sent=sent,
             resolved_text=resolved_text,
             prev_sentences=prev_sentences,
@@ -595,7 +385,6 @@ class AMoCv4:
     ) -> tuple:
         self._new_inferred_nodes_count = 0
         nodes_before_sentence = self._prepare_sentence_runtime_state(original_text)
-        logging.info("Processing sentence %d: %s", i, resolved_text)
 
         resolved_text, sent = self._sentence_processing_ops.sanitize_json_contamination(
             resolved_text, original_text, sent
@@ -657,7 +446,6 @@ class AMoCv4:
             for n in self._explicit_nodes_current_sentence
             if n.node_type == NodeType.CONCEPT
         }
-
         active_concepts = {
             n for n in self._get_active_edge_nodes() if n.node_type == NodeType.CONCEPT
         }
@@ -668,7 +456,6 @@ class AMoCv4:
         # keep only the active nodes
         self._anchor_nodes = {n for n in self._anchor_nodes if n in self.graph.nodes}
 
-        # Step 2 — rebuild per-sentence view
         self._per_sentence_view = self._construct_per_sentence_view(
             explicit_nodes=list(self._explicit_nodes_current_sentence),
             sentence_index=self._current_sentence_index,
@@ -826,7 +613,7 @@ class AMoCv4:
 
         resolved_sentences = self._resolve_story_sentences(replace_pronouns)
 
-        prev_sentences: list[str] = []
+        prev_sentences = []
         self._sentence_triplets = []
         sentence_counter = 0
         text_prefix_pattern = re.compile(r"^The text is:\s*", re.IGNORECASE)
@@ -922,7 +709,7 @@ class AMoCv4:
             self._record_sentence_triplets(original_text)
 
         # Ensure cumulative graph is connected
-        if not self._connectivity_ops.is_cumulative_connected():
+        if not self._connectivity_ops.is_cumulative_connected_wrapper():
             logging.warning(
                 "Cumulative graph disconnected after sentence loop - repairing"
             )
@@ -951,20 +738,20 @@ class AMoCv4:
             graph_edges_representation=graph_edges_representation,
         )
 
-    def reactivate_relevant_edges(
+    def reactivate_relevant_edges_wrapper(
         self,
         active_nodes: List[Node],
         prev_sentences_text: str,
         newly_added_edges: List[Edge],
     ) -> None:
-        self._activation_ops.set_current_sentence(self._current_sentence_index)
+        self._activation_ops.set_decay_sentence_context(self._current_sentence_index)
         self._activation_ops.reactivate_relevant_edges(
             active_nodes=active_nodes,
             prev_sentences_text=prev_sentences_text,
             newly_added_edges=newly_added_edges,
         )
 
-    def add_inferred_relationships_to_graph_step_0(
+    def add_inferred_relationships_to_graph_step_0_wrapper(
         self,
         inferred_relationships: List[Tuple[str, str, str]],
         node_type: NodeType,
@@ -984,7 +771,7 @@ class AMoCv4:
             current_sentence_text_based_words=current_sentence_text_based_words,
         )
 
-    def add_inferred_relationships_to_graph(
+    def add_inferred_relationships_to_graph_wrapper(
         self,
         inferred_relationships: List[Tuple[str, str, str]],
         node_type: NodeType,

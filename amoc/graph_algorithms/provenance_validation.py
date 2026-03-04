@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from amoc.graph.graph import Graph
 
 
-class ProvenanceOps:
+class ProvenanceValidation:
     def __init__(self, graph_ref: "Graph"):
         self._graph = graph_ref
 
@@ -75,13 +75,11 @@ class ProvenanceOps:
     ) -> bool:
         if not lemma:
             return False
-
         lemma_lower = lemma.lower()
 
         # single char always rejected
         if len(lemma_lower) <= 1:
             return False
-
         return True
 
     def validate_explicit_marking(self, primary_lemma: str) -> bool:
@@ -94,7 +92,6 @@ class ProvenanceOps:
         story_lemmas: Set[str],
         persona_only_lemmas: Optional[Set[str]] = None,
     ) -> None:
-
         self._graph._story_lemmas = {s.lower() for s in story_lemmas}
         self._graph._persona_only_lemmas = (
             {s.lower() for s in persona_only_lemmas} if persona_only_lemmas else set()
@@ -105,7 +102,6 @@ class ProvenanceOps:
         story_lemmas: set,
         persona_only_lemmas: set,
     ) -> list:
-
         warnings = []
 
         for node in self._graph.nodes:

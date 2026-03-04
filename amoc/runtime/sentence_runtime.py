@@ -9,11 +9,11 @@ if TYPE_CHECKING:
     from amoc.graph.graph import Graph
     from amoc.graph.node import Node
     from amoc.graph.edge import Edge
-    from amoc.graph.per_sentence_graph import PerSentenceGraph
+    from amoc.graph_views.per_sentence_graph import PerSentenceGraph
     from spacy.tokens import Span
 
 
-class SentenceOps:
+class SentenceRuntime:
 
     def __init__(
         self,
@@ -38,7 +38,7 @@ class SentenceOps:
         self._current_sentence_index = None
         self._current_sentence_text = ""
 
-    def set_state_refs(
+    def set_runtime_state_refs(
         self,
         anchor_nodes: Set["Node"],
         explicit_nodes: Set["Node"],
@@ -48,7 +48,7 @@ class SentenceOps:
         self._explicit_nodes_current_sentence = explicit_nodes
         self._triplet_intro = triplet_intro
 
-    def set_current_sentence(self, idx: int, text: str):
+    def set_runtime_sentence_context(self, idx: int, text: str):
         self._current_sentence_index = idx
         self._current_sentence_text = text
 
@@ -163,7 +163,7 @@ class SentenceOps:
         return resolved_sentences, story_lemma_set
 
     def reset_sentence_state(self, original_text: str) -> Set["Node"]:
-        self._graph.deactivate_all_edges()
+        self._graph.deactivate_all_edges_wrapper()
         self._current_sentence_text = original_text
 
         nodes_before_sentence = set(self._graph.nodes)

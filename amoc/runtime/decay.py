@@ -7,11 +7,11 @@ if TYPE_CHECKING:
     from amoc.graph.edge import Edge
 
 
-class ActivationScheduler:
+class Decay:
     def __init__(
         self,
         graph_ref: "Graph",
-        client_ref,
+        llm_extractor,
         get_explicit_nodes: callable,
         max_distance: int,
         edge_visibility: int,
@@ -19,7 +19,7 @@ class ActivationScheduler:
         strict_reactivate: bool = True,
     ):
         self._graph = graph_ref
-        self._client = client_ref
+        self._llm = llm_extractor
         self._get_explicit_nodes = get_explicit_nodes
         self._max_distance = max_distance
         self._edge_visibility = edge_visibility
@@ -29,7 +29,7 @@ class ActivationScheduler:
         self._current_sentence_index = None
         self._record_edge_fn = None
 
-    def set_state_refs(
+    def set_decay_state_refs(
         self,
         anchor_nodes: Set["Node"],
         record_edge_fn: callable = None,
@@ -37,47 +37,34 @@ class ActivationScheduler:
         self._anchor_nodes = anchor_nodes
         self._record_edge_fn = record_edge_fn
 
-    def set_current_sentence(self, idx: int):
+    def set_decay_sentence_context(self, idx: int):
         self._current_sentence_index = idx
 
     def apply_global_edge_decay(self) -> None:
         for edge in self._graph.edges:
-            # Don't decay edges created this sentence
             if edge.created_at_sentence == self._current_sentence_index:
                 continue
-
-            # Only decay edges reactivated this sentence
             if not edge.asserted_this_sentence and not edge.reactivated_this_sentence:
                 edge.reduce_visibility()
-
                 if edge.visibility_score <= 0:
                     edge.visibility_score = 0
                     edge.active = False
 
     def decay_node_activation(self) -> None:
         explicit_nodes = self._get_explicit_nodes()
-
         for node in self._graph.nodes:
-            # Explicit nodes never decay this sentence
             if node in explicit_nodes:
                 node.active = True
                 continue
-
-            # Step 1 — numeric decay
             if node.activation_score > 0:
                 node.activation_score -= 1
-
-            # Step 2 — cutoff by score
             if node.activation_score <= 0:
                 node.active = False
                 continue
-
-            # Step 3 — active node must have ≥1 active edge
             has_active_edge = any(
                 e.active and (e.source_node == node or e.dest_node == node)
                 for e in self._graph.edges
             )
-
             if not has_active_edge:
                 node.active = False
 
@@ -103,11 +90,11 @@ class ActivationScheduler:
                     self._record_edge_fn(edge, self._current_sentence_index)
             return
 
-        raw_indices = self._client.get_relevant_edges(
+        raw_indices = self._llm.get_relevant_edges(
             edges_text, prev_sentences_text, None
         )
 
-        valid_indices: List[int] = []
+        valid_indices = []
         for idx in raw_indices:
             try:
                 i = int(idx)
@@ -139,13 +126,16 @@ class ActivationScheduler:
                 if self._record_edge_fn:
                     self._record_edge_fn(edge, self._current_sentence_index)
 
-        # Apply decay to edges
         for idx, edge in enumerate(edges, start=1):
             if idx in selected or edge in newly_added_edges:
                 if edge.is_property_edge():
                     continue
                 edge.mark_as_reactivated(reset_score=False)
                 edge.visibility_score = self._edge_visibility
+                if self._record_edge_fn and (
+                    edge.is_asserted() or edge.is_reactivated()
+                ):
+                    self._record_edge_fn(edge, self._current_sentence_index)
             else:
                 edge.reduce_visibility()
 
@@ -155,11 +145,9 @@ class ActivationScheduler:
     ) -> Set["Edge"]:
         # Reactivate memory edges within distance from explicit nodes
         explicit_nodes = self._get_explicit_nodes()
-
         if not explicit_nodes:
             return set()
-
-        return self._graph.reactivate_memory_edges_within_distance(
+        return self._graph.reactivate_memory_edges_within_distance_wrapper(
             explicit_nodes=explicit_nodes,
             max_distance=self._max_distance,
             current_sentence=current_sentence,
@@ -184,8 +172,7 @@ class ActivationScheduler:
         explicit_nodes: Set["Node"],
         carryover_nodes: Set["Node"],
     ) -> dict:
-        active_nodes, active_edges = self._graph.get_active_subgraph()
-
+        active_nodes, active_edges = self._graph.get_active_subgraph_wrapper()
         return {
             "sentence_idx": sentence_idx,
             "explicit_count": len(explicit_nodes),
@@ -220,17 +207,16 @@ class ActivationScheduler:
             explicit_set, max_distance=max_distance
         )
 
-        token_to_raw_score: Dict[str, int] = {}
-        node_raw_score: Dict["Node", int] = {}
+        token_to_raw_score = {}
+        node_raw_score = {}
 
-        # explicit nodes reset to 0
         for node in explicit_set:
             token = node_token_fn(node)
             if token:
                 token_to_raw_score[token] = 0
                 node_raw_score[node] = 0
 
-        # newly inferred nodes start at 1 (never 0)
+        # newly inferred nodes start at 1
         for node in newly_inferred_nodes:
             if node in explicit_set:
                 continue
@@ -239,19 +225,13 @@ class ActivationScheduler:
                 token_to_raw_score[token] = 1
                 node_raw_score[node] = 1
 
-        # carried-over nodes within range, score = distance
         for node, dist in distances.items():
-            if node in explicit_set:
-                continue
-            if dist <= 0:
+            if node in explicit_set or dist <= 0:
                 continue
             token = node_token_fn(node)
-            if not token:
-                continue
-            if token in token_to_raw_score:
-                continue
-            token_to_raw_score[token] = dist
-            node_raw_score[node] = dist
+            if token and token not in token_to_raw_score:
+                token_to_raw_score[token] = dist
+                node_raw_score[node] = dist
 
         # Convert node scores to Landscape scale and record
         for token, raw_score in token_to_raw_score.items():
@@ -299,19 +279,15 @@ class ActivationScheduler:
     ) -> Dict["Node", int]:
         if not sources:
             return {}
-        distances: Dict["Node", int] = {s: 0 for s in sources}
-        queue: deque["Node"] = deque(sources)
+        distances = {s: 0 for s in sources}
+        queue = deque(sources)
         while queue:
             node = queue.popleft()
             dist = distances[node]
             if dist >= max_distance:
                 continue
             for edge in node.edges:
-                if not edge.active:
-                    continue
-
-                # Ignore edges that are fully faded
-                if edge.visibility_score <= 1:
+                if not edge.active or edge.visibility_score <= 1:
                     continue
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
@@ -324,23 +300,15 @@ class ActivationScheduler:
 
     def restrict_active_to_current_explicit(self, explicit_nodes: List["Node"]) -> None:
         explicit_set = set(explicit_nodes)
-
         for node in self._graph.nodes:
-            # Explicit nodes always stay active if they have active edges
-            if node in explicit_set:
-                has_active_edge = any(
-                    e.active and (e.source_node == node or e.dest_node == node)
-                    for e in self._graph.edges
-                )
-                node.active = has_active_edge
-                continue
-
-            # Non-explicit nodes only stay active if they have active edges
             has_active_edge = any(
                 e.active and (e.source_node == node or e.dest_node == node)
                 for e in self._graph.edges
             )
-            node.active = has_active_edge
+            if node in explicit_set:
+                node.active = has_active_edge
+            else:
+                node.active = has_active_edge
 
     def has_active_attachment(self, lemma: str) -> bool:
         active_nodes = {n for n in self._graph.nodes if n.active}

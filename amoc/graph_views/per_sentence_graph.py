@@ -18,7 +18,7 @@ class PerSentenceGraph:
     sentence_index: int
     explicit_nodes: FrozenSet[Node]
     carryover_nodes: FrozenSet[Node]
-    active_nodes: FrozenSet[Node]  # explicit AND carryover
+    active_nodes: FrozenSet[Node]
     active_edges: FrozenSet[Edge]
     anchor_nodes: FrozenSet[Node]
 
@@ -27,8 +27,7 @@ class PerSentenceGraph:
     _nx_graph: Optional[nx.Graph] = field(default=None)
 
     def __post_init__(self):
-        # Build adjacency list
-        adjacency: Dict[Node, Set[Node]] = {n: set() for n in self.active_nodes}
+        adjacency = {n: set() for n in self.active_nodes}
         for edge in self.active_edges:
             if edge.source_node in adjacency and edge.dest_node in adjacency:
                 adjacency[edge.source_node].add(edge.dest_node)
@@ -109,9 +108,8 @@ class PerSentenceGraphBuilder:
             self._carryover_nodes = set()
             return self
 
-        # Use ALL explicit nodes as seeds
-        distances: Dict[Node, int] = {n: 0 for n in self._explicit_nodes}
-        queue: deque = deque(self._explicit_nodes)
+        distances = {n: 0 for n in self._explicit_nodes}
+        queue = deque(self._explicit_nodes)
 
         while queue:
             node = queue.popleft()
@@ -123,7 +121,6 @@ class PerSentenceGraphBuilder:
             for edge in node.edges:
                 if not edge.active:
                     continue
-
                 if (
                     edge.created_at_sentence is not None
                     and self._sentence_index is not None
@@ -143,7 +140,6 @@ class PerSentenceGraphBuilder:
 
         # Carry-over = reachable nodes excluding explicit
         self._carryover_nodes = set(distances.keys()) - self._explicit_nodes
-
         return self
 
     def get_active_nodes(self) -> Set[Node]:
@@ -156,103 +152,19 @@ class PerSentenceGraphBuilder:
         attachable = self.get_attachable_nodes()
         return source in attachable or dest in attachable
 
-    def _attempt_llm_repair(
-        self,
-        components: List[Set[Node]],
-        active_nodes: Set[Node],
-        active_edges: Set[Edge],
-        temperature: float = 0.3,
-    ) -> Optional[Set[Edge]]:
-
-        if self.repair_callback is None:
-            logging.warning("No repair callback provided.")
-            return None
-
-        try:
-            candidate_edges = self.repair_callback(
-                components=components,
-                active_nodes=active_nodes,
-                active_edges=active_edges,
-                sentence_index=self._sentence_index,
-                temperature=temperature,
-            )
-        except Exception as e:
-            logging.warning(
-                "Repair callback exception: %s",
-                str(e),
-            )
-            return None
-
-        if not candidate_edges:
-            return None
-
-        valid_edges = set()
-
-        for e in candidate_edges:
-            if e.source_node in active_nodes or e.dest_node in active_nodes:
-                valid_edges.add(e)
-
-        # Prevent duplicate-edge retry loops
-        if valid_edges:
-            new_edges = valid_edges - active_edges
-            if not new_edges:
-                # All proposed edges already exist
-                return None
-            return new_edges
-
-        return None
-
-    def _connected_components(
-        self,
-        nodes: Set[Node],
-        edges: Set[Edge],
-    ) -> List[Set[Node]]:
-
-        adjacency = {n: set() for n in nodes}
-
-        for e in edges:
-            adjacency[e.source_node].add(e.dest_node)
-            adjacency[e.dest_node].add(e.source_node)
-
-        visited = set()
-        components = []
-
-        for node in nodes:
-            if node in visited:
-                continue
-
-            stack = [node]
-            comp = set()
-
-            while stack:
-                n = stack.pop()
-                if n in visited:
-                    continue
-                visited.add(n)
-                comp.add(n)
-                stack.extend(adjacency[n] - visited)
-
-            components.append(comp)
-
-        return components
-
     def build(self, sentence_index: int) -> PerSentenceGraph:
         self._sentence_index = sentence_index
 
-        active_nodes, active_edges = self.cumulative_graph.get_active_subgraph()
+        active_nodes, active_edges = self.cumulative_graph.get_active_subgraph_wrapper()
         active_nodes = set(active_nodes)
         active_edges = set(active_edges)
 
-        # Derive nodes strictly from edges
         nodes_with_edges = {e.source_node for e in active_edges} | {
             e.dest_node for e in active_edges
         }
-
         active_nodes = nodes_with_edges
 
-        # Filter explicit and carryover to only those truly active
         explicit_nodes = {n for n in self._explicit_nodes if n in active_nodes}
-
         carryover_nodes = {n for n in self._carryover_nodes if n in active_nodes}
 
         return PerSentenceGraph(

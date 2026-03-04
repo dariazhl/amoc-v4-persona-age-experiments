@@ -1,12 +1,27 @@
+from __future__ import annotations
 from amoc.graph.node import Node
 from amoc.graph.node import NodeType, NodeSource, NodeProvenance
 from amoc.graph.edge import Edge
-from amoc.graph.node_activation_engine import NodeActivationEngine
-from amoc.graph.stability_ops import StabilityOps
-from amoc.graph.provenance_ops import ProvenanceOps
+from amoc.graph_algorithms.node_activation_engine import NodeActivationEngine
+from amoc.connectivity.connectivity_repair import ConnectivityRepair
+from amoc.graph_algorithms.provenance_validation import ProvenanceValidation
 from typing import List, Set, Dict, Optional, Tuple, Callable
 import logging
 import networkx as nx
+
+
+class RuntimeContext:
+    def __init__(
+        self,
+        story_lemmas: Optional[Set[str]],
+        persona_only_lemmas: Optional[Set[str]],
+        current_sentence_idx: int,
+        current_sentence_lemmas: Optional[Set[str]],
+    ) -> None:
+        self.story_lemmas = story_lemmas
+        self.persona_only_lemmas = persona_only_lemmas
+        self.current_sentence_idx = current_sentence_idx
+        self.current_sentence_lemmas = current_sentence_lemmas
 
 
 class Graph:
@@ -14,14 +29,48 @@ class Graph:
         self.nodes: Set[Node] = set()
         self.edges: Set[Edge] = set()
 
-        self._story_lemmas: Optional[Set[str]] = None
-        self._persona_only_lemmas: Optional[Set[str]] = None
-        self._current_sentence_idx: int = 0
-        self._current_sentence_lemmas: Optional[Set[str]] = None
+        self._context = RuntimeContext(
+            story_lemmas=None,
+            persona_only_lemmas=None,
+            current_sentence_idx=0,
+            current_sentence_lemmas=None,
+        )
 
         self._activation_ops = NodeActivationEngine(self)
-        self._stability_ops = StabilityOps(self)
-        self._provenance_ops = ProvenanceOps(self)
+        self._stability_ops = ConnectivityRepair(self)
+        self._provenance_ops = ProvenanceValidation(self)
+
+    @property
+    def _story_lemmas(self) -> Optional[Set[str]]:
+        return self._context.story_lemmas
+
+    @_story_lemmas.setter
+    def _story_lemmas(self, value: Optional[Set[str]]) -> None:
+        self._context.story_lemmas = value
+
+    @property
+    def _persona_only_lemmas(self) -> Optional[Set[str]]:
+        return self._context.persona_only_lemmas
+
+    @_persona_only_lemmas.setter
+    def _persona_only_lemmas(self, value: Optional[Set[str]]) -> None:
+        self._context.persona_only_lemmas = value
+
+    @property
+    def _current_sentence_idx(self) -> int:
+        return self._context.current_sentence_idx
+
+    @_current_sentence_idx.setter
+    def _current_sentence_idx(self, value: int) -> None:
+        self._context.current_sentence_idx = value
+
+    @property
+    def _current_sentence_lemmas(self) -> Optional[Set[str]]:
+        return self._context.current_sentence_lemmas
+
+    @_current_sentence_lemmas.setter
+    def _current_sentence_lemmas(self, value: Optional[Set[str]]) -> None:
+        self._context.current_sentence_lemmas = value
 
     def set_current_sentence_lemmas(self, lemmas: Set[str]) -> None:
         self._current_sentence_lemmas = {l.lower() for l in lemmas}
@@ -43,7 +92,7 @@ class Graph:
         mark_explicit: bool = True,
     ):
         lemmas = [lemma.lower() for lemma in lemmas]
-        primary_lemma = lemmas[0].lower() if lemmas else ""
+        primary_lemma = lemmas[0] if lemmas else ""
 
         existing_node = self.get_node(lemmas)
         is_new_node = existing_node is None
@@ -121,13 +170,11 @@ class Graph:
             return None
 
         if inferred:
-            # Prevent inferred edges from attaching to decayed nodes
-            source_visibility_score = getattr(source_node, "visibility_score", None)
-            dest_visibility_score = getattr(dest_node, "visibility_score", None)
-
-            if (
-                source_visibility_score is not None and source_visibility_score <= 0
-            ) or (dest_visibility_score is not None and dest_visibility_score <= 0):
+            source_score = getattr(source_node, "visibility_score", None)
+            dest_score = getattr(dest_node, "visibility_score", None)
+            if (source_score is not None and source_score <= 0) or (
+                dest_score is not None and dest_score <= 0
+            ):
                 return None
 
         edge = Edge(
@@ -183,7 +230,7 @@ class Graph:
         if edge.dest_node and edge in edge.dest_node.edges:
             edge.dest_node.edges.remove(edge)
 
-    def get_active_subgraph(self) -> Tuple[Set[Node], Set[Edge]]:
+    def get_active_subgraph_wrapper(self) -> Tuple[Set[Node], Set[Edge]]:
         return self._activation_ops.get_active_subgraph()
 
     def to_networkx(self) -> nx.Graph:
@@ -216,7 +263,7 @@ class Graph:
         count = 1
         for node in sorted(nodes, key=lambda node: node.score):
             for edge in node.edges:
-                if only_active and edge.active == False:
+                if only_active and not edge.active:
                     continue
                 if edge not in used_edges:
                     if not only_text_based:
@@ -241,10 +288,9 @@ class Graph:
 
     def get_active_graph_repr(self) -> str:
         edges = [edge for edge in self.edges if edge.active]
-        nodes = set()
-        for edge in edges:
-            nodes.add(edge.source_node)
-            nodes.add(edge.dest_node)
+        nodes = {edge.source_node for edge in edges} | {
+            edge.dest_node for edge in edges
+        }
         s = "nodes:\n"
         for node in nodes:
             s += str(node) + "\n"
@@ -253,10 +299,10 @@ class Graph:
             s += str(edge) + "\n"
         return s
 
-    def deactivate_all_edges(self) -> None:
+    def deactivate_all_edges_wrapper(self) -> None:
         self._activation_ops.deactivate_all_edges()
 
-    def reactivate_memory_edges_within_distance(
+    def reactivate_memory_edges_within_distance_wrapper(
         self,
         explicit_nodes: Set[Node],
         max_distance: int,
@@ -266,18 +312,18 @@ class Graph:
             explicit_nodes, max_distance, current_sentence
         )
 
-    def get_active_nodes(
+    def get_active_nodes_wrapper(
         self, score_threshold: int, only_text_based: bool = False
     ) -> List[Node]:
         return self._activation_ops.get_active_nodes(score_threshold, only_text_based)
 
-    def decay_inactive_edges(self) -> None:
+    def decay_inactive_edges_wrapper(self) -> None:
         self._activation_ops.decay_inactive_edges()
 
-    def enforce_cumulative_stability(self, explicit_nodes: set) -> None:
+    def enforce_cumulative_stability_wrapper(self, explicit_nodes: set) -> None:
         self._stability_ops.enforce_cumulative_stability(explicit_nodes)
 
-    def enforce_carryover_connectivity(self, carryover_nodes: set) -> None:
+    def enforce_carryover_connectivity_wrapper(self, carryover_nodes: set) -> None:
         self._stability_ops.enforce_carryover_connectivity(carryover_nodes)
 
     def is_active_connected(self, required_nodes: Optional[Set[Node]] = None) -> bool:
@@ -286,15 +332,15 @@ class Graph:
     def is_cumulative_connected(self) -> bool:
         return self._stability_ops.compute_cumulative_connectivity()
 
-    def get_disconnected_components(
+    def get_disconnected_components_wrapper(
         self, focus_nodes: Set[Node]
     ) -> Tuple[List[Set[Node]], int]:
         return self._stability_ops.get_disconnected_components(focus_nodes)
 
-    def can_connect_via_cumulative(self, required_nodes: Set[Node]) -> bool:
+    def can_connect_via_cumulative_wrapper(self, required_nodes: Set[Node]) -> bool:
         return self._stability_ops.can_connect_via_cumulative(required_nodes)
 
-    def reconnect_via_cumulative(self, required_nodes: Set[Node]) -> Set[Edge]:
+    def reconnect_via_cumulative_wrapper(self, required_nodes: Set[Node]) -> Set[Edge]:
         return self._stability_ops.reconnect_via_cumulative(required_nodes)
 
     def enforce_connectivity(
@@ -307,14 +353,14 @@ class Graph:
             required_nodes, allow_reactivation, enforce_cumulative
         )
 
-    def set_provenance_gate(
+    def set_provenance_gate_wrapper(
         self,
         story_lemmas: Set[str],
         persona_only_lemmas: Optional[Set[str]] = None,
     ) -> None:
         self._provenance_ops.set_provenance_gate(story_lemmas, persona_only_lemmas)
 
-    def sanity_check_provenance(
+    def sanity_check_provenance_wrapper(
         self,
         story_lemmas: set,
         persona_only_lemmas: set,

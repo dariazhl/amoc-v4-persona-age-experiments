@@ -9,15 +9,7 @@ if TYPE_CHECKING:
     from amoc.graph.node import Node
 
 
-def _sanitize_filename_component(component: str, max_len: int = 80) -> str:
-    component = (component or "").replace("\n", " ").strip()
-    component = component[:max_len]
-    component = re.sub(r"[\\/:*?\"<>|]", "_", component)
-    component = re.sub(r"\s+", "_", component)
-    return component or "unknown"
-
-
-class OutputOps:
+class OutputFinalizer:
     def __init__(
         self,
         graph_ref: "Graph",
@@ -33,6 +25,13 @@ class OutputOps:
         self._persona_age = persona_age
         self._story_text = story_text
         self._matrix_dir_base = matrix_dir_base
+
+    def _sanitize_filename_component(self, component: str, max_len: int = 80) -> str:
+        component = (component or "").replace("\n", " ").strip()
+        component = component[:max_len]
+        component = re.sub(r"[\\/:*?\"<>|]", "_", component)
+        component = re.sub(r"\s+", "_", component)
+        return component or "unknown"
 
     def finalize_outputs(
         self,
@@ -55,56 +54,55 @@ class OutputOps:
                 .mean()
                 .astype({"token": str})
             )
-
-        matrix = (
-            df.pivot(index="token", columns="sentence", values="score")
-            .sort_index()
-            .fillna(0.0)
-        )
-
-        # Order rows by salience: highest peak activation first, then total activation
-        salience_max = matrix.max(axis=1)
-        salience_sum = matrix.sum(axis=1)
-        ordering = (
-            salience_max.to_frame("max")
-            .assign(sum=salience_sum)
-            .sort_values(by=["max", "sum", "token"], ascending=[False, False, True])
-        )
-        matrix = matrix.loc[ordering.index]
-
-        # Prepend full story text as first row for traceability
-        if len(matrix.columns) > 0:
-            story_row = pd.DataFrame(
-                [{col: "" for col in matrix.columns}], index=["story_text"]
+            matrix = (
+                df.pivot(index="token", columns="sentence", values="score")
+                .sort_index()
+                .fillna(0.0)
             )
-            story_row.iloc[0, 0] = self._story_text
-            matrix = pd.concat([story_row, matrix])
+            salience_max = matrix.max(axis=1)
+            salience_sum = matrix.sum(axis=1)
+            ordering = (
+                salience_max.to_frame("max")
+                .assign(sum=salience_sum)
+                .sort_values(by=["max", "sum", "token"], ascending=[False, False, True])
+            )
+            matrix = matrix.loc[ordering.index]
+
+            if len(matrix.columns) > 0:
+                story_row = pd.DataFrame(
+                    [{col: "" for col in matrix.columns}], index=["story_text"]
+                )
+                story_row.iloc[0, 0] = self._story_text
+                matrix = pd.concat([story_row, matrix])
+        else:
+            matrix = pd.DataFrame()
 
         matrix_dir = os.path.join(self._matrix_dir_base, "matrix")
         os.makedirs(matrix_dir, exist_ok=True)
 
-        safe_model = _sanitize_filename_component(self._model_name, max_len=60)
-        safe_persona = _sanitize_filename_component(self._persona, max_len=60)
+        safe_model = self._sanitize_filename_component(self._model_name, max_len=60)
+        safe_persona = self._sanitize_filename_component(self._persona, max_len=60)
         age_for_filename = self._persona_age if self._persona_age is not None else -1
         suffix = (
-            f"_{_sanitize_filename_component(matrix_suffix)}" if matrix_suffix else ""
+            f"_{self._sanitize_filename_component(matrix_suffix)}"
+            if matrix_suffix
+            else ""
         )
         matrix_filename = (
             f"amoc_matrix_{safe_model}_{safe_persona}_{age_for_filename}{suffix}.csv"
         )
         matrix_path = os.path.join(matrix_dir, matrix_filename)
 
-        matrix.to_csv(matrix_path)
-        logging.info(
-            "Saved activation matrix for persona '%s' to %s",
-            self._persona,
-            matrix_path,
-        )
-        logging.info("AMoC activation matrix:\n%s", matrix.to_string())
+        if not matrix.empty:
+            matrix.to_csv(matrix_path)
+            logging.info(
+                "Saved activation matrix for persona '%s' to %s",
+                self._persona,
+                matrix_path,
+            )
+            logging.info("AMoC activation matrix:\n%s", matrix.to_string())
 
-        # Collect final active triplets
         final_sentence_idx = current_sentence_index
-
         final_triplets = []
         current_nodes = (
             explicit_nodes_current_sentence | get_nodes_with_active_edges_fn()
@@ -129,8 +127,5 @@ class OutputOps:
         for subj, rel, obj in reconstruct_semantic_triplets_fn():
             intro = triplet_intro.get((subj, rel, obj), -1)
             cumulative_triplets.append((subj, rel, obj, int(intro)))
-
-        # validations
-        # self._graph.sanity_check_readable_triplets()
 
         return final_triplets, sentence_triplets, cumulative_triplets

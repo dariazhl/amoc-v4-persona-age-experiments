@@ -14,20 +14,20 @@ from amoc.prompts.amoc_prompts import FORCED_CONNECTIVITY_EDGE_PROMPT
 # Old code: no connectivity enforced
 # New code: same principle applied on new code creates fragmentation
 # Design: enforce connectivity at sentence level, with repair + fallback
-class ConnectivityOps:
+class ConnectivityStabilizer:
     def __init__(
         self,
         graph_ref: "Graph",
         get_explicit_nodes: callable,
         get_carryover_nodes: callable,
         edge_visibility: int,
-        client_ref=None,
+        llm_extractor=None,
     ):
         self._graph = graph_ref
         self._get_explicit_nodes = get_explicit_nodes
         self._get_carryover_nodes = get_carryover_nodes
         self._edge_visibility = edge_visibility
-        self._client = client_ref
+        self._llm = llm_extractor
         self._story_text: str = ""
         self._current_sentence_text: str = ""
         self._anchor_nodes: set = set()
@@ -39,11 +39,11 @@ class ConnectivityOps:
     def set_anchor_nodes(self, anchor_nodes: set) -> None:
         self._anchor_nodes = anchor_nodes
 
-    def is_active_connected(self) -> bool:
+    def is_active_connected_wrapper(self) -> bool:
         required_nodes = self._get_explicit_nodes() | self._get_carryover_nodes()
         return self._graph.is_active_connected(required_nodes)
 
-    def is_cumulative_connected(self) -> bool:
+    def is_cumulative_connected_wrapper(self) -> bool:
         return self._graph.is_cumulative_connected()
 
     def run_connectivity_pipeline(
@@ -56,9 +56,12 @@ class ConnectivityOps:
         carryover_nodes = self._get_carryover_nodes()
         required_nodes = explicit_nodes | carryover_nodes
 
-        # PHASE 1: Deterministic repair via StabilityOps (reactivate cumulative edges)
+        # PHASE 1: Deterministic repair via ConnectivityRepair (reactivate cumulative edges)
         if self._graph.enforce_connectivity(required_nodes, allow_reactivation=True):
-            if self.is_active_connected() and self.is_cumulative_connected():
+            if (
+                self.is_active_connected_wrapper()
+                and self.is_cumulative_connected_wrapper()
+            ):
                 return False
 
         # PHASE 2: LLM repair - try twice
@@ -70,27 +73,27 @@ class ConnectivityOps:
                 current_sentence=current_sentence_text,
                 mode="active",
             )
-            if self.is_active_connected():
+            if self.is_active_connected_wrapper():
                 break
 
-        # Check if LLM repair was sufficient
-        if self.is_active_connected() and self.is_cumulative_connected():
+        if (
+            self.is_active_connected_wrapper()
+            and self.is_cumulative_connected_wrapper()
+        ):
             return False
 
         # PHASE 3: Final fallback "relates_to" edges
         self._apply_relates_to_fallback(required_nodes)
 
-        if not self.is_active_connected():
+        if not self.is_active_connected_wrapper():
             logging.error("Active graph disconnected after all repairs")
-            return True  # rollback required
+            return True
 
-        # Verify cumulative connectivity
-        if not self.is_cumulative_connected():
+        if not self.is_cumulative_connected_wrapper():
             self._apply_cumulative_fallback()
-
-            if not self.is_cumulative_connected():
+            if not self.is_cumulative_connected_wrapper():
                 logging.error("Cumulative graph disconnected after all repairs")
-                return True  # rollback required
+                return True
 
         return False
 
@@ -102,7 +105,7 @@ class ConnectivityOps:
         return (-degree, node.get_text_representer())
 
     def _apply_relates_to_fallback(self, required_nodes: set) -> None:
-        components, _ = self._graph.get_disconnected_components(required_nodes)
+        components, _ = self._graph.get_disconnected_components_wrapper(required_nodes)
 
         if len(components) <= 1:
             return
@@ -133,7 +136,6 @@ class ConnectivityOps:
                 )
 
             backbone_node = max(anchor_candidates, key=anchor_score)
-
         else:
             backbone_node = max(
                 largest_component,
@@ -147,12 +149,10 @@ class ConnectivityOps:
 
         for comp in sorted(components[1:], key=len):
             comp_set = set(comp)
-
             if not (comp_set & required_nodes):
                 continue
 
             explicit_nodes = self._get_explicit_nodes()
-
             explicit_in_comp = sorted(
                 [n for n in comp_set if n in explicit_nodes],
                 key=lambda n: n.get_text_representer(),
@@ -186,7 +186,6 @@ class ConnectivityOps:
             return
 
         components = list(nx.connected_components(G_full))
-
         if len(components) <= 1:
             return
 
@@ -194,13 +193,12 @@ class ConnectivityOps:
         components = sorted(components, key=len, reverse=True)
         largest = set(components[0])
 
-        # Deterministic representative node (by text)
+        # Deterministic representative node
         node_large = min(largest, key=lambda n: n.get_text_representer())
 
         # Connect smallest - largest
         for comp in sorted(components[1:], key=len):
             node_small = min(comp, key=lambda n: n.get_text_representer())
-
             edge = self._graph.add_edge(
                 node_small,
                 node_large,
@@ -209,7 +207,6 @@ class ConnectivityOps:
                 persona_influenced=False,
                 inferred=False,
             )
-
             if edge:
                 largest.update(comp)
 
@@ -222,25 +219,19 @@ class ConnectivityOps:
         return nodes
 
     def validate_sentence_state(self) -> bool:
-        if not self.is_active_connected():
+        if not self.is_active_connected_wrapper():
             return False
 
         explicit_nodes = self._get_explicit_nodes()
-
         for node in explicit_nodes:
             if node not in self._graph.nodes:
                 return False
-
             has_active_edge = any(
                 e.active and (e.source_node == node or e.dest_node == node)
                 for e in self._graph.edges
             )
-
-            if not has_active_edge:
-                if len(explicit_nodes) == 1:
-                    continue
+            if not has_active_edge and len(explicit_nodes) > 1:
                 return False
-
         return True
 
     def repair_dangling_nodes(
@@ -296,7 +287,7 @@ class ConnectivityOps:
 
             # Try LLM repair - 2 attemptS
             for _ in range(2):
-                result = self._client.get_forced_connectivity_edge_label(
+                result = self._llm.get_forced_connectivity_edge_label(
                     node_a=node.get_text_representer(),
                     node_b=anchor.get_text_representer(),
                     story_context=(
@@ -380,7 +371,7 @@ class ConnectivityOps:
 
             try:
                 # no persona injection for connectivity repair
-                response = self._client.generate_raw(
+                response = self._llm.generate_raw(
                     prompt_text=prompt_text,
                     temperature=temperature,
                 )
@@ -394,10 +385,7 @@ class ConnectivityOps:
                 data = json.loads(response)
                 label = data.get("label")
 
-            except json.JSONDecodeError:
-                logging.warning("Connectivity repair returned invalid JSON")
-                continue
-            except Exception as e:
+            except (json.JSONDecodeError, Exception) as e:
                 logging.warning("Connectivity repair failed: %s", str(e))
                 continue
 
@@ -419,5 +407,5 @@ class ConnectivityOps:
         return edges_created if edges_created else None
 
     def warn_if_cumulative_disconnected(self) -> None:
-        if not self.is_cumulative_connected():
+        if not self.is_cumulative_connected_wrapper():
             logging.warning("Cumulative graph disconnected - plots may show fragments")

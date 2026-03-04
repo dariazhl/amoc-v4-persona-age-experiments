@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from amoc.graph.node import Node
 
 
-class PlotOps:
+class GraphPlotter:
     # Prompt contamination patterns to detect
     PROMPT_CONTAMINATION_PATTERNS = [
         "the text is:",
@@ -102,7 +102,7 @@ class PlotOps:
             return None
 
         # Filter triplets to active nodes only
-        active_nodes, _ = self._graph.get_active_subgraph()
+        active_nodes, _ = self._graph.get_active_subgraph_wrapper()
         active_node_names = {n.get_text_representer() for n in active_nodes}
         filtered_triplets = self.get_filtered_triplets_for_plot(
             triplets, active_node_names
@@ -178,7 +178,7 @@ class PlotOps:
             return None
 
         # Get active subgraph
-        active_nodes, active_edges = self._graph.get_active_subgraph()
+        active_nodes, active_edges = self._graph.get_active_subgraph_wrapper()
         active_node_names = {n.get_text_representer() for n in active_nodes}
 
         # Filter triplets
@@ -279,7 +279,7 @@ class PlotOps:
         )
 
         # Build ACTIVE snapshot for safe plotting
-        active_nodes_for_filter, _ = self._graph.get_active_subgraph()
+        active_nodes_for_filter, _ = self._graph.get_active_subgraph_wrapper()
         active_node_names = {n.get_text_representer() for n in active_nodes_for_filter}
 
         # HARD EXPLICIT NODE VISIBILITY GUARANTEE
@@ -326,7 +326,7 @@ class PlotOps:
                         nodes_to_plot.add(node_text)
 
             # PROVENANCE SANITY CHECK
-            provenance_warnings = self._graph.sanity_check_provenance(
+            provenance_warnings = self._graph.sanity_check_provenance_wrapper(
                 story_lemmas=self._story_lemmas,
                 persona_only_lemmas=self._persona_only_lemmas,
             )

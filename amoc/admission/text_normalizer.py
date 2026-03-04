@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from amoc.graph.node import Node
 
 
-class TextFilterOps:
+class TextNormalizer:
     def __init__(
         self,
         spacy_nlp,
@@ -29,25 +29,32 @@ class TextFilterOps:
         return label.lower().strip()
 
     def normalize_edge_label(self, label: str) -> str:
-
         if not label or not isinstance(label, str):
             return label
 
-        label = label.strip()
-        if not label:
-            return label
+        cleaned = label.strip()
+        if not cleaned:
+            return cleaned
 
-        result = canonicalize_edge_label(self._spacy_nlp, label)
-
-        if len(result) > 0:
-            if re.search(r"(.)\1{2,}", result):
-                return ""
-            words = result.split()
-            for word in words:
-                if len(word) > 3 and not re.search(r"[aeiou]", word):
-                    return ""
-
+        result = canonicalize_edge_label(self._spacy_nlp, cleaned)
+        if not result:
+            return result
+        if self._has_repeated_chars(result):
+            return ""
+        if self._has_invalid_consonant_tokens(result):
+            return ""
         return result
+
+    @staticmethod
+    def _has_repeated_chars(text: str) -> bool:
+        return bool(re.search(r"(.)\1{2,}", text))
+
+    @staticmethod
+    def _has_invalid_consonant_tokens(text: str) -> bool:
+        for word in text.split():
+            if len(word) > 3 and not re.search(r"[aeiou]", word):
+                return True
+        return False
 
     def is_valid_relation_label(self, label: str) -> bool:
         # verbs cannot become nodes

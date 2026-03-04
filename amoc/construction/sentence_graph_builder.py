@@ -10,11 +10,11 @@ if TYPE_CHECKING:
     from amoc.pipeline.core import AMoCv4
 
 
-class SentenceProcessingOps:
+class SentenceGraphBuilder:
     def __init__(
         self,
         graph_ref,
-        client_ref,
+        llm_extractor,
         spacy_nlp,
         max_distance_from_active_nodes: int,
         edge_visibility: int,
@@ -22,7 +22,7 @@ class SentenceProcessingOps:
         debug: bool = False,
     ):
         self.graph = graph_ref
-        self.client = client_ref
+        self.llm = llm_extractor
         self.spacy_nlp = spacy_nlp
         self.max_distance_from_active_nodes = max_distance_from_active_nodes
         self.edge_visibility = edge_visibility
@@ -48,7 +48,9 @@ class SentenceProcessingOps:
         self._infer_new_relationships_fn = None
         self._add_inferred_relationships_to_graph_fn = None
         self._reactivate_relevant_edges_fn = None
-
+        # step‑0 callbacks
+        self._infer_new_relationships_step_0_fn = None
+        self._add_inferred_relationships_to_graph_step_0_fn = None
         self._explicit_nodes_ref = None
         self._anchor_nodes_ref = None
         self._triplet_intro_ref = None
@@ -57,7 +59,7 @@ class SentenceProcessingOps:
         self.ENFORCE_ATTACHMENT_CONSTRAINT = True
         self.ACTIVATION_MAX_DISTANCE = 2
 
-    def set_callbacks(
+    def set_builder_callbacks(
         self,
         normalize_endpoint_text_fn,
         normalize_edge_label_fn,
@@ -78,6 +80,9 @@ class SentenceProcessingOps:
         infer_new_relationships_fn,
         add_inferred_relationships_to_graph_fn,
         reactivate_relevant_edges_fn,
+        # New step‑0 callbacks
+        infer_new_relationships_step_0_fn,
+        add_inferred_relationships_to_graph_step_0_fn,
     ):
         self._normalize_endpoint_text_fn = normalize_endpoint_text_fn
         self._normalize_edge_label_fn = normalize_edge_label_fn
@@ -104,8 +109,12 @@ class SentenceProcessingOps:
             add_inferred_relationships_to_graph_fn
         )
         self._reactivate_relevant_edges_fn = reactivate_relevant_edges_fn
+        self._infer_new_relationships_step_0_fn = infer_new_relationships_step_0_fn
+        self._add_inferred_relationships_to_graph_step_0_fn = (
+            add_inferred_relationships_to_graph_step_0_fn
+        )
 
-    def set_state_refs(
+    def set_builder_state_refs(
         self,
         explicit_nodes_ref,
         anchor_nodes_ref,
@@ -119,8 +128,8 @@ class SentenceProcessingOps:
         self._carryover_nodes_ref = carryover_nodes_ref
         self.persona = persona
 
-    def configure_with_core(self, core: "AMoCv4") -> None:
-        self.set_callbacks(
+    def configure_sentence_builder_with_core(self, core: "AMoCv4") -> None:
+        self.set_builder_callbacks(
             normalize_endpoint_text_fn=core._normalize_endpoint_text,
             normalize_edge_label_fn=core._normalize_edge_label,
             is_valid_relation_label_fn=core._is_valid_relation_label,
@@ -149,15 +158,201 @@ class SentenceProcessingOps:
             get_phrase_level_concepts_fn=core._extract_phrase_level_concepts,
             get_sentences_text_based_nodes_fn=core._get_sentences_nodes,
             infer_new_relationships_fn=core._infer_new_relationships_for_sentence,
-            add_inferred_relationships_to_graph_fn=core.add_inferred_relationships_to_graph,
-            reactivate_relevant_edges_fn=core.reactivate_relevant_edges,
+            add_inferred_relationships_to_graph_fn=core.add_inferred_relationships_to_graph_wrapper,
+            reactivate_relevant_edges_fn=core.reactivate_relevant_edges_wrapper,
+            # New step‑0 callbacks
+            infer_new_relationships_step_0_fn=core._infer_new_relationships_bootstrap,
+            add_inferred_relationships_to_graph_step_0_fn=core.add_inferred_relationships_to_graph_step_0_wrapper,
         )
-        self.set_state_refs(
+        self.set_builder_state_refs(
             explicit_nodes_ref=core._get_explicit_nodes,
             anchor_nodes_ref=core._anchor_nodes,
             triplet_intro_ref=core._triplet_intro,
             carryover_nodes_ref=core._get_carryover_nodes,
             persona=core.persona,
+        )
+
+    def _build_nodes_from_text(self, nodes, words) -> str:
+        result = ""
+        for i, node in enumerate(nodes):
+            result += f" - ({words[i]}, {node.node_type})\n"
+        return result
+
+    def _add_relationship_from_tuple(
+        self,
+        rel_tuple,
+        current_nodes,
+        current_words,
+    ) -> bool:
+        if len(rel_tuple) != 3:
+            return False
+        subj, rel, obj = rel_tuple
+        if not subj or not obj or subj == obj:
+            return False
+        if not isinstance(subj, str) or not isinstance(obj, str):
+            return False
+
+        norm_subj = self._normalize_endpoint_text_fn(subj, is_subject=True)
+        norm_obj = self._normalize_endpoint_text_fn(obj, is_subject=False)
+        if norm_subj is None or norm_obj is None:
+            return False
+
+        if not self._passes_attachment_constraint_fn(
+            norm_subj,
+            norm_obj,
+            current_words,
+            current_nodes,
+            list(self.graph.nodes),
+            self._get_nodes_with_active_edges_fn(),
+        ):
+            return False
+
+        source_node = self._get_node_from_text_fn(
+            norm_subj,
+            current_nodes,
+            current_words,
+            node_source=NodeSource.TEXT_BASED,
+            create_node=True,
+        )
+        dest_node = self._get_node_from_text_fn(
+            norm_obj,
+            current_nodes,
+            current_words,
+            node_source=NodeSource.TEXT_BASED,
+            create_node=True,
+        )
+        if source_node is None or dest_node is None:
+            return False
+
+        edge_label = rel.replace("(edge)", "").strip()
+        edge_label = self._normalize_edge_label_fn(edge_label)
+        if not self._is_valid_relation_label_fn(edge_label):
+            return False
+
+        canon_label, canon_src, canon_dst, was_swapped = (
+            self._canonicalize_edge_direction_fn(
+                edge_label,
+                source_node.get_text_representer(),
+                dest_node.get_text_representer(),
+            )
+        )
+        if was_swapped:
+            source_node, dest_node = dest_node, source_node
+            edge_label = canon_label
+
+        self._add_edge_fn(
+            source_node,
+            dest_node,
+            edge_label,
+            self.edge_visibility,
+        )
+        return True
+
+    def init_graph(self, sent) -> None:
+        explicit_nodes = (
+            self._explicit_nodes_ref() if callable(self._explicit_nodes_ref) else set()
+        )
+
+        current_nodes, current_words = self._get_sentences_text_based_nodes_fn(
+            [sent], create_unexistent_nodes=True
+        )
+
+        self._extract_deterministic_structure_fn(sent, current_nodes, current_words)
+
+        nodes_from_text = self._build_nodes_from_text(current_nodes, current_words)
+
+        relationships = self.llm.get_new_relationships_first_sentence(
+            nodes_from_text, sent.text, self.persona
+        )
+
+        for rel in relationships:
+            self._add_relationship_from_tuple(rel, current_nodes, current_words)
+
+        for node in explicit_nodes:
+            degree = sum(
+                1
+                for e in self.graph.edges
+                if e.source_node == node or e.dest_node == node
+            )
+            if degree > 0:
+                continue
+
+            nodes_from_text = self._build_nodes_from_text(current_nodes, current_words)
+            extra_relationships = self.llm.get_new_relationships_first_sentence(
+                nodes_from_text, sent.text, self.persona
+            )
+            for rel in extra_relationships:
+                self._add_relationship_from_tuple(rel, current_nodes, current_words)
+
+    def handle_first_sentence(
+        self,
+        sent,
+        resolved_text: str,
+        prev_sentences: list,
+        nodes_before_sentence: set,
+    ) -> tuple:
+        prev_sentences.append(resolved_text)
+        self.init_graph(sent)
+
+        current_nodes, current_words = self._get_sentences_text_based_nodes_fn(
+            [sent], True
+        )
+
+        self._extract_deterministic_structure_fn(sent, current_nodes, current_words)
+
+        sentence_lemma_set = {token.lemma_.lower() for token in sent}
+
+        explicit_nodes_current_sentence = {
+            n
+            for n in current_nodes
+            if n.node_type in {NodeType.CONCEPT, NodeType.PROPERTY}
+            and any(lemma in sentence_lemma_set for lemma in n.lemmas)
+        }
+
+        for node in explicit_nodes_current_sentence:
+            node.activation_score = self.ACTIVATION_MAX_DISTANCE
+            node.active = True
+
+        for node in explicit_nodes_current_sentence:
+            if node not in self.graph.nodes:
+                self.graph.nodes.add(node)
+
+        explicit_nodes_current_sentence = set(explicit_nodes_current_sentence)
+
+        anchor_nodes = {
+            n
+            for n in explicit_nodes_current_sentence
+            if n.node_type == NodeType.CONCEPT
+        } | {
+            n
+            for n in self.graph.nodes
+            if n.node_type == NodeType.CONCEPT and any(e.active for e in n.edges)
+        }
+
+        inferred_concept_relationships, inferred_property_relationships = (
+            self._infer_new_relationships_step_0_fn(sent)
+        )
+
+        self._add_inferred_relationships_to_graph_step_0_fn(
+            inferred_concept_relationships, NodeType.CONCEPT, sent
+        )
+        self._add_inferred_relationships_to_graph_step_0_fn(
+            inferred_property_relationships, NodeType.PROPERTY, sent
+        )
+
+        if not any(edge.active for edge in self.graph.edges):
+            for edge in self.graph.edges:
+                edge.mark_as_asserted(reset_score=True)
+
+        self._restrict_active_to_current_explicit_fn(
+            list(explicit_nodes_current_sentence)
+        )
+
+        return (
+            nodes_before_sentence,
+            False,
+            explicit_nodes_current_sentence,
+            anchor_nodes,
         )
 
     def _relation_is_syntactically_supported(
@@ -252,7 +447,7 @@ class SentenceProcessingOps:
 
         current_all_text = resolved_text
 
-        graph_active_nodes = self.graph.get_active_nodes(
+        graph_active_nodes = self.graph.get_active_nodes_wrapper(
             self.max_distance_from_active_nodes, only_text_based=True
         )
 
@@ -269,7 +464,7 @@ class SentenceProcessingOps:
 
         nodes_from_text = self._append_adjectival_hints_fn(nodes_from_text, sent)
 
-        new_relationships = self.client.get_new_relationships(
+        new_relationships = self.llm.get_new_relationships(
             nodes_from_text,
             active_nodes_text,
             active_nodes_edges_text,
@@ -310,13 +505,13 @@ class SentenceProcessingOps:
                 current_sentence_text_based_nodes,
                 current_sentence_text_based_words,
                 self.graph.get_nodes_str(
-                    self.graph.get_active_nodes(
+                    self.graph.get_active_nodes_wrapper(
                         self.max_distance_from_active_nodes,
                         only_text_based=True,
                     )
                 ),
                 self.graph.get_edges_str(
-                    self.graph.get_active_nodes(
+                    self.graph.get_active_nodes_wrapper(
                         self.max_distance_from_active_nodes,
                         only_text_based=True,
                     ),
@@ -325,7 +520,7 @@ class SentenceProcessingOps:
             )
         )
 
-        graph_active_nodes = self.graph.get_active_nodes(
+        graph_active_nodes = self.graph.get_active_nodes_wrapper(
             self.max_distance_from_active_nodes,
             only_text_based=True,
         )
@@ -355,13 +550,13 @@ class SentenceProcessingOps:
             )
             added_edges.extend(targeted_edges)
 
-        reactivated_edges = self.graph.reactivate_memory_edges_within_distance(
+        reactivated_edges = self.graph.reactivate_memory_edges_within_distance_wrapper(
             explicit_nodes=explicit_nodes_current_sentence,
             max_distance=self.max_distance_from_active_nodes,
             current_sentence=current_sentence_index,
         )
         self._reactivate_relevant_edges_fn(
-            self.graph.get_active_nodes(
+            self.graph.get_active_nodes_wrapper(
                 self.max_distance_from_active_nodes, only_text_based=True
             ),
             " ".join(prev_sentences),
@@ -582,7 +777,7 @@ class SentenceProcessingOps:
 
         for node in explicit_nodes_current_sentence:
             if node not in active_nodes:
-                repair_relationships = self.client.get_new_relationships(
+                repair_relationships = self.llm.get_new_relationships(
                     node.get_text_representer(),
                     self.graph.get_nodes_str(self.graph.nodes),
                     self.graph.get_edges_str(self.graph.nodes)[0],
@@ -651,7 +846,7 @@ class SentenceProcessingOps:
             )
 
             # Recompute active context
-            graph_active_nodes = self.graph.get_active_nodes(
+            graph_active_nodes = self.graph.get_active_nodes_wrapper(
                 self.max_distance_from_active_nodes,
                 only_text_based=True,
             )
@@ -662,7 +857,7 @@ class SentenceProcessingOps:
                 only_text_based=True,
             )
 
-            retry_relationships = self.client.get_new_relationships(
+            retry_relationships = self.llm.get_new_relationships(
                 nodes_from_text,
                 active_nodes_text,
                 active_nodes_edges_text,
@@ -737,7 +932,6 @@ class SentenceProcessingOps:
         resolved_doc = self.spacy_nlp(resolved_text)
         sents = list(resolved_doc.sents)
         if not sents:
-            # Fallback to original if parsing fails
             fallback_doc = self.spacy_nlp(original_text.strip())
             fallback_sents = list(fallback_doc.sents)
             return original_text.strip(), fallback_sents[0] if fallback_sents else sent
@@ -752,5 +946,5 @@ class SentenceProcessingOps:
         decay_node_activation_fn: callable,
     ) -> None:
         apply_global_edge_decay_fn()
-        self.graph.enforce_cumulative_stability(set(explicit_nodes))
+        self.graph.enforce_cumulative_stability_wrapper(set(explicit_nodes))
         decay_node_activation_fn()

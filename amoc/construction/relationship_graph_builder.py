@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from amoc.pipeline.core import AMoCv4
 
 
-class RelationshipGraphOps:
+class RelationshipGraphBuilder:
     def __init__(
         self,
         graph_ref,

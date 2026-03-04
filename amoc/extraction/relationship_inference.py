@@ -7,19 +7,18 @@ if TYPE_CHECKING:
     from spacy.tokens import Span
 
 
-class InferenceOps:
-
+class RelationshipInference:
     def __init__(
         self,
         graph_ref: "Graph",
-        client_ref,
+        llm_extractor,
         spacy_nlp,
         max_new_concepts: int,
         max_new_properties: int,
         persona: str,
     ):
         self._graph = graph_ref
-        self._client = client_ref
+        self._llm = llm_extractor
         self._spacy_nlp = spacy_nlp
         self._max_new_concepts = max_new_concepts
         self._max_new_properties = max_new_properties
@@ -59,7 +58,7 @@ class InferenceOps:
         for _ in range(3):
             try:
                 object_properties_dict = (
-                    self._client.infer_objects_and_properties_first_sentence(
+                    self._llm.infer_objects_and_properties_first_sentence(
                         nodes_from_text, sent.text, self._persona
                     )
                 )
@@ -72,7 +71,7 @@ class InferenceOps:
         for _ in range(3):
             try:
                 new_relationships = (
-                    self._client.generate_new_inferred_relationships_first_sentence(
+                    self._llm.generate_new_inferred_relationships_first_sentence(
                         nodes_from_text,
                         object_properties_dict["concepts"][: self._max_new_concepts],
                         object_properties_dict["properties"][
@@ -114,7 +113,7 @@ class InferenceOps:
         object_properties_dict = None
         for _ in range(3):
             try:
-                object_properties_dict = self._client.infer_objects_and_properties(
+                object_properties_dict = self._llm.infer_objects_and_properties(
                     nodes_from_text,
                     graph_nodes_representation,
                     graph_edges_representation,
@@ -130,7 +129,7 @@ class InferenceOps:
 
         for _ in range(3):
             try:
-                new_relationships = self._client.generate_new_inferred_relationships(
+                new_relationships = self._llm.generate_new_inferred_relationships(
                     nodes_from_text,
                     graph_nodes_representation,
                     graph_edges_representation,

@@ -5,18 +5,18 @@ import networkx as nx
 from amoc.graph.graph import Graph
 from amoc.graph.node import Node, NodeType, NodeSource
 from amoc.graph.edge import Edge
-from amoc.pipeline.text_filter_ops import TextFilterOps
+from amoc.admission.text_normalizer import TextNormalizer
 
 if TYPE_CHECKING:
     from amoc.pipeline.core import AMoCv4
 
 
-class EdgeOps:
+class EdgeAdmission:
 
     def __init__(
         self,
         graph_ref: "Graph",
-        client_ref,
+        llm_extractor,
         spacy_nlp,
         get_explicit_nodes: callable,
         get_carryover_nodes: callable,
@@ -26,7 +26,7 @@ class EdgeOps:
         debug: bool = False,
     ):
         self._graph = graph_ref
-        self._client = client_ref
+        self._llm = llm_extractor
         self._spacy_nlp = spacy_nlp
         self._get_explicit_nodes = get_explicit_nodes
         self._get_carryover_nodes = get_carryover_nodes
@@ -63,7 +63,7 @@ class EdgeOps:
         self._classify_relation_fn = classify_relation_fn
         self._persona = persona
 
-    def set_state_refs(
+    def set_edge_state_refs(
         self,
         triplet_intro: dict,
         persistent_is_edges: set,
@@ -71,7 +71,7 @@ class EdgeOps:
         self._triplet_intro = triplet_intro
         self._persistent_is_edges = persistent_is_edges
 
-    def configure_with_core(self, core: "AMoCv4") -> None:
+    def configure_edge_admission_with_core(self, core: "AMoCv4") -> None:
         self.set_inference_callbacks(
             normalize_endpoint_text_fn=core._normalize_endpoint_text,
             normalize_edge_label_fn=core._normalize_edge_label,
@@ -81,12 +81,12 @@ class EdgeOps:
             classify_relation_fn=core._classify_relation,
             persona=core.persona,
         )
-        self.set_state_refs(
+        self.set_edge_state_refs(
             triplet_intro=core._triplet_intro,
             persistent_is_edges=core._persistent_is_edges,
         )
 
-    def set_current_sentence(self, idx: int):
+    def set_edge_sentence_context(self, idx: int):
         self._current_sentence_index = idx
 
     def edge_key(self, edge: "Edge") -> Tuple[str, str, str]:
@@ -116,7 +116,7 @@ class EdgeOps:
                     return True
         return False
 
-    def create_edge_with_event_mediation(
+    def insert_edge(
         self,
         source_node: "Node",
         dest_node: "Node",
@@ -132,7 +132,7 @@ class EdgeOps:
             else self._current_sentence_index
         )
 
-        label = TextFilterOps.canonicalize_relation_label(label)
+        label = TextNormalizer.canonicalize_relation_label(label)
         if not label:
             return None
 
@@ -180,7 +180,7 @@ class EdgeOps:
             )
             return None
 
-        label = TextFilterOps.canonicalize_relation_label(label)
+        label = TextNormalizer.canonicalize_relation_label(label)
         if not label:
             return None
 
@@ -233,7 +233,7 @@ class EdgeOps:
         ):
             return None
 
-        edge = self.create_edge_with_event_mediation(
+        edge = self.insert_edge(
             source_node,
             dest_node,
             label,
@@ -276,7 +276,7 @@ class EdgeOps:
         persona: str = "",
     ) -> Optional[str]:
         try:
-            result = self._client.get_forced_connectivity_edge_label(
+            result = self._llm.get_forced_connectivity_edge_label(
                 node_a=node_a.get_text_representer(),
                 node_b=node_b.get_text_representer(),
                 story_context=story_context,
@@ -307,7 +307,7 @@ class EdgeOps:
         else:
             protected_nodes = set(self._graph.nodes)
 
-        components, _ = self._graph.get_disconnected_components(protected_nodes)
+        components, _ = self._graph.get_disconnected_components_wrapper(protected_nodes)
 
         if len(components) <= 1:
             return []
@@ -330,7 +330,7 @@ class EdgeOps:
 
             # Try LLM repair (2 attempts)
             for _ in range(2):
-                result = self._client.get_forced_connectivity_edge_label(
+                result = self._llm.get_forced_connectivity_edge_label(
                     node_a=node_a.get_text_representer(),
                     node_b=node_b.get_text_representer(),
                     story_context=story_context,
@@ -445,7 +445,7 @@ class EdgeOps:
         )
 
         try:
-            new_relationships = self._client.get_new_relationships(
+            new_relationships = self._llm.get_new_relationships(
                 nodes_from_text,
                 graph_nodes_repr,
                 graph_edges_repr,

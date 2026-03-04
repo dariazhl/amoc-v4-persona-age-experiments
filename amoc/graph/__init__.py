@@ -1,7 +1,7 @@
 from .node import Node, NodeType, NodeSource
 from .edge import Edge
 from .graph import Graph
-from .per_sentence_graph import (
+from amoc.graph_views.per_sentence_graph import (
     PerSentenceGraph,
     PerSentenceGraphBuilder,
     build_per_sentence_graph,

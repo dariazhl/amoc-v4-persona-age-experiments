@@ -1,7 +1,7 @@
 """
-BASELINE TESTS: TextFilterOps Behavioral Capture
+BASELINE TESTS: TextNormalizer Behavioral Capture
 
-These tests capture the CURRENT behavior of TextFilterOps methods
+These tests capture the CURRENT behavior of TextNormalizer methods
 before any dead-code removal. They serve as regression tests.
 """
 
@@ -159,7 +159,7 @@ class TestUnusedMethodsBaseline:
         """is_node_grounded is NOT called from core.py.
 
         A duplicate exists in node_ops.py:344.
-        SAFE TO DELETE from TextFilterOps.
+        SAFE TO DELETE from TextNormalizer.
         """
         # This test documents that the method is dead code
         pass
@@ -172,7 +172,7 @@ class TestUnusedMethodsBaseline:
         - node_ops.py:359
         - nlp/spacy_utils.py:28
 
-        SAFE TO DELETE from TextFilterOps.
+        SAFE TO DELETE from TextNormalizer.
         """
         # This test documents that the method is dead code
         pass

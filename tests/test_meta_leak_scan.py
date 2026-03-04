@@ -11,6 +11,7 @@ This test suite performs comprehensive checks to ensure:
 import pytest
 import sys
 import importlib.util
+import types
 
 # Direct module loading to avoid triggering amoc/__init__.py
 def load_module_directly(name, path):
@@ -21,14 +22,28 @@ def load_module_directly(name, path):
     return module
 
 base_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/graph"
+algorithms_path = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/amoc/graph_algorithms"
+if "amoc" not in sys.modules:
+    sys.modules["amoc"] = types.ModuleType("amoc")
+if "amoc.graph" not in sys.modules:
+    amoc_graph = types.ModuleType("amoc.graph")
+    sys.modules["amoc.graph"] = amoc_graph
+    sys.modules["amoc"].graph = amoc_graph
+if "amoc.graph_algorithms" not in sys.modules:
+    amoc_graph_algorithms = types.ModuleType("amoc.graph_algorithms")
+    sys.modules["amoc.graph_algorithms"] = amoc_graph_algorithms
+    sys.modules["amoc"].graph_algorithms = amoc_graph_algorithms
 node_module = load_module_directly("amoc.graph.node", f"{base_path}/node.py")
-provenance_module = load_module_directly("amoc.graph.provenance_ops", f"{base_path}/provenance_ops.py")
+provenance_module = load_module_directly(
+    "amoc.graph_algorithms.provenance_validation",
+    f"{algorithms_path}/provenance_validation.py",
+)
 
 Node = node_module.Node
 NodeType = node_module.NodeType
 NodeSource = node_module.NodeSource
 NodeProvenance = node_module.NodeProvenance
-ProvenanceOps = provenance_module.ProvenanceOps
+ProvenanceValidation = provenance_module.ProvenanceValidation
 SemanticCategory = provenance_module.SemanticCategory
 
 
@@ -40,7 +55,7 @@ class MinimalGraph:
         self._story_lemmas = None
         self._persona_only_lemmas = None
         self._current_sentence_lemmas = None
-        self._provenance_ops = ProvenanceOps(self)
+        self._provenance_ops = ProvenanceValidation(self)
 
 
 class TestMetaLeakPrevention:

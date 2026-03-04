@@ -1,5 +1,6 @@
 import logging
 import re
+from dataclasses import dataclass
 from typing import List
 
 try:
@@ -9,6 +10,14 @@ except Exception:
 
 
 COPULA_VERBS = frozenset({"be", "is", "am", "are", "was", "were", "been", "being"})
+
+
+@dataclass(frozen=True)
+class DeterministicRelationCandidate:
+    subject_lemma: str
+    relation_label: str
+    object_lemma: str
+    object_is_property: bool
 
 
 def load_spacy():
@@ -265,3 +274,92 @@ def extract_prepositional_objects(sent: Span) -> List[dict]:
             )
 
     return prep_objects
+
+
+def extract_deterministic_relation_candidates(
+    sent: Span,
+) -> List[DeterministicRelationCandidate]:
+    candidates: list[DeterministicRelationCandidate] = []
+
+    def _lemma(tok) -> str:
+        return (tok.lemma_ or "").lower().strip()
+
+    def _append(subj_lemma: str, rel: str, obj_lemma: str, obj_is_property: bool):
+        if not subj_lemma or not rel or not obj_lemma:
+            return
+        candidates.append(
+            DeterministicRelationCandidate(
+                subject_lemma=subj_lemma,
+                relation_label=rel,
+                object_lemma=obj_lemma,
+                object_is_property=obj_is_property,
+            )
+        )
+
+    for token in sent:
+        # Copular adjective / attribute -> subject -is-> property
+        if token.dep_ in {"acomp", "attr"} and (
+            token.pos_ == "ADJ" or (token.pos_ == "VERB" and token.tag_ == "VBN")
+        ):
+            if _lemma(token.head) != "be":
+                continue
+            subj = next(
+                (c for c in token.head.children if c.dep_ in {"nsubj", "nsubjpass"}),
+                None,
+            )
+            if subj is None:
+                continue
+            _append(_lemma(subj), "is", _lemma(token), True)
+
+        # Adjectival modifier -> noun -is-> adjective
+        if token.dep_ == "amod" and token.pos_ == "ADJ":
+            _append(_lemma(token.head), "is", _lemma(token), True)
+
+        # Verb SVO + prep objects
+        if token.pos_ == "VERB" and _lemma(token) != "be":
+            subj = next(
+                (c for c in token.children if c.dep_ in {"nsubj", "nsubjpass"}),
+                None,
+            )
+            if subj is None:
+                continue
+            subj_lemma = _lemma(subj)
+            verb_lemma = _lemma(token)
+            if not subj_lemma or not verb_lemma:
+                continue
+
+            for obj in (c for c in token.children if c.dep_ in {"dobj", "attr"}):
+                _append(subj_lemma, verb_lemma, _lemma(obj), False)
+                for conj in (c for c in obj.children if c.dep_ == "conj"):
+                    _append(subj_lemma, verb_lemma, _lemma(conj), False)
+
+            for prep in (c for c in token.children if c.dep_ == "prep"):
+                pobj = next((c for c in prep.children if c.dep_ == "pobj"), None)
+                if pobj is None:
+                    continue
+                rel = f"{verb_lemma}_{_lemma(prep)}"
+                _append(subj_lemma, rel, _lemma(pobj), False)
+                for conj in (c for c in pobj.children if c.dep_ == "conj"):
+                    _append(subj_lemma, rel, _lemma(conj), False)
+
+        # ROOT copular prepositional phrase -> subject -is_prep-> pobj
+        if token.dep_ == "ROOT" and _lemma(token) == "be":
+            subj = next(
+                (c for c in token.children if c.dep_ in {"nsubj", "nsubjpass"}),
+                None,
+            )
+            if subj is None:
+                continue
+            subj_lemma = _lemma(subj)
+            if not subj_lemma:
+                continue
+            for prep in (c for c in token.children if c.dep_ == "prep"):
+                pobj = next((c for c in prep.children if c.dep_ == "pobj"), None)
+                if pobj is None:
+                    continue
+                rel = f"is_{_lemma(prep)}"
+                _append(subj_lemma, rel, _lemma(pobj), False)
+                for conj in (c for c in pobj.children if c.dep_ == "conj"):
+                    _append(subj_lemma, rel, _lemma(conj), False)
+
+    return candidates

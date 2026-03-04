@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from amoc.graph.edge import Edge
 
 
-class TripletOps:
+class TripletRecorder:
     def __init__(
         self,
         graph_ref: "Graph",
@@ -123,7 +123,7 @@ class TripletOps:
     def get_filtered_triplets_for_plot(
         self, active_only: bool = True
     ) -> List[Tuple[str, str, str]]:
-        active_nodes, _ = self._graph.get_active_subgraph()
+        active_nodes, _ = self._graph.get_active_subgraph_wrapper()
         active_names = {n.get_text_representer() for n in active_nodes}
 
         triplets = self.graph_edges_to_triplets(only_active=active_only)

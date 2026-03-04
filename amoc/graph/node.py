@@ -18,7 +18,6 @@ class NodeSource(Enum):
     INFERENCE_BASED = 2
 
 
-# DUPLICATE - SAME AS ABOVE
 class NodeProvenance(Enum):
     STORY_TEXT = 1
     INFERRED_FROM_STORY = 2

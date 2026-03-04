@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from spacy.tokens import Span
 
 
-class NodeOps:
+class NodeAdmission:
     def __init__(
         self,
         graph_ref: "Graph",
@@ -29,7 +29,7 @@ class NodeOps:
         self._persona_only_lemmas = persona_only_lemmas
         self._max_distance = max_distance_from_active_nodes
         self._debug = debug
-        self._ever_admitted_nodes: Set[str] = set()
+        self._ever_admitted_nodes = set()
         self._layout_depth = 3
         self._has_active_attachment_fn = None
         self._canonicalize_and_classify_fn = None
@@ -49,9 +49,7 @@ class NodeOps:
         provenance: str,
         sent: Optional["Span"] = None,
     ) -> bool:
-
         lemma = (lemma or "").lower().strip()
-
         if not lemma:
             return False
 
@@ -70,41 +68,31 @@ class NodeOps:
         if provenance == "STORY_EXPLICIT":
             if sent is None:
                 return False
-
             token_matches = [tok for tok in sent if tok.lemma_.lower() == lemma]
-
             if not token_matches:
                 return False
-
             for tok in token_matches:
                 if tok.pos_ in {"VERB", "AUX"}:
                     return False
 
         if provenance == "STORY_EXPLICIT":
             if lemma not in self._story_lemmas:
-                if lemma.endswith("s") and lemma[:-1] in self._story_lemmas:
-                    pass
-                else:
+                if not (lemma.endswith("s") and lemma[:-1] in self._story_lemmas):
                     return False
 
-        # Property grounding check
         if node_type == NodeType.PROPERTY:
             if sent is None:
                 return False
-
             grounded = any(
                 tok.lemma_.lower() == lemma
                 and tok.pos_ == "ADJ"
                 and tok.dep_ in {"amod", "acomp", "attr"}
                 for tok in sent
             )
-
             if not grounded:
                 return False
 
-        # Inference admission
         is_story_grounded = lemma in self._story_lemmas
-
         is_allowed_inference = (
             provenance in {"INFERRED_RELATION", "INFERENCE_BASED"}
             and is_story_grounded
@@ -112,9 +100,8 @@ class NodeOps:
             and self._has_active_attachment_fn(lemma)
         )
 
-        if provenance != "STORY_EXPLICIT":
-            if not is_allowed_inference:
-                return False
+        if provenance != "STORY_EXPLICIT" and not is_allowed_inference:
+            return False
 
         # Track new node admission
         is_new = lemma not in self._ever_admitted_nodes
@@ -123,7 +110,6 @@ class NodeOps:
         # Set limits max no. nodes
         if is_new:
             total_nodes = len(self._ever_admitted_nodes)
-
             if total_nodes > 40:
                 self._layout_depth = max(self._layout_depth, 6)
             elif total_nodes > 25:
@@ -138,38 +124,33 @@ class NodeOps:
         lemma: str,
         current_sentence_text: Optional[str] = None,
         *,
-        allow_bootstrap: bool = False,  # bootstrap = allow small speculative edges
+        allow_bootstrap: bool = False,
     ) -> bool:
         lemma_lower = lemma.lower()
 
-        # HARD GATE 1: Reject persona-only lemmas
+        # Reject persona-only lemmas
         if lemma_lower in self._persona_only_lemmas:
             if self._debug:
                 logging.debug(f"Rejected persona-only lemma '{lemma_lower}'")
             return False
 
-        # HARD GATE 2: Must appear in story text
+        # Must appear in story text
         if lemma_lower in self._story_lemmas:
             return True
-
-        # Check current sentence if provided
         if current_sentence_text:
             sent_doc = self._spacy_nlp(current_sentence_text)
             sent_lemmas = {tok.lemma_.lower() for tok in sent_doc if tok.is_alpha}
             if lemma_lower in sent_lemmas:
                 return True
 
-        # Graph grounding: Allow concepts that already exist
+        # Allow concepts that already exist
         existing_node = self._graph.get_node([lemma_lower])
         if existing_node is not None:
             if self._debug:
                 logging.debug(f"Graph grounding for '{lemma_lower}'")
             return True
-
-        # Bootstrapping to allow for inference
         if allow_bootstrap:
             return True
-
         if self._debug:
             logging.debug(f"Rejected lemma '{lemma_lower}' - not grounded")
         return False
@@ -180,10 +161,8 @@ class NodeOps:
         lemma: str,
     ) -> bool:
         lemma_lower = lemma.lower()
-
         if lemma_lower in self._persona_only_lemmas:
             return False
-
         return lemma_lower in self._story_lemmas
 
     def get_node_from_text(
@@ -197,24 +176,22 @@ class NodeOps:
         if text in curr_sentences_words:
             return curr_sentences_nodes[curr_sentences_words.index(text)]
 
-        if create_node and self._canonicalize_and_classify_fn:
-            canon, inferred_type = self._canonicalize_and_classify_fn(text)
-            if inferred_type is None:
-                return None
+        if not create_node or not self._canonicalize_and_classify_fn:
+            return None
 
-            lemmas = get_concept_lemmas(self._spacy_nlp, canon)
-            if not self.admit_node(
-                lemma=canon,
-                node_type=inferred_type,
-                provenance="TEXT_FALLBACK",
-            ):
-                return None
+        canon, inferred_type = self._canonicalize_and_classify_fn(text)
+        if inferred_type is None:
+            return None
 
-            return self._graph.add_or_get_node(
-                lemmas, canon, inferred_type, node_source
-            )
+        lemmas = get_concept_lemmas(self._spacy_nlp, canon)
+        if not self.admit_node(
+            lemma=canon,
+            node_type=inferred_type,
+            provenance="TEXT_FALLBACK",
+        ):
+            return None
 
-        return None
+        return self._graph.add_or_get_node(lemmas, canon, inferred_type, node_source)
 
     def get_node_from_new_relationship(
         self,
@@ -240,41 +217,36 @@ class NodeOps:
         lemmas = get_concept_lemmas(self._spacy_nlp, canon)
         if not lemmas:
             return None
-
-        primary_lemma = lemmas[0]
-
         # 3. Try match active graph
         for node in graph_active_nodes:
             if lemmas == node.lemmas:
                 return node
-
         # 4. Create node if allowed
-        if create_node:
-            if canon in {"subject", "object", "relation", "properties"}:
-                return None
+        if not create_node:
+            return None
 
-            if not self.admit_node(
-                lemma=primary_lemma,
-                node_type=inferred_type,
-                provenance=NodeProvenance.STORY_TEXT,
-            ):
-                return None
+        if canon in {"subject", "object", "relation", "properties"}:
+            return None
 
-            return self._graph.add_or_get_node(
-                lemmas,
-                canon,
-                inferred_type,
-                node_source,
-            )
+        if not self.admit_node(
+            lemma=lemmas[0],
+            node_type=inferred_type,
+            provenance=NodeProvenance.STORY_TEXT,
+        ):
+            return None
 
-        return None
+        return self._graph.add_or_get_node(
+            lemmas,
+            canon,
+            inferred_type,
+            node_source,
+        )
 
     def find_node_by_text(
         self,
         text: str,
         candidates,
     ) -> Optional["Node"]:
-
         canon = canonicalize_node_text(self._spacy_nlp, text)
         lemmas = tuple(get_concept_lemmas(self._spacy_nlp, canon))
         for node in candidates:
@@ -340,24 +312,20 @@ class NodeOps:
         # garbage words that are generated by the LLM that have nothing to do with the story
         META_LEMMAS = {"subject", "object", "entity", "concept", "property", "thing"}
 
-        text_based_nodes: List["Node"] = []
-        text_based_words: List[str] = []
+        text_based_nodes = []
+        text_based_words = []
 
         for sent in previous_sentences:
             content_words = get_content_words_from_sent(self._spacy_nlp, sent)
-
             for word in content_words:
                 lemma = word.lemma_.lower().strip()
-
                 if not lemma:
                     continue
 
                 if word.pos_ in {"NOUN", "PROPN"}:
                     if lemma in META_LEMMAS:
                         continue
-
                     node = self._graph.get_node([lemma])
-
                     if node is None and create_unexistent_nodes:
                         node = self._graph.add_or_get_node(
                             [lemma],
@@ -368,23 +336,17 @@ class NodeOps:
                             origin_sentence=current_sentence_index,
                             mark_explicit=False,
                         )
-
-                    if node is None:
-                        continue
-
-                    node.mark_explicit_in_sentence(current_sentence_index)
-
-                    text_based_nodes.append(node)
-                    text_based_words.append(lemma)
+                    if node is not None:
+                        node.mark_explicit_in_sentence(current_sentence_index)
+                        text_based_nodes.append(node)
+                        text_based_words.append(lemma)
 
                 elif word.pos_ == "ADJ" or (
                     word.pos_ == "VERB"
                     and word.tag_ == "VBN"
                     and word.dep_ in {"acomp", "attr", "amod", "ROOT"}
                 ):
-
                     node = self._graph.get_node([lemma])
-
                     if node is None and create_unexistent_nodes:
                         node = self._graph.add_or_get_node(
                             [lemma],
@@ -395,20 +357,14 @@ class NodeOps:
                             origin_sentence=current_sentence_index,
                             mark_explicit=False,
                         )
+                    if node is not None:
+                        node.mark_explicit_in_sentence(current_sentence_index)
+                        text_based_nodes.append(node)
+                        text_based_words.append(lemma)
 
-                    if node is None:
-                        continue
-
-                    node.mark_explicit_in_sentence(current_sentence_index)
-
-                    text_based_nodes.append(node)
-                    text_based_words.append(lemma)
-
-        # Return unique
         seen = set()
         unique_nodes = []
         unique_words = []
-
         for node, word in zip(text_based_nodes, text_based_words):
             if node not in seen:
                 seen.add(node)
@@ -432,20 +388,17 @@ class NodeOps:
                 if tok.pos_ in {"NOUN", "PROPN"}:
                     head_noun = tok
                     break
-
             if head_noun is None:
                 continue
 
             # AMoC paper: nodes are "country" not "the country"
             lemma = head_noun.lemma_.lower()
-
             if not admit_node_fn(
                 lemma=lemma,
                 node_type=NodeType.CONCEPT,
                 provenance="STORY_TEXT",
             ):
                 continue
-
             node = self._graph.add_or_get_node(
                 lemmas=[lemma],
                 actual_text=lemma,
@@ -453,8 +406,6 @@ class NodeOps:
                 node_source=NodeSource.TEXT_BASED,
                 provenance=NodeProvenance.STORY_TEXT,
             )
-
             if node is not None:
                 phrase_nodes.append(node)
-
         return phrase_nodes
