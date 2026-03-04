@@ -63,7 +63,7 @@ class Edge:
         self.activation_score: int = (
             activation_score
             if activation_score is not None
-            else self.DEFAULT_ACTIVATION_SCORE
+            else DEFAULT_ACTIVATION_SCORE
         )
         self.origin_sentence: Optional[int] = created_at_sentence
         self.created_at_sentence: Optional[int] = created_at_sentence
@@ -93,12 +93,12 @@ class Edge:
         self.reactivated_this_sentence = False
         self.activation_role = "asserted"
         if reset_score:
-            self.activation_score = self.DEFAULT_ACTIVATION_SCORE
+            self.activation_score = DEFAULT_ACTIVATION_SCORE
 
     def activate(self, reset_score: bool = True) -> None:
         self.active = True
         if reset_score:
-            self.activation_score = self.DEFAULT_ACTIVATION_SCORE
+            self.activation_score = DEFAULT_ACTIVATION_SCORE
 
     def deactivate(self) -> None:
         self.active = False
@@ -131,7 +131,7 @@ class Edge:
         self.asserted_this_sentence = True
         self.reactivated_this_sentence = False
         self.activation_role = "asserted"
-        self.activation_score = self.DEFAULT_ACTIVATION_SCORE
+        self.activation_score = DEFAULT_ACTIVATION_SCORE
 
     def is_forced_connection(self) -> bool:
         return self.forced_connection

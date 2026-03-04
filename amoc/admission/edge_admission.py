@@ -40,7 +40,7 @@ class EdgeAdmission:
         self._normalize_edge_label_fn: Optional[callable] = None
         self._is_valid_relation_label_fn: Optional[callable] = None
         self._find_node_by_text_fn: Optional[callable] = None
-        self._add_edge_fn: Optional[callable] = None
+        self.add_edge_wrapper_fn: Optional[callable] = None
         self._classify_relation_fn: Optional[callable] = None
         self._persona: str = ""
 
@@ -58,7 +58,7 @@ class EdgeAdmission:
         self._normalize_edge_label_fn = normalize_edge_label_fn
         self._is_valid_relation_label_fn = is_valid_relation_label_fn
         self._find_node_by_text_fn = find_node_by_text_fn
-        self._add_edge_fn = add_edge_fn
+        self.add_edge_wrapper_fn = add_edge_fn
         self._classify_relation_fn = classify_relation_fn
         self._persona = persona
 
@@ -76,7 +76,7 @@ class EdgeAdmission:
             normalize_edge_label_fn=core._normalize_edge_label,
             is_valid_relation_label_fn=core._is_valid_relation_label,
             find_node_by_text_fn=lambda t, c: core._node_ops.find_node_by_text(t, c),
-            add_edge_fn=core._add_edge,
+            add_edge_fn=core.add_edge_wrapper,
             classify_relation_fn=core._classify_relation,
             persona=core.persona,
         )
@@ -102,18 +102,6 @@ class EdgeAdmission:
             if edge.source_node == source_node and edge.dest_node == dest_node:
                 return edge
         return None
-
-    def has_edge_between(
-        self, a: "Node", b: "Node", relation_lemma: Optional[str] = None
-    ) -> bool:
-        for edge in a.edges:
-            other = edge.dest_node if edge.source_node == a else edge.source_node
-            if other == b:
-                if relation_lemma is None:
-                    return True
-                if relation_lemma in edge.label.lower():
-                    return True
-        return False
 
     def insert_edge(
         self,
@@ -157,7 +145,7 @@ class EdgeAdmission:
         justification=None,
         persona_influenced: bool = False,
     ) -> Optional["Edge"]:
-        # Reject self-loops - S-V-O triplets require distinct subject and object
+        # Reject self-loops bc S-V-O triplets require distinct subject and object
         if source_node == dest_node:
             return None
 
@@ -265,33 +253,6 @@ class EdgeAdmission:
                 self._persistent_is_edges.add(trip_id)
 
         return edge
-
-    def llm_generate_relation(
-        self,
-        node_a: "Node",
-        node_b: "Node",
-        story_context: str = "",
-        current_sentence: str = "",
-        persona: str = "",
-    ) -> Optional[str]:
-        try:
-            result = self._llm.get_forced_connectivity_edge_label(
-                node_a=node_a.get_text_representer(),
-                node_b=node_b.get_text_representer(),
-                story_context=story_context,
-                current_sentence=current_sentence,
-                persona=persona,
-            )
-
-            if isinstance(result, dict):
-                label = result.get("label")
-            else:
-                label = result
-
-            return label if isinstance(label, str) and label.strip() else None
-
-        except Exception:
-            return None
 
     def create_forced_connectivity_edges(
         self,
@@ -497,7 +458,7 @@ class EdgeAdmission:
             if pair_key not in candidate_pairs:
                 continue
 
-            edge = self._add_edge_fn(
+            edge = self.add_edge_wrapper_fn(
                 subj_node,
                 obj_node,
                 edge_label,

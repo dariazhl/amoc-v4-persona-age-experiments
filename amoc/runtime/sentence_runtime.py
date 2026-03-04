@@ -48,10 +48,6 @@ class SentenceRuntime:
         self._explicit_nodes_current_sentence = explicit_nodes
         self._triplet_intro = triplet_intro
 
-    def set_runtime_sentence_context(self, idx: int, text: str):
-        self._current_sentence_index = idx
-        self._current_sentence_text = text
-
     def configure_graph_for_sentence(self, idx: int, lemmas: Set[str]) -> None:
         self._graph.set_current_sentence(idx)
         self._graph.set_current_sentence_lemmas(lemmas)
@@ -72,12 +68,6 @@ class SentenceRuntime:
             copy.deepcopy(recently_deactivated),
             copy.deepcopy(prev_active_nodes),
         )
-
-    def restore_sentence_state(
-        self,
-        snapshot: Tuple,
-    ) -> Tuple:
-        return snapshot
 
     def _clean_resolved_sentence(self, orig_text: str, candidate: str) -> str:
         if not isinstance(candidate, str) or not candidate.strip():
@@ -234,58 +224,5 @@ class SentenceRuntime:
 
         return self._explicit_nodes_current_sentence | get_nodes_with_active_edges_fn()
 
-    def compute_explicit_nodes(
-        self,
-        sent: "Span",
-        text_based_nodes: List["Node"],
-    ) -> Set["Node"]:
-        sentence_lemma_set = {token.lemma_.lower() for token in sent}
-
-        return {
-            n
-            for n in text_based_nodes
-            if n.node_type in {NodeType.CONCEPT, NodeType.PROPERTY}
-            and any(lemma in sentence_lemma_set for lemma in n.lemmas)
-        }
-
-    def activate_explicit_nodes(
-        self,
-        explicit_nodes: Set["Node"],
-        activation_max_distance: int,
-    ) -> None:
-        for node in explicit_nodes:
-            node.activation_score = activation_max_distance
-            node.active = True
-
-            if node not in self._graph.nodes:
-                self._graph.nodes.add(node)
-
     def extract_sentence_lemmas(self, text: str) -> Set[str]:
         return {w.lower() for w in re.findall(r"[a-zA-Z]+", text)}
-
-    def restore_state_from_snapshot(
-        self,
-        snapshot: Tuple,
-        anchor_nodes: Set["Node"],
-        triplet_intro: dict,
-    ) -> Tuple["Graph", "PerSentenceGraph", Set["Node"], Set["Node"]]:
-        (
-            previous_graph_state,
-            previous_anchor_nodes,
-            previous_triplet_intro,
-            previous_per_sentence_view,
-            previous_recently_deactivated,
-            previous_prev_active_nodes,
-        ) = snapshot
-
-        anchor_nodes.clear()
-        anchor_nodes.update(previous_anchor_nodes)
-        triplet_intro.clear()
-        triplet_intro.update(previous_triplet_intro)
-
-        return (
-            previous_graph_state,
-            previous_per_sentence_view,
-            previous_recently_deactivated,
-            previous_prev_active_nodes,
-        )

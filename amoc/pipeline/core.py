@@ -191,7 +191,7 @@ class AMoCv4:
             append_record_fn=self._amoc_matrix_records.append,
         )
 
-    def _infer_edges_to_recently_deactivated(
+    def infer_edges_to_recently_deactivated_wrapper(
         self,
         current_sentence_nodes: List[Node],
         current_sentence_words: List[str],
@@ -205,7 +205,7 @@ class AMoCv4:
             enforce_attachment=self.ENFORCE_ATTACHMENT_CONSTRAINT,
         )
 
-    def _passes_attachment_constraint(
+    def passes_attachment_constraint_wrapper(
         self,
         subject: str,
         obj: str,
@@ -228,7 +228,7 @@ class AMoCv4:
             allow_inference_bridge=allow_inference_bridge,
         )
 
-    def _add_edge(
+    def add_edge_wrapper(
         self,
         source_node: Node,
         dest_node: Node,
@@ -253,10 +253,10 @@ class AMoCv4:
             persona_influenced=persona_influenced,
         )
         if edge:
-            self._record_edge_in_graphs(edge, self._current_sentence_index)
+            self.record_edge_in_graphs_wrapper(edge, self._current_sentence_index)
         return edge
 
-    def _create_forced_connectivity_edges(
+    def create_forced_connectivity_edges_wrapper(
         self, story_context=None, current_sentence=None, mode="active"
     ):
         return self._edge_ops.create_forced_connectivity_edges(
@@ -267,7 +267,7 @@ class AMoCv4:
             normalize_edge_label_fn=self._normalize_edge_label,
         )
 
-    def _record_edge_in_graphs(self, edge: Edge, sentence_idx: Optional[int]) -> None:
+    def record_edge_in_graphs_wrapper(self, edge: Edge, sentence_idx: Optional[int]) -> None:
         self._edge_ops.record_edge_in_graphs(
             edge=edge,
             sentence_idx=sentence_idx,
@@ -445,7 +445,7 @@ class AMoCv4:
         rollback_needed = self._connectivity_ops.run_connectivity_pipeline(
             prev_sentences=prev_sentences,
             current_sentence_text=self._current_sentence_text,
-            create_forced_edges_fn=self._create_forced_connectivity_edges,
+            create_forced_edges_fn=self.create_forced_connectivity_edges_wrapper,
         )
 
         if rollback_needed:
@@ -728,12 +728,12 @@ class AMoCv4:
 
         return self._finalize_run_outputs(matrix_suffix)
 
-    def _infer_new_relationships_bootstrap(
+    def infer_new_relationships_bootstrap_wrapper(
         self, sent: Span
     ) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
         return self._inference_ops.infer_new_relationships_step_0(sent)
 
-    def _infer_new_relationships_for_sentence(
+    def infer_new_relationships_for_sentence_wrapper(
         self,
         text: str,
         current_sentence_text_based_nodes: List[Node],
@@ -769,7 +769,7 @@ class AMoCv4:
         sent: Span,
     ) -> None:
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
-            self._collect_sentence_text_based_nodes(
+            self.collect_sentence_text_based_nodes_wrapper(
                 [sent], create_unexistent_nodes=False
             )
         )
@@ -801,7 +801,7 @@ class AMoCv4:
             added_edges=added_edges,
         )
 
-    def _resolve_node_from_text(
+    def resolve_node_from_text_wrapper(
         self,
         text: str,
         curr_sentences_nodes: List[Node],
@@ -817,7 +817,7 @@ class AMoCv4:
             create_node=create_node,
         )
 
-    def _resolve_node_from_new_relationship(
+    def resolve_node_from_new_relationship_wrapper(
         self,
         text: str,
         graph_active_nodes: List[Node],
@@ -835,15 +835,15 @@ class AMoCv4:
             create_node=create_node,
         )
 
-    def _extract_phrase_level_concepts(self, sent):
+    def extract_phrase_level_concepts_wrapper(self, sent):
         return self._node_ops.get_phrase_level_concepts(
             sent=sent,
-            admit_node_fn=lambda lemma, node_type, provenance, sent=None: self._node_ops.admit_node(
-                lemma, node_type, provenance, sent
+            admit_node_fn=lambda lemma, node_type, sent=None: self._node_ops.admit_node(
+                lemma, node_type, sent
             ),
         )
 
-    def _collect_sentence_text_based_nodes(
+    def collect_sentence_text_based_nodes_wrapper(
         self,
         previous_sentences: List[Span],
         create_unexistent_nodes: bool = True,

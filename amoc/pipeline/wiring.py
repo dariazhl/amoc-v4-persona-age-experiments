@@ -45,7 +45,7 @@ def wire_core_dependencies(core) -> None:
     core._canonicalize_edge_direction = (
         lambda l, s, d: core._text_filter_ops.canonicalize_edge_direction(l, s, d)
     )
-    core._get_sentences_nodes = lambda sents, create_unexistent_nodes=True: core._collect_sentence_text_based_nodes(
+    core._get_sentences_nodes = lambda sents, create_unexistent_nodes=True: core.collect_sentence_text_based_nodes_wrapper(
         sents, create_unexistent_nodes=create_unexistent_nodes
     )
 
@@ -117,7 +117,7 @@ def wire_core_dependencies(core) -> None:
         persona=core.persona,
     )
     core._linguistic_ops.set_callbacks(
-        add_edge_fn=core._add_edge,
+        add_edge_fn=core.add_edge_wrapper,
         classify_relation_fn=core._classify_relation,
     )
     core._plot_ops = GraphPlotter(

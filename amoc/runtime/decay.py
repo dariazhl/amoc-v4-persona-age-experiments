@@ -191,19 +191,6 @@ class Decay:
             else:
                 edge.reduce_visibility()
 
-    def reactivate_memory_edges(
-        self,
-        current_sentence: int,
-    ) -> Set["Edge"]:
-        explicit_nodes = self._get_explicit_nodes()
-        if not explicit_nodes:
-            return set()
-        return self._graph.reactivate_memory_edges_within_distance_wrapper(
-            explicit_nodes=explicit_nodes,
-            max_distance=self._max_distance,
-            current_sentence=current_sentence,
-        )
-
     def propagate_activation_from_edges(self) -> None:
         for edge in self._graph.edges:
             if not edge.active:
@@ -216,23 +203,6 @@ class Decay:
             )
             edge.source_node.active = True
             edge.dest_node.active = True
-
-    def record_sentence_activation(
-        self,
-        sentence_idx: int,
-        explicit_nodes: Set["Node"],
-        carryover_nodes: Set["Node"],
-    ) -> dict:
-        active_nodes, active_edges = self._graph.get_active_subgraph_wrapper()
-        return {
-            "sentence_idx": sentence_idx,
-            "explicit_count": len(explicit_nodes),
-            "carryover_count": len(carryover_nodes),
-            "active_node_count": len(active_nodes),
-            "active_edge_count": len(active_edges),
-            "explicit_nodes": [n.get_text_representer() for n in explicit_nodes],
-            "carryover_nodes": [n.get_text_representer() for n in carryover_nodes],
-        }
 
     @staticmethod
     def _to_landscape_score(raw_score: float) -> float:

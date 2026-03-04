@@ -46,7 +46,6 @@ class NodeAdmission:
         self,
         lemma: str,
         node_type: "NodeType",
-        provenance: str,
         sent: Optional["Span"] = None,
     ) -> bool:
         lemma = (lemma or "").lower().strip()
@@ -56,18 +55,9 @@ class NodeAdmission:
         if not self._graph._provenance_ops.passes_length_policy(lemma):
             return False
 
-        if provenance in {
-            "LLM_PROMPT",
-            "GRAPH_SERIALIZATION",
-            "CSV",
-            "PLOTTING",
-            "META",
-        }:
-            return False
+        is_explicit = sent is not None
 
-        if provenance == "STORY_EXPLICIT":
-            if sent is None:
-                return False
+        if is_explicit:
             token_matches = [tok for tok in sent if tok.lemma_.lower() == lemma]
             if not token_matches:
                 return False
@@ -75,7 +65,6 @@ class NodeAdmission:
                 if tok.pos_ in {"VERB", "AUX"}:
                     return False
 
-        if provenance == "STORY_EXPLICIT":
             if lemma not in self._story_lemmas:
                 if not (lemma.endswith("s") and lemma[:-1] in self._story_lemmas):
                     return False
@@ -92,22 +81,19 @@ class NodeAdmission:
             if not grounded:
                 return False
 
-        is_story_grounded = lemma in self._story_lemmas
-        is_allowed_inference = (
-            provenance in {"INFERRED_RELATION", "INFERENCE_BASED"}
-            and is_story_grounded
-            and self._has_active_attachment_fn
-            and self._has_active_attachment_fn(lemma)
-        )
+        if not is_explicit:
+            if lemma not in self._story_lemmas:
+                return False
+            if (
+                not self._has_active_attachment_fn
+                or not self._has_active_attachment_fn(lemma)
+            ):
+                return False
 
-        if provenance != "STORY_EXPLICIT" and not is_allowed_inference:
-            return False
-
-        # Track new node admission
         is_new = lemma not in self._ever_admitted_nodes
         self._ever_admitted_nodes.add(lemma)
 
-        # Set limits max no. nodes
+        # IMPROVEMENT: limit no. new nodes
         if is_new:
             total_nodes = len(self._ever_admitted_nodes)
             if total_nodes > 40:
@@ -130,8 +116,6 @@ class NodeAdmission:
 
         # Reject persona-only lemmas
         if lemma_lower in self._persona_only_lemmas:
-            if self._debug:
-                logging.debug(f"Rejected persona-only lemma '{lemma_lower}'")
             return False
 
         # Must appear in story text
@@ -146,24 +130,12 @@ class NodeAdmission:
         # Allow concepts that already exist
         existing_node = self._graph.get_node([lemma_lower])
         if existing_node is not None:
-            if self._debug:
-                logging.debug(f"Graph grounding for '{lemma_lower}'")
             return True
+
         if allow_bootstrap:
             return True
-        if self._debug:
-            logging.debug(f"Rejected lemma '{lemma_lower}' - not grounded")
-        return False
 
-    # stricter version - removed the call
-    def validate_node_provenance_strict(
-        self,
-        lemma: str,
-    ) -> bool:
-        lemma_lower = lemma.lower()
-        if lemma_lower in self._persona_only_lemmas:
-            return False
-        return lemma_lower in self._story_lemmas
+        return False
 
     def get_node_from_text(
         self,
@@ -187,7 +159,6 @@ class NodeAdmission:
         if not self.admit_node(
             lemma=canon,
             node_type=inferred_type,
-            provenance="TEXT_FALLBACK",
         ):
             return None
 
@@ -231,7 +202,6 @@ class NodeAdmission:
         if not self.admit_node(
             lemma=lemmas[0],
             node_type=inferred_type,
-            provenance=NodeProvenance.STORY_TEXT,
         ):
             return None
 
@@ -253,13 +223,6 @@ class NodeAdmission:
             if lemmas == tuple(node.lemmas):
                 return node
         return None
-
-    # ensure that at least one lemma matches story lemmas
-    def is_node_grounded(self, node: "Node") -> bool:
-        for lemma in node.lemmas:
-            if lemma.lower() in self._story_lemmas:
-                return True
-        return False
 
     def node_token_for_matrix(self, node: "Node") -> str:
         return (node.get_text_representer() or "").strip().lower()
@@ -396,7 +359,6 @@ class NodeAdmission:
             if not admit_node_fn(
                 lemma=lemma,
                 node_type=NodeType.CONCEPT,
-                provenance="STORY_TEXT",
             ):
                 continue
             node = self._graph.add_or_get_node(

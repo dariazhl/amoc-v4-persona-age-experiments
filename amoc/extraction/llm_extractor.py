@@ -76,10 +76,15 @@ class LLMExtractor:
         return self._client.resolve_pronouns(text, persona)
 
     def get_forced_connectivity_edge_label(
-        self, node_a: str, node_b: str, story_context: str, current_sentence: str
+        self,
+        node_a: str,
+        node_b: str,
+        story_context: str,
+        current_sentence: str,
+        persona: str = "",
     ):
         return self._client.get_forced_connectivity_edge_label(
-            node_a, node_b, story_context, current_sentence
+            node_a, node_b, story_context, current_sentence, persona
         )
 
     def generate_raw(self, prompt_text: str, temperature: float = 0.0):

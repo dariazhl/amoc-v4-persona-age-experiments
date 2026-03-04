@@ -1,6 +1,5 @@
 import os
 
-# Root folders for data and outputs
 INPUT_DIR = "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments/personas_dfs/chunks"
 OUTPUT_DIR = (
     "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output/extracted_triplets"

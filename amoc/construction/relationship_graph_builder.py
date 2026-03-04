@@ -27,11 +27,11 @@ class RelationshipGraphBuilder:
         self._is_valid_relation_label_fn = None
         self._validate_node_provenance_fn = None
         self._admit_node_fn = None
-        self._passes_attachment_constraint_fn = None
+        self.passes_attachment_constraint_wrapper_fn = None
         self._canonicalize_edge_direction_fn = None
         self._canonicalize_and_classify_node_text_fn = None
         self._classify_relation_fn = None
-        self._add_edge_fn = None
+        self.add_edge_wrapper_fn = None
         self._get_nodes_with_active_edges_fn = None
         self._get_node_from_text_fn = None
         self._get_node_from_new_relationship_fn = None
@@ -65,13 +65,13 @@ class RelationshipGraphBuilder:
         self._is_valid_relation_label_fn = is_valid_relation_label_fn
         self._validate_node_provenance_fn = validate_node_provenance_fn
         self._admit_node_fn = admit_node_fn
-        self._passes_attachment_constraint_fn = passes_attachment_constraint_fn
+        self.passes_attachment_constraint_wrapper_fn = passes_attachment_constraint_fn
         self._canonicalize_edge_direction_fn = canonicalize_edge_direction_fn
         self._canonicalize_and_classify_node_text_fn = (
             canonicalize_and_classify_node_text_fn
         )
         self._classify_relation_fn = classify_relation_fn
-        self._add_edge_fn = add_edge_fn
+        self.add_edge_wrapper_fn = add_edge_fn
         self._get_nodes_with_active_edges_fn = get_nodes_with_active_edges_fn
         self._get_node_from_text_fn = get_node_from_text_fn
         self._get_node_from_new_relationship_fn = get_node_from_new_relationship_fn
@@ -94,16 +94,16 @@ class RelationshipGraphBuilder:
             admit_node_fn=lambda l, nt, p, s=None: core._node_ops.admit_node(
                 l, nt, p, s
             ),
-            passes_attachment_constraint_fn=core._passes_attachment_constraint,
+            passes_attachment_constraint_fn=core.passes_attachment_constraint_wrapper,
             canonicalize_edge_direction_fn=core._canonicalize_edge_direction,
             canonicalize_and_classify_node_text_fn=lambda t: (
                 core._text_filter_ops.canonicalize_and_classify_node_text(t)
             ),
             classify_relation_fn=core._classify_relation,
-            add_edge_fn=core._add_edge,
+            add_edge_fn=core.add_edge_wrapper,
             get_nodes_with_active_edges_fn=core._get_active_edge_nodes,
-            get_node_from_text_fn=core._resolve_node_from_text,
-            get_node_from_new_relationship_fn=core._resolve_node_from_new_relationship,
+            get_node_from_text_fn=core.resolve_node_from_text_wrapper,
+            get_node_from_new_relationship_fn=core.resolve_node_from_new_relationship_wrapper,
             get_concept_lemmas_fn=lambda text: get_concept_lemmas(core.spacy_nlp, text),
             appears_in_story_fn=lambda t, check_graph=False: (
                 core._text_filter_ops.appears_in_story(t, check_graph=check_graph)
@@ -157,7 +157,7 @@ class RelationshipGraphBuilder:
 
             active_nodes_set = set(self._get_nodes_with_active_edges_fn())
 
-            attachment_ok = self._passes_attachment_constraint_fn(
+            attachment_ok = self.passes_attachment_constraint_wrapper_fn(
                 relationship[0],
                 relationship[2],
                 current_sentence_text_based_words,
@@ -225,7 +225,6 @@ class RelationshipGraphBuilder:
                 if not self._admit_node_fn(
                     lemma=subj,
                     node_type=subj_type,
-                    provenance="INFERRED_RELATION",
                 ):
                     continue
 
@@ -271,7 +270,7 @@ class RelationshipGraphBuilder:
                 source_node, dest_node = dest_node, source_node
                 edge_label = canon_label
 
-            self._add_edge_fn(
+            self.add_edge_wrapper_fn(
                 source_node,
                 dest_node,
                 edge_label,
@@ -313,7 +312,7 @@ class RelationshipGraphBuilder:
             if norm_subj is None or norm_obj is None:
                 continue
 
-            if not self._passes_attachment_constraint_fn(
+            if not self.passes_attachment_constraint_wrapper_fn(
                 relationship[0],
                 relationship[2],
                 curr_sentences_words,
@@ -456,7 +455,7 @@ class RelationshipGraphBuilder:
             ):
                 continue
 
-            potential_edge = self._add_edge_fn(
+            potential_edge = self.add_edge_wrapper_fn(
                 source_node,
                 dest_node,
                 edge_label,
