@@ -51,7 +51,7 @@ class NodeActivationEngine:
 
             # Keep cumulative backbone edges alive
             if edge.created_at_sentence is not None:
-                if edge.created_at_sentence < self._graph.current_sentence_index:
+                if edge.created_at_sentence < self._graph._current_sentence_idx:
                     continue
 
             # Otherwise reset
