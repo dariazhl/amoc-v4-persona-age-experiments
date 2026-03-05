@@ -542,7 +542,7 @@ class GraphPlotter:
             only_active=False,
             largest_component_only=largest_component_only,
             mode="sentence_cumulative",
-            triplets_override=reconstruct_semantic_triplets_fn(only_active=False),
+            triplets_override=reconstruct_semantic_triplets_fn(only_active=True),
             active_edges=cumulative_active_pairs,
             active_triplets_for_overlay=active_triplets,
             property_nodes=property_nodes_for_plot,

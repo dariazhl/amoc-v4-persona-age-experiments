@@ -211,15 +211,15 @@ class Graph:
     def deactivate_all_edges_wrapper(self) -> None:
         self._activation_ops.deactivate_all_edges()
 
-    def reactivate_memory_edges_within_distance_wrapper(
-        self,
-        explicit_nodes: Set[Node],
-        max_distance: int,
-        current_sentence: int,
-    ) -> Set[Edge]:
-        return self._activation_ops.reactivate_memory_edges_within_distance(
-            explicit_nodes, max_distance, current_sentence
-        )
+    # def reactivate_memory_edges_within_distance_wrapper(
+    #     self,
+    #     explicit_nodes: Set[Node],
+    #     max_distance: int,
+    #     current_sentence: int,
+    # ) -> Set[Edge]:
+    #     return self._activation_ops.reactivate_memory_edges_within_distance(
+    #         explicit_nodes, max_distance, current_sentence
+    #     )
 
     def get_active_nodes_wrapper(
         self, score_threshold: int, only_text_based: bool = False

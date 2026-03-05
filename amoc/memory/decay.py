@@ -89,8 +89,9 @@ class Decay:
             for edge in edges:
                 if edge.is_property_edge():
                     continue
-                edge.mark_as_reactivated(reset_score=False)
-                edge.visibility_score = self._edge_visibility
+                edge.mark_as_reactivated(
+                    reset_score=False, new_visibility=self._edge_visibility
+                )
                 if self._record_edge_fn and (
                     edge.is_asserted() or edge.is_reactivated()
                 ):
@@ -137,8 +138,9 @@ class Decay:
             if idx in selected or edge in newly_added_edges:
                 if edge.is_property_edge():
                     continue
-                edge.mark_as_reactivated(reset_score=False)
-                edge.visibility_score = self._edge_visibility
+                edge.mark_as_reactivated(
+                    reset_score=False, new_visibility=self._edge_visibility
+                )
                 if self._record_edge_fn and (
                     edge.is_asserted() or edge.is_reactivated()
                 ):
@@ -200,8 +202,9 @@ class Decay:
             if edge in edges_to_reactivate:
                 if edge.is_property_edge():
                     continue
-                edge.mark_as_reactivated(reset_score=False)
-                edge.visibility_score = self._edge_visibility
+                edge.mark_as_reactivated(
+                    reset_score=False, new_visibility=self._edge_visibility
+                )
                 if self._record_edge_fn and (
                     edge.is_asserted() or edge.is_reactivated()
                 ):

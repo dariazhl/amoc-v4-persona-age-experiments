@@ -101,7 +101,9 @@ class NodeActivationEngine:
         reactivated = set()
         # reactivate the top candidates up to the max count
         for dist, edge in candidates[:MAX_REACTIVATION_COUNT]:
-            edge.mark_as_reactivated(reset_score=False)
+            edge.mark_as_reactivated(
+                reset_score=False, new_visibility=self._edge_visibility
+            )
             reactivated.add(edge)
         # edges that are reactivated and added to the active subgrah
         return reactivated

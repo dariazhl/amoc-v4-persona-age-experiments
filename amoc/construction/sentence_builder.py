@@ -522,12 +522,12 @@ class SentenceGraphBuilder:
             current_all_text,
         )
         added_edges.extend(targeted_edges)
-        # BFS from explicit nodes, reactivating inactive edges with visibility > 0
-        reactivated_edges = self.graph.reactivate_memory_edges_within_distance_wrapper(
-            explicit_nodes=explicit_nodes_current_sentence,
-            max_distance=self.max_distance_from_active_nodes,
-            current_sentence=current_sentence_index,
-        )
+        # # BFS from explicit nodes, reactivating inactive edges with visibility > 0
+        # reactivated_edges = self.graph.reactivate_memory_edges_within_distance_wrapper(
+        #     explicit_nodes=explicit_nodes_current_sentence,
+        #     max_distance=self.max_distance_from_active_nodes,
+        #     current_sentence=current_sentence_index,
+        # )
         # use LLM to select which memory edges to reactivate based on the sentence context
         self._reactivate_relevant_edges_fn(
             self.graph.get_active_nodes_wrapper(

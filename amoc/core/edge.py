@@ -79,7 +79,9 @@ class Edge:
         self.forced_connection: bool = False
         self.checkpoint: bool = False
 
-    def mark_as_reactivated(self, reset_score: bool = True) -> None:
+    def mark_as_reactivated(
+        self, reset_score: bool = True, new_visibility: int = None
+    ) -> None:
         self.active = True
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = True
@@ -87,6 +89,8 @@ class Edge:
 
         if reset_score:
             self.activation_score = max(self.activation_score, 1)
+        if new_visibility is not None:
+            self.visibility_score = new_visibility
 
     def mark_as_current_sentence(self, reset_score: bool = True) -> None:
         self.active = True
