@@ -51,7 +51,7 @@ def get_content_words_from_sent(nlp, sent: Span) -> List[Token]:
     return content_words
 
 
-def _verb_to_present_tense(lemma: str) -> str:
+def verb_to_present_tense(lemma: str) -> str:
     # Convert a verb lemma to simple present tense (3rd person singular).
     if not lemma:
         return lemma
@@ -112,7 +112,7 @@ def canonicalize_edge_label(nlp, label: str) -> str:
             return ""
 
     if main_verb:
-        base = _verb_to_present_tense(main_verb.lemma_.lower())
+        base = verb_to_present_tense(main_verb.lemma_.lower())
         parts = [base] + preps
         result = "_".join(parts)
         result_doc = nlp(result.replace("_", " "))

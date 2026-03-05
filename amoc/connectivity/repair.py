@@ -12,7 +12,7 @@ class ConnectivityRepair:
     def __init__(self, graph_ref: "Graph"):
         self._graph = graph_ref
 
-    def _build_active_graph(
+    def build_active_graph(
         self, include_nodes: Optional[Set["Node"]] = None
     ) -> nx.Graph:
         G = nx.Graph()
@@ -24,22 +24,22 @@ class ConnectivityRepair:
                 G.add_node(node)
         return G
 
-    def _build_cumulative_graph(self) -> nx.Graph:
+    def build_cumulative_graph(self) -> nx.Graph:
         return self._graph.to_networkx()
 
-    # Design: ensure active graph is connected
-    def compute_active_connectivity(
+    # check if the active subgraph is connected
+    def is_active_subgraph_connected(
         self, required_nodes: Optional[Set["Node"]] = None
     ) -> bool:
-        G = self._build_active_graph(include_nodes=required_nodes)
+        G = self.build_active_graph(include_nodes=required_nodes)
         if G.number_of_nodes() <= 1:
             return True
         return nx.is_connected(G)
 
-    def compute_cumulative_connectivity(self) -> bool:
+    def is_cumulative_graph_connected(self) -> bool:
         if not self._graph.edges:
             return True
-        G = self._build_cumulative_graph()
+        G = self.build_cumulative_graph()
         if G.number_of_nodes() <= 1:
             return True
         return nx.is_connected(G)
@@ -47,7 +47,7 @@ class ConnectivityRepair:
     def get_disconnected_components(
         self, focus_nodes: Set["Node"]
     ) -> Tuple[List[Set["Node"]], int]:
-        G = self._build_active_graph(include_nodes=focus_nodes)
+        G = self.build_active_graph(include_nodes=focus_nodes)
         if G.number_of_nodes() <= 1:
             return ([set(G.nodes())] if G.number_of_nodes() == 1 else [], 0)
 
@@ -66,11 +66,11 @@ class ConnectivityRepair:
         return (components, focus_idx)
 
     def can_connect_via_cumulative(self, required_nodes: Set["Node"]) -> bool:
-        if self.compute_active_connectivity(required_nodes):
+        if self.is_active_subgraph_connected(required_nodes):
             return True
 
-        G_cumulative = self._build_cumulative_graph()
-        G_active = self._build_active_graph(include_nodes=required_nodes)
+        G_cumulative = self.build_cumulative_graph()
+        G_active = self.build_active_graph(include_nodes=required_nodes)
 
         if G_active.number_of_nodes() <= 1:
             return True
@@ -91,12 +91,14 @@ class ConnectivityRepair:
                     return False
         return True
 
+    # issue: cumulative graph can be fragmented
+    # purpose: reconnect disconnected cumulative graph
     def reconnect_via_cumulative(self, required_nodes: Set["Node"]) -> Set["Edge"]:
-        if self.compute_active_connectivity(required_nodes):
+        if self.is_active_subgraph_connected(required_nodes):
             return set()
 
-        G_cumulative = self._build_cumulative_graph()
-        G_active = self._build_active_graph(include_nodes=required_nodes)
+        G_cumulative = self.build_cumulative_graph()
+        G_active = self.build_active_graph(include_nodes=required_nodes)
 
         components = list(nx.connected_components(G_active))
         if len(components) <= 1:
@@ -141,15 +143,15 @@ class ConnectivityRepair:
 
         return reactivated
 
-    def reactivate_to_restore_connectivity(
+    def restore_connectivity(
         self,
         required_nodes: Set["Node"],
         allow_reactivation: bool = True,
         enforce_cumulative: bool = False,
     ) -> bool:
         #  already connected
-        if self.compute_active_connectivity(required_nodes):
-            if enforce_cumulative and not self.compute_cumulative_connectivity():
+        if self.is_active_subgraph_connected(required_nodes):
+            if enforce_cumulative and not self.is_cumulative_graph_connected():
                 # This should not happen in normal operation
                 logging.warning("Cumulative graph fragmented")
             return True
@@ -158,15 +160,15 @@ class ConnectivityRepair:
         if allow_reactivation:
             self.reconnect_via_cumulative(required_nodes)
 
-        active_connected = self.compute_active_connectivity(required_nodes)
+        active_connected = self.is_active_subgraph_connected(required_nodes)
 
         if active_connected and enforce_cumulative:
-            if not self.compute_cumulative_connectivity():
+            if not self.is_cumulative_graph_connected():
                 logging.warning("Active connected but cumulative fragmented")
 
         return active_connected
 
-    def enforce_cumulative_stability(
+    def stabilize_cumulative_graph(
         self,
         explicit_nodes: set,
     ) -> None:
@@ -200,12 +202,12 @@ class ConnectivityRepair:
         self._graph.nodes = new_nodes
         self._graph.edges = new_edges
 
-    def enforce_carryover_connectivity(self, carryover_nodes: set) -> None:
+    def ensure_carryover_connected(self, carryover_nodes: set) -> None:
         # carryover nodes get disconnected sometimes - added guard
         if not carryover_nodes:
             return
 
-        G = self._build_active_graph()
+        G = self.build_active_graph()
 
         degree_map = {}
         for e in self._graph.edges:
@@ -217,7 +219,7 @@ class ConnectivityRepair:
             if degree_map.get(node, 0) == 0:
                 node.active = False
 
-        G = self._build_active_graph()
+        G = self.build_active_graph()
         sub = G.subgraph(carryover_nodes)
         components = list(nx.connected_components(sub))
 
@@ -241,7 +243,7 @@ class ConnectivityRepair:
                     e.source_node.active = True
                     e.dest_node.active = True
 
-                    G = self._build_active_graph()
+                    G = self.build_active_graph()
                     sub = G.subgraph(carryover_nodes)
                     components = list(nx.connected_components(sub))
 

@@ -40,6 +40,7 @@ class Decay:
     def set_decay_sentence_context(self, idx: int):
         self._current_sentence_index = idx
 
+    # global decay = fade edges that are never reinforced in cumulative graph
     def apply_global_edge_decay(self) -> None:
         for edge in self._graph.edges:
             if edge.created_at_sentence == self._current_sentence_index:
@@ -50,6 +51,7 @@ class Decay:
                     edge.visibility_score = 0
                     edge.active = False
 
+    # local decay = fade nodes that are not connected to any active edge and are not explicit in the current sentence
     def decay_node_activation(self) -> None:
         explicit_nodes = self._get_explicit_nodes()
         for node in self._graph.nodes:
@@ -64,10 +66,10 @@ class Decay:
                 node.active = False
                 continue
 
-            if not self._node_has_active_edge(node):
+            if not self.has_active_edge(node):
                 node.active = False
 
-    def _node_has_active_edge(self, node: "Node") -> bool:
+    def has_active_edge(self, node: "Node") -> bool:
         return any(
             e.active and (e.source_node == node or e.dest_node == node)
             for e in self._graph.edges
@@ -144,7 +146,7 @@ class Decay:
             else:
                 edge.reduce_visibility()
 
-    def _fallback_edges(
+    def get_fallback_edges(
         self,
         edges: List["Edge"],
         newly_added_edges: List["Edge"],
@@ -160,7 +162,7 @@ class Decay:
                 fallback.add(edge)
         return fallback
 
-    def _build_edges_to_reactivate(
+    def select_edges_for_reactivation(
         self,
         edges: List["Edge"],
         selected_indices: List[int],
@@ -191,7 +193,7 @@ class Decay:
 
         return edges_to_reactivate
 
-    def _apply_reactivation_or_decay(
+    def process_edges(
         self, edges: List["Edge"], edges_to_reactivate: Set["Edge"]
     ) -> None:
         for edge in edges:
@@ -207,6 +209,8 @@ class Decay:
             else:
                 edge.reduce_visibility()
 
+    # propagate activation from active edges to connected nodes
+    # if edge is active, the endpoints become active
     def propagate_activation_from_edges(self) -> None:
         for edge in self._graph.edges:
             if not edge.active:
@@ -220,7 +224,7 @@ class Decay:
             edge.source_node.active = True
             edge.dest_node.active = True
 
-    def _to_landscape_score(self, raw_score: float) -> float:
+    def convert_to_landscape_score(self, raw_score: float) -> float:
         val = 5.0 - float(raw_score)
         if val < 0.0:
             return 0.0
@@ -228,6 +232,8 @@ class Decay:
             return 5.0
         return val
 
+    # records the activation scores of all relevant nodes for the current sent
+    # landscape model
     def record_sentence_activation_matrix(
         self,
         sentence_id: int,
@@ -238,7 +244,7 @@ class Decay:
         append_record_fn: callable,
     ) -> None:
         explicit_set = set(explicit_nodes)
-        distances = self.distances_from_sources_active_edges(
+        distances = self.compute_distances_from_sources(
             explicit_set, max_distance=max_distance
         )
 
@@ -272,7 +278,7 @@ class Decay:
                 {
                     "sentence": sentence_id,
                     "token": token,
-                    "score": self._to_landscape_score(raw_score),
+                    "score": self.convert_to_landscape_score(raw_score),
                 }
             )
 
@@ -295,8 +301,8 @@ class Decay:
             dst_raw = node_raw_score.get(
                 edge.dest_node, edge.dest_node.activation_score
             )
-            src_act = self._to_landscape_score(src_raw)
-            dst_act = self._to_landscape_score(dst_raw)
+            src_act = self.convert_to_landscape_score(src_raw)
+            dst_act = self.convert_to_landscape_score(dst_raw)
             verb_act = max(src_act, dst_act) - 0.5
             if verb_act < 0.0:
                 verb_act = 0.0
@@ -307,7 +313,7 @@ class Decay:
         for token, score in verb_scores.items():
             append_record_fn({"sentence": sentence_id, "token": token, "score": score})
 
-    def distances_from_sources_active_edges(
+    def compute_distances_from_sources(
         self, sources: Set["Node"], max_distance: int
     ) -> Dict["Node", int]:
         if not sources:
@@ -331,10 +337,10 @@ class Decay:
                 queue.append(neighbor)
         return distances
 
-    def restrict_active_to_current_explicit(self, explicit_nodes: List["Node"]) -> None:
+    def restrict_active_nodes(self, explicit_nodes: List["Node"]) -> None:
         explicit_set = set(explicit_nodes)
         for node in self._graph.nodes:
-            has_active_edge = self._node_has_active_edge(node)
+            has_active_edge = self.has_active_edge(node)
             node.active = has_active_edge
 
     def has_active_attachment(self, lemma: str) -> bool:

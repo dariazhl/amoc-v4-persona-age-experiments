@@ -64,5 +64,4 @@ bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
     --output-dir "${RUN_OUTPUT_DIR}" \
     --file "${INPUT_FILE}" \
     --strict-reactivate-function \
-    --strict-attachament-constraint \
     ${STORY_ARG}

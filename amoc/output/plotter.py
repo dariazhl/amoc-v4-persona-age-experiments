@@ -30,7 +30,6 @@ class GraphPlotter:
         persona: str,
         persona_age: Optional[int] = None,
         layout_depth: int = 3,
-        allow_multi_edges: bool = True,
     ):
         self._graph = graph_ref
         self._output_dir = output_dir
@@ -38,7 +37,6 @@ class GraphPlotter:
         self._persona = persona
         self._persona_age = persona_age
         self._layout_depth = layout_depth
-        self._allow_multi_edges = allow_multi_edges
         self._viz_positions: Dict[str, Tuple[float, float]] = {}
         self._prev_active_nodes: Set["Node"] = set()
         self._cumulative_deactivated_nodes: Set["Node"] = set()
@@ -112,7 +110,7 @@ class GraphPlotter:
 
         # Determine output path
         if output_path is None:
-            safe_persona = self._sanitize_filename(self._persona[:50])
+            safe_persona = self.sanitize_filename(self._persona[:50])
             output_path = os.path.join(
                 self._output_dir,
                 self._model_name,
@@ -153,7 +151,7 @@ class GraphPlotter:
 
         return output_path
 
-    def _sanitize_filename(self, name: str, max_len: int = 80) -> str:
+    def sanitize_filename(self, name: str, max_len: int = 80) -> str:
         name = (name or "").replace("\n", " ").strip()
         name = name[:max_len]
         name = re.sub(r"[\\/:*?\"<>|]", "_", name)
@@ -188,7 +186,7 @@ class GraphPlotter:
             return None
 
         # Build output path
-        safe_persona = self._sanitize_filename(self._persona[:50])
+        safe_persona = self.sanitize_filename(self._persona[:50])
         suffix_part = f"_{matrix_suffix}" if matrix_suffix else ""
         output_path = os.path.join(
             self._output_dir,
@@ -405,7 +403,6 @@ class GraphPlotter:
                 active_edges=active_edges,
                 edge_activation_scores=edge_activation_scores,
                 layout_from_active_only=True,
-                allow_multi_edges=self._allow_multi_edges,
                 active_triplets_for_overlay=active_triplets_for_overlay,
                 show_triplet_overlay=True,
                 layout_depth=self._layout_depth,
@@ -429,6 +426,9 @@ class GraphPlotter:
         except Exception:
             logging.error("Failed to plot graph snapshot", exc_info=True)
 
+    # generates two plots for the given sentence:
+    # 1. for the active subgraph - mode="sentence_active"
+    # 2. for the cumulative subgraph (working memory) - mode="sentence_cumulative",
     def plot_sentence_views(
         self,
         sentence_idx: int,
@@ -442,14 +442,14 @@ class GraphPlotter:
         explicit_nodes_current_sentence: Set["Node"],
         reconstruct_semantic_triplets_fn: callable,
     ) -> None:
-        # Active view - use per-sentence view for clean isolation
+        # Active view - use per-sentence view
         if per_sentence_view is not None:
             active_nodes = set(per_sentence_view.explicit_nodes) | set(
                 per_sentence_view.carryover_nodes
             )
         else:
             active_nodes = None
-
+        # explicit nodes
         explicit_nodes_for_plot = [
             node.get_text_representer()
             for node in explicit_nodes_current_sentence
@@ -485,8 +485,7 @@ class GraphPlotter:
                 },
             )
         )
-
-        # edges ARE the semantic triplets
+        # Plot active view
         if per_sentence_view is not None:
             active_edge_pairs = {
                 (
@@ -505,7 +504,6 @@ class GraphPlotter:
                 for edge in snapshot_edges
             }
 
-        # Plot active view
         self.plot_graph_snapshot_full(
             sentence_index=sentence_idx,
             sentence_text=original_text,
@@ -523,7 +521,7 @@ class GraphPlotter:
             property_nodes=property_nodes_for_plot,
         )
 
-        # Cumulative memory view
+        # Plot cumulative view
         snapshot_edges = [e for e in self._graph.edges if e.active]
         cumulative_active_pairs = {
             (

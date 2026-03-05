@@ -120,12 +120,10 @@ def process_persona_csv(
     plot_largest_component_only: bool = False,
     include_inactive_edges: bool = False,
     strict_reactivate_function: bool = True,
-    strict_attachament_constraint: bool = True,
     single_anchor_hub: bool = True,
     edge_visibility: Optional[int] = None,
     story_text: Optional[str] = None,
     force_node: bool = False,
-    allow_multi_edges: bool = False,
     checkpoint: bool = False,
 ) -> None:
     short_filename = os.path.basename(filename)
@@ -248,13 +246,11 @@ def process_persona_csv(
                         highlight_nodes=highlight_nodes,
                         largest_component_only=plot_largest_component_only,
                         strict_reactivate_function=strict_reactivate_function,
-                        strict_attachament_constraint=strict_attachament_constraint,
                         single_anchor_hub=single_anchor_hub,
                         story_text=story_text,
                         edge_visibility=edge_visibility,
                         matrix_dir_base=str(output_dir),
                         force_node=force_node,
-                        allow_multi_edges=allow_multi_edges,
                         checkpoint=False,
                     )
 

@@ -26,13 +26,18 @@ class OutputFinalizer:
         self._story_text = story_text
         self._matrix_dir_base = matrix_dir_base
 
-    def _sanitize_filename_component(self, component: str, max_len: int = 80) -> str:
+    def sanitize_filename_component(self, component: str, max_len: int = 80) -> str:
         component = (component or "").replace("\n", " ").strip()
         component = component[:max_len]
         component = re.sub(r"[\\/:*?\"<>|]", "_", component)
         component = re.sub(r"\s+", "_", component)
         return component or "unknown"
 
+    # generates final output files:
+    # 1. the activation matrix CSV
+    # 2. the list of final active triplets
+    # 3. the per‑sentence triplets from active graph
+    # 4. the triplets from cumulative graph
     def finalize_outputs(
         self,
         amoc_matrix_records: List[Dict],
@@ -80,11 +85,11 @@ class OutputFinalizer:
         matrix_dir = os.path.join(self._matrix_dir_base, "matrix")
         os.makedirs(matrix_dir, exist_ok=True)
 
-        safe_model = self._sanitize_filename_component(self._model_name, max_len=60)
-        safe_persona = self._sanitize_filename_component(self._persona, max_len=60)
+        safe_model = self.sanitize_filename_component(self._model_name, max_len=60)
+        safe_persona = self.sanitize_filename_component(self._persona, max_len=60)
         age_for_filename = self._persona_age if self._persona_age is not None else -1
         suffix = (
-            f"_{self._sanitize_filename_component(matrix_suffix)}"
+            f"_{self.sanitize_filename_component(matrix_suffix)}"
             if matrix_suffix
             else ""
         )

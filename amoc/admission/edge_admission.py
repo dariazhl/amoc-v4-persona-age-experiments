@@ -4,7 +4,7 @@ import logging
 from amoc.core.graph import Graph
 from amoc.core.node import Node, NodeType, NodeSource
 from amoc.core.edge import Edge
-from amoc.admission.text_normalizer import TextNormalizer, canonicalize_relation_label
+from amoc.admission.text_normalizer import TextNormalizer
 
 if TYPE_CHECKING:
     from amoc.pipeline.orchestrator import AMoCv4
@@ -21,7 +21,6 @@ class EdgeAdmission:
         get_carryover_nodes: callable,
         get_attachable_nodes: callable,
         edge_visibility: int,
-        allow_multi_edges: bool,
         debug: bool = False,
     ):
         self._graph = graph_ref
@@ -31,7 +30,6 @@ class EdgeAdmission:
         self._get_carryover_nodes = get_carryover_nodes
         self._get_attachable_nodes = get_attachable_nodes
         self._edge_visibility = edge_visibility
-        self._allow_multi_edges = allow_multi_edges
         self._debug = debug
         self._triplet_intro = {}
         self._persistent_is_edges = set()
@@ -41,7 +39,6 @@ class EdgeAdmission:
         self._is_valid_relation_label_fn: Optional[callable] = None
         self._find_node_by_text_fn: Optional[callable] = None
         self.add_edge_wrapper_fn: Optional[callable] = None
-        self._classify_relation_fn: Optional[callable] = None
         self._persona: str = ""
 
     def configure_edge_inference_callbacks(
@@ -51,7 +48,6 @@ class EdgeAdmission:
         is_valid_relation_label_fn: callable,
         find_node_by_text_fn: callable,
         add_edge_fn: callable,
-        classify_relation_fn: callable,
         persona: str,
     ):
         self._normalize_endpoint_text_fn = normalize_endpoint_text_fn
@@ -59,7 +55,6 @@ class EdgeAdmission:
         self._is_valid_relation_label_fn = is_valid_relation_label_fn
         self._find_node_by_text_fn = find_node_by_text_fn
         self.add_edge_wrapper_fn = add_edge_fn
-        self._classify_relation_fn = classify_relation_fn
         self._persona = persona
 
     def configure_edge_state_refs(
@@ -77,7 +72,6 @@ class EdgeAdmission:
             is_valid_relation_label_fn=core._is_valid_relation_label,
             find_node_by_text_fn=lambda t, c: core._node_ops.find_node_by_text(t, c),
             add_edge_fn=core.add_edge_wrapper,
-            classify_relation_fn=core._classify_relation,
             persona=core.persona,
         )
         self.configure_edge_state_refs(
@@ -88,6 +82,7 @@ class EdgeAdmission:
     def set_edge_sentence_context(self, idx: int):
         self._current_sentence_index = idx
 
+    # helper method
     def build_edge_triplet_key(self, edge: "Edge") -> Tuple[str, str, str]:
         return (
             edge.source_node.get_text_representer(),
@@ -119,7 +114,7 @@ class EdgeAdmission:
             else self._current_sentence_index
         )
 
-        label = canonicalize_relation_label(label)
+        label = TextNormalizer.clean_label(label)
         if not label:
             return None
 
@@ -148,7 +143,7 @@ class EdgeAdmission:
         # Reject self-loops bc S-V-O triplets require distinct subject and object
         if source_node == dest_node:
             return None
-
+        # check attachment constraint: at least one of the two nodes must be in the attachable set (explicit + carryover nodes)
         attachable = (
             self._get_attachable_nodes() if self._get_attachable_nodes else set()
         )
@@ -166,8 +161,8 @@ class EdgeAdmission:
                 dest_text,
             )
             return None
-
-        label = canonicalize_relation_label(label)
+        # clean label
+        label = TextNormalizer.clean_label(label)
         if not label:
             return None
 
@@ -176,50 +171,47 @@ class EdgeAdmission:
             if created_at_sentence is not None
             else self._current_sentence_index
         )
+        existing_edge = self.find_existing_directed_edge(source_node, dest_node)
+        if existing_edge is not None:
+            old_label = existing_edge.label
 
-        if not self._allow_multi_edges:
-            existing_edge = self.find_existing_directed_edge(source_node, dest_node)
-            if existing_edge is not None:
-                old_label = existing_edge.label
+            if old_label.strip().lower() == label.strip().lower():
+                existing_edge.label = label
+                existing_edge.visibility_score = edge_forget
+                existing_edge.created_at_sentence = use_sentence
+                existing_edge.mark_as_current_sentence(reset_score=True)
 
-                if old_label.strip().lower() == label.strip().lower():
-                    existing_edge.label = label
-                    existing_edge.visibility_score = edge_forget
-                    existing_edge.created_at_sentence = use_sentence
-                    existing_edge.mark_as_current_sentence(reset_score=True)
-
-                    if self._debug:
-                        logging.debug(
-                            "Replaced equivalent edge: %s --%s--> %s (was: %s)",
-                            source_node.get_text_representer(),
-                            label,
-                            dest_node.get_text_representer(),
-                            old_label,
-                        )
-
-                    trip_id = (
-                        existing_edge.source_node.get_text_representer(),
-                        existing_edge.label,
-                        existing_edge.dest_node.get_text_representer(),
+                if self._debug:
+                    logging.debug(
+                        "Replaced equivalent edge: %s --%s--> %s (was: %s)",
+                        source_node.get_text_representer(),
+                        label,
+                        dest_node.get_text_representer(),
+                        old_label,
                     )
-                    if trip_id not in self._triplet_intro:
-                        self._triplet_intro[trip_id] = (
-                            use_sentence if use_sentence is not None else -1
-                        )
 
-                    if label.strip().lower() == "is":
-                        self._persistent_is_edges.add(trip_id)
+                trip_id = (
+                    existing_edge.source_node.get_text_representer(),
+                    existing_edge.label,
+                    existing_edge.dest_node.get_text_representer(),
+                )
+                if trip_id not in self._triplet_intro:
+                    self._triplet_intro[trip_id] = (
+                        use_sentence if use_sentence is not None else -1
+                    )
 
-                    return existing_edge
-                else:
-                    self._graph.remove_edge(existing_edge)
+                # if label.strip().lower() == "is":
+                #     self._persistent_is_edges.add(trip_id)
 
+                return existing_edge
+            self._graph.remove_edge(existing_edge)
+        # edge duplication ie. knight - forest - forest
         if (
             label == source_node.get_text_representer()
             or label == dest_node.get_text_representer()
         ):
             return None
-
+        # add edge
         edge = self.insert_normalized_edge(
             source_node,
             dest_node,
@@ -229,7 +221,7 @@ class EdgeAdmission:
             relation_class=relation_class,
             justification=justification,
         )
-
+        # mark edge as part of current sentence with full activation
         if edge:
             if use_sentence == self._current_sentence_index:
                 edge.mark_as_current_sentence(reset_score=True)
@@ -244,16 +236,17 @@ class EdgeAdmission:
                     use_sentence if use_sentence is not None else -1
                 )
 
-            if label.strip().lower() == "is":
-                trip_id = (
-                    edge.source_node.get_text_representer(),
-                    edge.label,
-                    edge.dest_node.get_text_representer(),
-                )
-                self._persistent_is_edges.add(trip_id)
+            # if label.strip().lower() == "is":
+            #     trip_id = (
+            #         edge.source_node.get_text_representer(),
+            #         edge.label,
+            #         edge.dest_node.get_text_representer(),
+            #     )
+            #     self._persistent_is_edges.add(trip_id)
 
         return edge
 
+    # used in stabilizer.py as fallback if edge is rejected by the LLM to prevent disconnection (last resort)
     def create_forced_connectivity_edges(
         self,
         story_context: Optional[str] = None,
@@ -262,16 +255,17 @@ class EdgeAdmission:
         persona: str = "",
         normalize_edge_label_fn: callable = None,
     ) -> List["Edge"]:
+        # distinguish between active and cumulative graph
         if mode == "active":
             protected_nodes = self._get_explicit_nodes() | self._get_carryover_nodes()
         else:
             protected_nodes = set(self._graph.nodes)
-
+        # find disconnected components
         components, _ = self._graph.get_disconnected_components_wrapper(protected_nodes)
 
         if len(components) <= 1:
             return []
-
+        # sort fragments by size
         if mode == "active":
             components = sorted(
                 components,
@@ -280,7 +274,7 @@ class EdgeAdmission:
             )
         else:
             components = sorted(components, key=len, reverse=True)
-
+        # find the largest component
         backbone = set(components[0])
         forced_edges = []
 
@@ -288,7 +282,7 @@ class EdgeAdmission:
             node_a = next(iter(backbone))
             node_b = next(iter(comp))
 
-            # Try LLM repair (2 attempts)
+            # try LLM repair (2 attempts) to repair edge
             for _ in range(2):
                 result = self._llm.get_forced_connectivity_edge_label(
                     node_a=node_a.get_text_representer(),
@@ -314,7 +308,7 @@ class EdgeAdmission:
                     self._edge_visibility,
                     inferred=True,
                 )
-
+                # add edge to backbone component
                 if edge:
                     forced_edges.append(edge)
                     backbone.update(comp)
@@ -322,6 +316,8 @@ class EdgeAdmission:
 
         return forced_edges
 
+    # helps maintain active graph + cumulative graph
+    # and is used for the final triplet.csv file
     def record_edge_in_graphs(
         self,
         edge: "Edge",
@@ -401,11 +397,11 @@ class EdgeAdmission:
 
         nodes_for_prompt = {n for pair in candidate_pairs for n in pair}
 
-        def _node_line(node: "Node") -> str:
+        def node_line(node: "Node") -> str:
             return f" - ({node.get_text_representer()}, {node.node_type})\n"
 
         nodes_from_text = "".join(
-            _node_line(n)
+            node_line(n)
             for n in sorted(nodes_for_prompt, key=lambda x: x.get_text_representer())
         )
         graph_nodes_repr = self._graph.get_nodes_str(list(nodes_for_prompt))

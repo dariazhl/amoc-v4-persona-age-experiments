@@ -11,15 +11,13 @@ class ProjectionStateManager:
         self,
         graph_ref,
         max_distance: int,
-        enforce_attachment_constraint: bool = True,
         debug: bool = False,
     ):
         self.graph = graph_ref
         self.max_distance = max_distance
-        self.ENFORCE_ATTACHMENT_CONSTRAINT = enforce_attachment_constraint
         self.debug = debug
 
-        self._record_sentence_activation_fn = None
+        self.record_activation_matrix_wrapper_fn = None
 
         self._prev_active_nodes_for_plot: Set[Node] = set()
         self._cumulative_deactivated_nodes_for_plot: Set[Node] = set()
@@ -29,7 +27,7 @@ class ProjectionStateManager:
         self,
         record_sentence_activation_fn,
     ):
-        self._record_sentence_activation_fn = record_sentence_activation_fn
+        self.record_activation_matrix_wrapper_fn = record_sentence_activation_fn
 
     def reset_state(self):
         self._prev_active_nodes_for_plot = set()
@@ -48,7 +46,8 @@ class ProjectionStateManager:
             if n.node_source == NodeSource.INFERENCE_BASED
         }
 
-    def post_projection_bookkeeping(
+    # update internal state to track which nodes have become faded in this sentence compared to the previous one
+    def update_projection_state(
         self,
         sentence_id: int,
         sentence_index: int,
@@ -57,17 +56,18 @@ class ProjectionStateManager:
         explicit_nodes_current_sentence: Set[Node],
         persona: str,
     ) -> Tuple[Set[Node], List[str], List[str], List[str]]:
-        if self._record_sentence_activation_fn is not None:
-            self._record_sentence_activation_fn(
+        # record activation
+        if self.record_activation_matrix_wrapper_fn is not None:
+            self.record_activation_matrix_wrapper_fn(
                 sentence_id=sentence_id,
                 explicit_nodes=list(explicit_nodes_current_sentence),
                 newly_inferred_nodes=newly_inferred_nodes,
             )
-
+        # find active nodes
         current_active_nodes = set(per_sentence_view.explicit_nodes) | set(
             per_sentence_view.carryover_nodes
         )
-
+        # check for disconnection - it should not happen at this point, just checking
         if (
             per_sentence_view is not None
             and not per_sentence_view.is_empty()
@@ -78,7 +78,7 @@ class ProjectionStateManager:
                 sentence_id,
                 persona,
             )
-
+        # find recently deactivated nodes
         if sentence_index == 0:
             recently_deactivated_nodes: Set[Node] = set()
         else:
@@ -91,7 +91,7 @@ class ProjectionStateManager:
             )
 
             recently_deactivated_nodes = set(gone)
-
+        # prepare plotting lists for explicit, carryover, inactive nodes
         if per_sentence_view is not None:
             explicit_nodes_for_plot = sorted(
                 filter(
@@ -127,10 +127,7 @@ class ProjectionStateManager:
             salient_nodes_for_plot = []
             inactive_nodes_for_plot = []
 
-        if self.ENFORCE_ATTACHMENT_CONSTRAINT:
-            self._recently_deactivated_nodes_for_inference = recently_deactivated_nodes
-        else:
-            self._recently_deactivated_nodes_for_inference = set()
+        self._recently_deactivated_nodes_for_inference = recently_deactivated_nodes
 
         self._prev_active_nodes_for_plot = current_active_nodes
 

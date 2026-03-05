@@ -21,7 +21,7 @@ class AgeAwareAMoCEngine:
         self.vllm_client = vllm_client
         self.spacy_nlp = spacy_nlp
 
-    def _build_analysis_text(self, persona_text: str, age_refined_int: int) -> str:
+    def build_analysis_text(self, persona_text: str, age_refined_int: int) -> str:
         # This is the text that both AMoC and the LLM see as "persona"
         return f"Age: {age_refined_int} years old.\n{persona_text}"
 
@@ -35,13 +35,11 @@ class AgeAwareAMoCEngine:
         highlight_nodes: Optional[Iterable[str]] = None,
         largest_component_only: bool = False,
         strict_reactivate_function: bool = True,
-        strict_attachament_constraint: bool = True,
         single_anchor_hub: bool = True,
         edge_visibility: Optional[int] = None,
         story_text: Optional[str] = None,
         matrix_dir_base: Optional[str] = None,
         force_node: bool = False,
-        allow_multi_edges: bool = False,
         checkpoint: bool = False,
     ) -> List[Tuple[str, str, str]]:
 
@@ -50,7 +48,7 @@ class AgeAwareAMoCEngine:
         except Exception:
             age_refined_int = int(float(age_refined)) if pd.notna(age_refined) else -1
 
-        persona_description = self._build_analysis_text(persona_text, age_refined_int)
+        persona_description = self.build_analysis_text(persona_text, age_refined_int)
 
         amoc = AMoCv4(
             persona_description=persona_description,
@@ -60,16 +58,16 @@ class AgeAwareAMoCEngine:
             max_new_concepts=MAX_NEW_CONCEPTS,
             max_new_properties=MAX_NEW_PROPERTIES,
             context_length=CONTEXT_LENGTH,
-            edge_visibility=edge_visibility if edge_visibility is not None else EDGE_VISIBILITY,
+            edge_visibility=(
+                edge_visibility if edge_visibility is not None else EDGE_VISIBILITY
+            ),
             nr_relevant_edges=NR_RELEVANT_EDGES,
             spacy_nlp=self.spacy_nlp,
             debug=DEBUG,
             persona_age=age_refined_int,
             strict_reactivate_function=strict_reactivate_function,
-            strict_attachament_constraint=strict_attachament_constraint,
             single_anchor_hub=single_anchor_hub,
             matrix_dir_base=matrix_dir_base,
-            allow_multi_edges=allow_multi_edges,
             checkpoint=checkpoint,
         )
         final_triplets, sentence_triplets, cumulative_triplets = amoc.analyze(

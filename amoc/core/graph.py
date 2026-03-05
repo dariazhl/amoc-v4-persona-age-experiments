@@ -226,14 +226,14 @@ class Graph:
     ) -> List[Node]:
         return self._activation_ops.get_active_nodes(score_threshold, only_text_based)
 
-    def enforce_cumulative_stability_wrapper(self, explicit_nodes: set) -> None:
-        self._stability_ops.enforce_cumulative_stability(explicit_nodes)
+    def stabilize_cumulative_graph_wrapper(self, explicit_nodes: set) -> None:
+        self._stability_ops.stabilize_cumulative_graph(explicit_nodes)
 
     def is_active_connected(self, required_nodes: Optional[Set[Node]] = None) -> bool:
-        return self._stability_ops.compute_active_connectivity(required_nodes)
+        return self._stability_ops.is_active_subgraph_connected(required_nodes)
 
     def is_cumulative_connected(self) -> bool:
-        return self._stability_ops.compute_cumulative_connectivity()
+        return self._stability_ops.is_cumulative_graph_connected()
 
     def get_disconnected_components_wrapper(
         self, focus_nodes: Set[Node]
@@ -246,7 +246,7 @@ class Graph:
         allow_reactivation: bool = True,
         enforce_cumulative: bool = False,
     ) -> bool:
-        return self._stability_ops.reactivate_to_restore_connectivity(
+        return self._stability_ops.restore_connectivity(
             required_nodes, allow_reactivation, enforce_cumulative
         )
 

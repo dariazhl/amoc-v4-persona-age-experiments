@@ -307,7 +307,6 @@ def plot_amoc_triplets(
     show_all_edges: bool = False,
     edge_activation_scores: Optional[Dict[Tuple[str, str, str], int]] = None,
     layout_from_active_only: bool = True,
-    allow_multi_edges: bool = False,  # Paper-aligned: single edge per node pair (default)
     active_triplets_for_overlay: Optional[
         List[Tuple[str, str, str]]
     ] = None,  # TASK 2: Triplet overlay
@@ -396,12 +395,10 @@ def plot_amoc_triplets(
         if not src or not dst or not rel:
             continue
 
-        # Multi-edge control: when allow_multi_edges=False, skip duplicate edges
-        if not allow_multi_edges:
-            pair_key = tuple(sorted((src, dst)))
-            if pair_key in seen_node_pairs:
-                continue
-            seen_node_pairs.add(pair_key)
+        pair_key = tuple(sorted((src, dst)))
+        if pair_key in seen_node_pairs:
+            continue
+        seen_node_pairs.add(pair_key)
 
         is_structural = rel.startswith("structural::")
         clean_rel = rel.replace("structural::", "").strip()

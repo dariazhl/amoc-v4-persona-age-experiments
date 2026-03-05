@@ -115,16 +115,6 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     )
 
     p.add_argument(
-        "--strict-attachament-constraint",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "When enabled new edges must touch the current sentence AND "
-            "the active neighborhood and anchor"
-        ),
-    )
-
-    p.add_argument(
         "--single-anchor-hub",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -159,13 +149,6 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     )
 
     p.add_argument(
-        "--allow-multi-edges",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=("Allow multiple edges between the same ordered node pair"),
-    )
-
-    p.add_argument(
         "--checkpoint",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -175,6 +158,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+# 2 tasks can be executed concurrenctly, only run statistics after the first one is done
 def is_leader() -> bool:
     return os.environ.get("SLURM_ARRAY_TASK_ID") in (None, "0")
 
@@ -256,12 +240,10 @@ def main(argv: List[str]) -> None:
                 plot_largest_component_only=args.plot_largest_component_only,
                 include_inactive_edges=args.include_inactive_edges,
                 strict_reactivate_function=args.strict_reactivate_function,
-                strict_attachament_constraint=args.strict_attachament_constraint,
                 single_anchor_hub=args.single_anchor_hub,
                 edge_visibility=args.edge_visibility,
                 story_text=story_text,
                 force_node=True,
-                allow_multi_edges=args.allow_multi_edges,
                 checkpoint=args.checkpoint,
             )
     finally:

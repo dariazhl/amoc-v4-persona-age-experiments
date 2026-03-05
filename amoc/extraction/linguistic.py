@@ -28,17 +28,14 @@ class LinguisticProcessing:
         self._story_text = story_text
         self._persona = persona
         self._add_edge_fn: Optional[Callable] = None
-        self._classify_relation_fn: Optional[Callable] = None
         self._edge_visibility: int = 3
         self._current_sentence_index: int = 0
 
     def set_callbacks(
         self,
         add_edge_fn: Callable,
-        classify_relation_fn: Callable,
     ):
         self._add_edge_fn = add_edge_fn
-        self._classify_relation_fn = classify_relation_fn
 
     def set_sentence_context(self, sentence_index: int, edge_visibility: int):
         self._current_sentence_index = sentence_index
@@ -77,21 +74,23 @@ class LinguisticProcessing:
         sentence_words: List[str],
     ) -> None:
 
-        if not self._add_edge_fn or not self._classify_relation_fn:
+        if not self._add_edge_fn:
             return
 
         sentence_node_map = {tuple(node.lemmas): node for node in sentence_nodes}
 
+        # list of nodes that are explicitly mentioned in the sentence
         def get_node(lemma: str):
             if not lemma:
                 return None
-            # Check sentence nodes first
             node = sentence_node_map.get((lemma,))
             if node is not None:
                 return node
-            # Fall back to graph
             return self._graph.get_node([lemma])
 
+        # creates an edge between two nodes using the _add_edge_fn callback
+        #  _add_edge_fn calls edge_admission.add_edge that handles duplication, visibility etc and returns edge
+        #  if successful, it marks edge as part of the current sentence with full activation
         def assert_edge(src, dst, label):
             edge = self._add_edge_fn(
                 src,
@@ -103,6 +102,8 @@ class LinguisticProcessing:
             if edge:
                 edge.mark_as_current_sentence(reset_score=True)
 
+        # iterate through candidates and create edges for those that have both subject and object nodes present in the graph
+        # create S-V-O triplet structure
         for candidate in extract_deterministic_relation_candidates(sent):
             subj_node = get_node(candidate.subject_lemma)
             if subj_node is None:

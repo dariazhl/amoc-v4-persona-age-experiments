@@ -46,6 +46,10 @@ class ConnectivityStabilizer:
     def is_cumulative_connected_wrapper(self) -> bool:
         return self._graph.is_cumulative_connected()
 
+    # Main pipeline to enforce connectivity with repair and fallback
+    # Step 1. Deterministic repair
+    # Step 2. LLM repair - try twice
+    # Step 3. Final fallback with "relates_to" edges
     def run_connectivity_pipeline(
         self,
         prev_sentences: list,
@@ -56,7 +60,7 @@ class ConnectivityStabilizer:
         carryover_nodes = self._get_carryover_nodes()
         required_nodes = explicit_nodes | carryover_nodes
 
-        # PHASE 1: Deterministic repair via ConnectivityRepair (reactivate cumulative edges)
+        # Deterministic repair via ConnectivityRepair (reactivate cumulative edges)
         if self._graph.enforce_connectivity(required_nodes, allow_reactivation=True):
             if (
                 self.is_active_connected_wrapper()
@@ -64,7 +68,7 @@ class ConnectivityStabilizer:
             ):
                 return False
 
-        # PHASE 2: LLM repair - try twice
+        # LLM repair - try 2x
         for attempt in range(2):
             create_forced_edges_fn(
                 story_context=(
@@ -82,41 +86,44 @@ class ConnectivityStabilizer:
         ):
             return False
 
-        # PHASE 3: Final fallback "relates_to" edges
-        self._apply_relates_to_fallback(required_nodes)
+        # Final fallback "relates_to" edges
+        self.apply_relates_to_fallback(required_nodes)
 
         if not self.is_active_connected_wrapper():
             logging.error("Active graph disconnected after all repairs")
             return True
 
         if not self.is_cumulative_connected_wrapper():
-            self._apply_cumulative_fallback()
+            self.connect_cumulative_components()
             if not self.is_cumulative_connected_wrapper():
                 logging.error("Cumulative graph disconnected after all repairs")
                 return True
 
         return False
 
-    def _node_sort_key(self, node, edge_pool):
+    def node_sort_key(self, node, edge_pool):
         degree = sum(
             1 for e in edge_pool if e.source_node == node or e.dest_node == node
         )
         return (-degree, node.get_text_representer())
 
-    def _apply_relates_to_fallback(self, required_nodes: set) -> None:
+    # fallback = if deterministic + LLM repair fair, add generic "relates_to" edges
+    # this is a last resort before rolling back to previous sentence state
+    def apply_relates_to_fallback(self, required_nodes: set) -> None:
+        # find disconnected components
         components, _ = self._graph.get_disconnected_components_wrapper(required_nodes)
 
         if len(components) <= 1:
             return
 
-        # Sort components by size
+        # sort components by size
         components = sorted(components, key=len, reverse=True)
         largest_component = set(components[0])
 
         active_edge_pool = [e for e in self._graph.edges if e.active]
 
-        active_nodes = self._get_nodes_with_active_edges()
-
+        active_nodes = self.get_nodes_with_active_edges()
+        # find anchor candidates
         anchor_candidates = [
             n
             for n in largest_component
@@ -157,12 +164,14 @@ class ConnectivityStabilizer:
                 key=lambda n: n.get_text_representer(),
             )
             if explicit_in_comp:
+                # if explicit nodes exist, pick the first one
                 node_small = explicit_in_comp[0]
             else:
+                # else pick the node with the smallest degree
                 node_small = min(
-                    comp_set, key=lambda n: self._node_sort_key(n, active_edge_pool)
+                    comp_set, key=lambda n: self.node_sort_key(n, active_edge_pool)
                 )
-
+            # create generic edge
             edge = self._graph.add_edge(
                 node_small,
                 backbone_node,
@@ -178,7 +187,7 @@ class ConnectivityStabilizer:
                 largest_component.update(comp_set)
 
     # ensure cumulative graph is connected
-    def _apply_cumulative_fallback(self) -> None:
+    def connect_cumulative_components(self) -> None:
         G_full = self._graph.to_networkx()
 
         if G_full.number_of_nodes() <= 1:
@@ -209,7 +218,7 @@ class ConnectivityStabilizer:
             if edge:
                 largest.update(comp)
 
-    def _get_nodes_with_active_edges(self) -> set:
+    def get_nodes_with_active_edges(self) -> set:
         nodes = set()
         for edge in self._graph.edges:
             if edge.active:
@@ -233,6 +242,8 @@ class ConnectivityStabilizer:
                 return False
         return True
 
+    # issue: some explicit and carryover nodes in the graph are isolated
+    # purpose: handle nodes that appear in the per‑sentence view but have no edges at all in the current active graph
     def repair_dangling_nodes(
         self,
         per_sentence_view,
@@ -246,7 +257,7 @@ class ConnectivityStabilizer:
         active_nodes = set(per_sentence_view.explicit_nodes) | set(
             per_sentence_view.carryover_nodes
         )
-
+        # find dangling nodes with no edges in the active graph
         dangling_nodes = []
         for node in active_nodes:
             has_edge = any(
@@ -260,7 +271,7 @@ class ConnectivityStabilizer:
             return False
 
         any_repair_failed = False
-
+        # find anchor candidates from active nodes with edges, sorted by degree
         for node in dangling_nodes:
             repair_success = False
 
@@ -303,7 +314,7 @@ class ConnectivityStabilizer:
                 relation = normalize_edge_label_fn(relation)
                 if not relation:
                     continue
-
+                # if valid relation returned, add edge to graph with inferred=True
                 edge = self._graph.add_edge(
                     node,
                     anchor,
@@ -319,7 +330,7 @@ class ConnectivityStabilizer:
             if not repair_success:
                 any_repair_failed = True
 
-        # Return True if any repair failed - caller should invoke enforce_connectivity
+        # return True if any repair failed - caller should invoke enforce_connectivity
         return any_repair_failed
 
     def repair_connectivity_callback(
@@ -344,7 +355,7 @@ class ConnectivityStabilizer:
         # DETERMINISTIC: Select anchor from main component
         anchor_node = min(
             [n for n in main_component if n in active_nodes],
-            key=lambda n: self._node_sort_key(n, active_edges),
+            key=lambda n: self.node_sort_key(n, active_edges),
             default=None,
         )
         if anchor_node is None:
@@ -358,7 +369,7 @@ class ConnectivityStabilizer:
             if not candidates:
                 continue
             representative = min(
-                candidates, key=lambda n: self._node_sort_key(n, active_edges)
+                candidates, key=lambda n: self.node_sort_key(n, active_edges)
             )
 
             prompt_text = FORCED_CONNECTIVITY_EDGE_PROMPT.format(

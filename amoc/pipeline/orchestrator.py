@@ -20,8 +20,6 @@ from amoc.config.constants import MAX_DISTANCE_FROM_ACTIVE_NODES
 
 
 class AMoCv4:
-    ENFORCE_ATTACHMENT_CONSTRAINT = True
-
     def __init__(
         self,
         persona_description: str,
@@ -37,10 +35,8 @@ class AMoCv4:
         debug: bool = False,
         persona_age: Optional[int] = None,
         strict_reactivate_function: bool = True,
-        strict_attachament_constraint: bool = True,
         single_anchor_hub: bool = True,
         matrix_dir_base: Optional[str] = None,
-        allow_multi_edges: bool = False,
         checkpoint: bool = False,
     ) -> None:
         self.persona = persona_description
@@ -84,9 +80,7 @@ class AMoCv4:
         self._explicit_nodes_current_sentence = set()
         self._carryover_nodes_current_sentence = set()
         self.strict_reactivate_function = strict_reactivate_function
-        self.strict_attachament_constraint = strict_attachament_constraint
         self.single_anchor_hub = single_anchor_hub
-        self.allow_multi_edges = allow_multi_edges
         self.checkpoint = checkpoint
         self._current_sentence_text = ""
         self._current_sentence_index = None
@@ -102,7 +96,6 @@ class AMoCv4:
         self._layout_depth = 3
         self._amoc_matrix_records = []
         self._previous_active_triplets = []
-        self._anchor_drop_log = []
         self._story_lemma_set = set()
         self._sentence_triplets = []
         self._new_inferred_nodes_count = 0
@@ -110,15 +103,15 @@ class AMoCv4:
         self._get_explicit_nodes = lambda: self._explicit_nodes_current_sentence
         self._get_carryover_nodes = lambda: self._carryover_nodes_current_sentence
         self._get_active_edge_nodes = (
-            lambda: self._connectivity_ops._get_nodes_with_active_edges()
+            lambda: self._connectivity_ops.get_nodes_with_active_edges()
         )
 
-        self._setup_ops_classes()
+        self.setup_ops_classes()
 
-    def _setup_ops_classes(self):
+    def setup_ops_classes(self):
         wire_core_dependencies(self)
 
-    def _rebind_ops_graph_refs(self) -> None:
+    def rebind_ops_graph_refs(self) -> None:
         for ops in [
             self._connectivity_ops,
             self._text_filter_ops,
@@ -163,7 +156,7 @@ class AMoCv4:
             forced_pair=forced_pair,
         )
 
-    def _construct_per_sentence_view(
+    def build_per_sentence_view_wrapper(
         self,
         explicit_nodes: List[Node],
         sentence_index: int,
@@ -176,7 +169,7 @@ class AMoCv4:
         self._per_sentence_view = view
         return view
 
-    def _record_sentence_activation(
+    def record_activation_matrix_wrapper(
         self,
         sentence_id: int,
         explicit_nodes: List[Node],
@@ -202,7 +195,7 @@ class AMoCv4:
             current_sentence_words=current_sentence_words,
             current_text=current_text,
             recently_deactivated_nodes=self._recently_deactivated_nodes_for_inference,
-            enforce_attachment=self.ENFORCE_ATTACHMENT_CONSTRAINT,
+            enforce_attachment=True,
         )
 
     def is_attachable_wrapper(
@@ -280,7 +273,7 @@ class AMoCv4:
             active_graph_builder=self.active_graph_builder,
         )
 
-    def _plot_graph_snapshot(
+    def plot_graph_snapshot_wrapper(
         self,
         sentence_index: int,
         sentence_text: str,
@@ -315,12 +308,12 @@ class AMoCv4:
         )
         self._viz_positions = self._plot_ops.get_viz_positions()
 
-    def _initialize_run_state(self) -> None:
+    def initialize_run_state(self) -> None:
         self._previous_active_triplets = []
         self._viz_positions = {}
         self._projection_bookkeeping_ops.reset_state()
 
-    def _resolve_story_sentences(self, replace_pronouns: bool) -> list:
+    def resolve_story_sentences(self, replace_pronouns: bool) -> list:
         resolved_sentences, story_lemma_set = self._sentence_ops.resolve_sentences(
             story_text=self.story_text,
             replace_pronouns=replace_pronouns,
@@ -329,7 +322,7 @@ class AMoCv4:
         self._story_lemma_set = story_lemma_set
         return resolved_sentences
 
-    def _snapshot_sentence_runtime_state(self) -> tuple:
+    def snapshot_sentence_state_wrapper(self) -> tuple:
         return self._sentence_ops.snapshot_sentence_state(
             anchor_nodes=self._anchor_nodes,
             triplet_intro=self._triplet_intro,
@@ -338,14 +331,13 @@ class AMoCv4:
             prev_active_nodes=self._prev_active_nodes_for_plot,
         )
 
-    def _prepare_sentence_runtime_state(self, original_text: str) -> set:
+    def reset_sentence_state_wrapper(self, original_text: str) -> set:
         nodes_before_sentence = self._sentence_ops.reset_sentence_state(original_text)
         self._current_sentence_text = original_text
-        self._anchor_drop_log = []
         self._explicit_nodes_current_sentence.clear()
         return nodes_before_sentence
 
-    def _handle_first_sentence(
+    def handle_first_sentence_wrapper(
         self,
         sent,
         resolved_text: str,
@@ -365,7 +357,7 @@ class AMoCv4:
         self._anchor_nodes.update(anchor_nodes)
         return (nodes_before, should_skip)
 
-    def _handle_nonfirst_sentence(
+    def handle_nonfirst_sentence_wrapper(
         self,
         i: int,
         sent,
@@ -388,7 +380,7 @@ class AMoCv4:
             triplet_intro=self._triplet_intro,
         )
 
-    def _process_sentence_core(
+    def process_sentence_core_wrapper(
         self,
         i: int,
         sent,
@@ -397,18 +389,18 @@ class AMoCv4:
         prev_sentences: list,
     ) -> tuple:
         self._new_inferred_nodes_count = 0
-        nodes_before_sentence = self._prepare_sentence_runtime_state(original_text)
+        nodes_before_sentence = self.reset_sentence_state_wrapper(original_text)
 
-        resolved_text, sent = self._sentence_processing_ops.sanitize_json_contamination(
+        resolved_text, sent = self._sentence_processing_ops.clean_llm_output(
             resolved_text, original_text, sent
         )
 
         if i == 0:
-            result = self._handle_first_sentence(
+            result = self.handle_first_sentence_wrapper(
                 sent, resolved_text, prev_sentences, nodes_before_sentence
             )
         else:
-            result = self._handle_nonfirst_sentence(
+            result = self.handle_nonfirst_sentence_wrapper(
                 i,
                 sent,
                 resolved_text,
@@ -418,8 +410,8 @@ class AMoCv4:
             )
 
             if not result[1]:
-                # Connectivity enforcement is handled by _stabilize_sentence_connectivity() in analyze()
-                self._sentence_processing_ops.apply_post_sentence_processing(
+                # Connectivity enforcement is handled by stabilize_connectivity_wrapper() in analyze()
+                self._sentence_processing_ops.run_post_processing(
                     explicit_nodes=self._explicit_nodes_current_sentence,
                     carryover_nodes=self._carryover_nodes_current_sentence,
                     apply_global_edge_decay_fn=lambda: self._activation_ops.apply_global_edge_decay(),
@@ -428,7 +420,7 @@ class AMoCv4:
 
         return result
 
-    def _finalize_run_outputs(self, matrix_suffix: Optional[str]) -> tuple:
+    def finalize_run_outputs_wrapper(self, matrix_suffix: Optional[str]) -> tuple:
         return self._output_ops.finalize_outputs(
             amoc_matrix_records=self._amoc_matrix_records,
             triplet_intro=self._triplet_intro,
@@ -442,7 +434,7 @@ class AMoCv4:
             matrix_suffix=matrix_suffix,
         )
 
-    def _stabilize_sentence_connectivity(self, prev_sentences: list) -> bool:
+    def stabilize_connectivity_wrapper(self, prev_sentences: list) -> bool:
         # Step 1 — deterministic connectivity repair
         rollback_needed = self._connectivity_ops.run_connectivity_pipeline(
             prev_sentences=prev_sentences,
@@ -469,7 +461,7 @@ class AMoCv4:
         # keep only the active nodes
         self._anchor_nodes = {n for n in self._anchor_nodes if n in self.graph.nodes}
 
-        self._per_sentence_view = self._construct_per_sentence_view(
+        self._per_sentence_view = self.build_per_sentence_view_wrapper(
             explicit_nodes=list(self._explicit_nodes_current_sentence),
             sentence_index=self._current_sentence_index,
         )
@@ -491,7 +483,7 @@ class AMoCv4:
 
         return False
 
-    def _construct_sentence_projection(self, sentence_id: int):
+    def build_projection_wrapper(self, sentence_id: int):
         return self._projection_bookkeeping_ops.build_projection(
             sentence_id,
             self._per_sentence_view,
@@ -499,10 +491,10 @@ class AMoCv4:
             self._previous_active_triplets,
         )
 
-    def _update_post_projection_state(
+    def update_post_projection_state_wrapper(
         self, sentence_id: int, i: int, newly_inferred_nodes: set, per_sentence_view
     ):
-        result = self._projection_bookkeeping_ops.post_projection_bookkeeping(
+        result = self._projection_bookkeeping_ops.update_projection_state(
             sentence_id=sentence_id,
             sentence_index=i,
             newly_inferred_nodes=newly_inferred_nodes,
@@ -515,7 +507,7 @@ class AMoCv4:
         )
         return result
 
-    def _handle_sentence_rollback(
+    def handle_sentence_rollback_wrapper(
         self,
         i: int,
         original_text: str,
@@ -537,7 +529,7 @@ class AMoCv4:
                     n.get_text_representer()
                     for n in self._explicit_nodes_current_sentence
                 ]
-                self._plot_graph_snapshot(
+                self.plot_graph_snapshot_wrapper(
                     sentence_index=i,
                     sentence_text=original_text,
                     output_dir=graphs_output_dir,
@@ -557,7 +549,7 @@ class AMoCv4:
                 logging.warning(f"Rollback plot failed: {e}")
 
         self.graph = previous_graph_state
-        self._rebind_ops_graph_refs()
+        self.rebind_ops_graph_refs()
         self._anchor_nodes.clear()
         self._anchor_nodes.update(previous_anchor_nodes)
         self._triplet_intro.clear()
@@ -566,17 +558,16 @@ class AMoCv4:
         self._prev_active_nodes_for_plot = previous_prev_active_nodes
         self._per_sentence_view = previous_per_sentence_view
 
-    def _record_sentence_triplets(self, original_text: str) -> None:
+    def capture_sentence_triplets_wrapper(self, original_text: str) -> None:
         self._triplet_ops.capture_sentence_triplets(
             original_text=original_text,
             current_sentence_index=self._current_sentence_index,
             explicit_nodes=self._explicit_nodes_current_sentence,
             nodes_with_active_edges=self._get_active_edge_nodes(),
             sentence_triplets=self._sentence_triplets,
-            anchor_drop_log=self._anchor_drop_log,
         )
 
-    def _plot_sentence(
+    def plot_sentence_views_wrapper(
         self,
         i: int,
         original_text: str,
@@ -620,11 +611,11 @@ class AMoCv4:
         sentences = list(doc.sents)
         logging.info("Number of sentences detected by spaCy: %d", len(sentences))
         for i, sent in enumerate(sentences):
-            logging.info("[Sentence %d: %s", i + 1, sent.text.strip()[:100])
+            logging.info("Sentence %d: %s", i + 1, sent.text.strip()[:100])
 
-        self._initialize_run_state()
+        self.initialize_run_state()
 
-        resolved_sentences = self._resolve_story_sentences(replace_pronouns)
+        resolved_sentences = self.resolve_story_sentences(replace_pronouns)
 
         prev_sentences = []
         self._sentence_triplets = []
@@ -652,10 +643,12 @@ class AMoCv4:
                 _previous_per_sentence_view,
                 _previous_recently_deactivated,
                 _previous_prev_active_nodes,
-            ) = self._snapshot_sentence_runtime_state()
+            ) = self.snapshot_sentence_state_wrapper()
 
-            nodes_before_sentence, should_skip_sentence = self._process_sentence_core(
-                i, sent, resolved_text, original_text, prev_sentences
+            nodes_before_sentence, should_skip_sentence = (
+                self.process_sentence_core_wrapper(
+                    i, sent, resolved_text, original_text, prev_sentences
+                )
             )
             if should_skip_sentence:
                 continue
@@ -669,10 +662,10 @@ class AMoCv4:
 
             # CONNECTIVITY
             self._connectivity_ops.set_anchor_nodes(self._anchor_nodes)
-            rollback_needed = self._stabilize_sentence_connectivity(prev_sentences)
+            rollback_needed = self.stabilize_connectivity_wrapper(prev_sentences)
 
             if rollback_needed:
-                self._handle_sentence_rollback(
+                self.handle_sentence_rollback_wrapper(
                     i=i,
                     original_text=original_text,
                     plot_after_each_sentence=plot_after_each_sentence,
@@ -689,7 +682,7 @@ class AMoCv4:
                 continue
 
             # Build projection AFTER connectivity is guaranteed
-            self._per_sentence_view = self._construct_sentence_projection(sentence_id)
+            self._per_sentence_view = self.build_projection_wrapper(sentence_id)
 
             # Update carryover nodes from projection
             if self._per_sentence_view is not None:
@@ -705,12 +698,12 @@ class AMoCv4:
                 explicit_nodes_for_plot,
                 salient_nodes_for_plot,
                 inactive_nodes_for_plot,
-            ) = self._update_post_projection_state(
+            ) = self.update_post_projection_state_wrapper(
                 sentence_id, i, newly_inferred_nodes, self._per_sentence_view
             )
 
             if plot_after_each_sentence:
-                self._plot_sentence(
+                self.plot_sentence_views_wrapper(
                     i,
                     original_text,
                     graphs_output_dir,
@@ -719,16 +712,16 @@ class AMoCv4:
                     salient_nodes_for_plot,
                     largest_component_only,
                 )
-            self._record_sentence_triplets(original_text)
+            self.capture_sentence_triplets_wrapper(original_text)
 
         # Ensure cumulative graph is connected
         if not self._connectivity_ops.is_cumulative_connected_wrapper():
             logging.warning(
                 "Cumulative graph disconnected after sentence loop - repairing"
             )
-            self._stabilize_sentence_connectivity(prev_sentences)
+            self.stabilize_connectivity_wrapper(prev_sentences)
 
-        return self._finalize_run_outputs(matrix_suffix)
+        return self.finalize_run_outputs_wrapper(matrix_suffix)
 
     def infer_new_relationships_bootstrap_wrapper(
         self, sent: Span

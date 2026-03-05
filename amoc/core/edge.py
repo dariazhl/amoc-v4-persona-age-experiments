@@ -103,12 +103,10 @@ class Edge:
         self.active = False
 
     def reduce_visibility(self) -> None:
-        if self.visibility_score <= 1:
-            self.visibility_score = 1
-            return
-        self.visibility_score -= DECAY_STEP
-        if self.visibility_score <= 1:
-            self.visibility_score = 1
+        if self.visibility_score > 0:
+            self.visibility_score -= DECAY_STEP
+            if self.visibility_score < 0:
+                self.visibility_score = 0
 
     def is_property_edge(self) -> bool:
         return (

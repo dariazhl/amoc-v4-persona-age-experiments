@@ -123,6 +123,8 @@ class VLLMClient:
         ]
         return self.generate(messages)
 
+    # query the LLM to generate relationships that may not be captured by deterministic rules
+    # it uses the full context of the current sentence and the existing graph
     def get_new_relationships(
         self, nodes_from_text, nodes_from_graph, edges_from_graph, text, persona
     ):

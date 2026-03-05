@@ -129,7 +129,7 @@ def winsorize_by_group(
 
 
 # Kruskal-Willis test = 1-way ANOVA
-def _run_kruskal(df: pd.DataFrame, metric: str) -> None:
+def run_kruskal(df: pd.DataFrame, metric: str) -> None:
     groups = [
         g[metric].dropna().values
         for _, g in df.groupby("regime", observed=True)
@@ -273,7 +273,7 @@ def run_cleaned_regime_analysis(
             plot_boxplot(df_q, metric, output_dir, model)
             plot_median_ci(df_q, metric, output_dir, model)
             plot_pairwise_median_diff(df_q, metric, output_dir, model)
-            _run_kruskal(df_q, metric)
+            run_kruskal(df_q, metric)
 
         for metric in IQR_WINSORIZED_METRICS:
             if metric not in df_w.columns:
@@ -286,7 +286,7 @@ def run_cleaned_regime_analysis(
                 model_tag=f"{model}_iqr_winsorized",
                 order=REGIME_ORDER,
             )
-            _run_kruskal(df_w, metric)
+            run_kruskal(df_w, metric)
 
     # Age plots
     if plots_age:

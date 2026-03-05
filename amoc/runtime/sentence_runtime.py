@@ -22,14 +22,12 @@ class SentenceRuntime:
         story_lemmas: Set[str],
         max_distance_from_active_nodes: int,
         edge_visibility: int,
-        strict_attachment_constraint: bool = True,
     ):
         self._graph = graph_ref
         self._spacy_nlp = spacy_nlp
         self._story_lemmas = story_lemmas
         self._max_distance = max_distance_from_active_nodes
         self._edge_visibility = edge_visibility
-        self._strict_attachment_constraint = strict_attachment_constraint
 
         self._anchor_nodes: Set["Node"] = set()
         self._explicit_nodes_current_sentence: Set["Node"] = set()
@@ -52,6 +50,7 @@ class SentenceRuntime:
         self._graph.set_current_sentence(idx)
         self._graph.set_current_sentence_lemmas(lemmas)
 
+    # create deep copy of all relevant states for rollback (if needed)
     def snapshot_sentence_state(
         self,
         anchor_nodes: Set["Node"],
@@ -69,7 +68,7 @@ class SentenceRuntime:
             copy.deepcopy(prev_active_nodes),
         )
 
-    def _clean_resolved_sentence(self, orig_text: str, candidate: str) -> str:
+    def clean_resolved_sentence(self, orig_text: str, candidate: str) -> str:
         if not isinstance(candidate, str) or not candidate.strip():
             return orig_text
         cleaned = re.sub(r"<[^>]+>", " ", candidate)
@@ -132,7 +131,7 @@ class SentenceRuntime:
             if replace_pronouns and resolve_pronouns_fn:
                 candidate = resolve_pronouns_fn(orig_sent.text)
                 if isinstance(candidate, str) and candidate.strip():
-                    resolved_text = self._clean_resolved_sentence(
+                    resolved_text = self.clean_resolved_sentence(
                         orig_sent.text, candidate
                     )
             if resolved_text and resolved_text.strip().startswith("{"):
@@ -152,6 +151,8 @@ class SentenceRuntime:
 
         return resolved_sentences, story_lemma_set
 
+    # Active graph requires a reset of the sentence state
+    # Method deactivates all edges, clears explicit nodes, keeps track of carryovers
     def reset_sentence_state(self, original_text: str) -> Set["Node"]:
         self._graph.deactivate_all_edges_wrapper()
         self._current_sentence_text = original_text
@@ -160,16 +161,13 @@ class SentenceRuntime:
         self._explicit_nodes_current_sentence = set()
         return nodes_before_sentence
 
+    # Creates a frozen snapshot of the active subgraph for the current sentence
     def build_per_sentence_view(
         self,
         explicit_nodes: List["Node"],
         sentence_index: int,
         build_per_sentence_graph_fn: callable,
     ) -> Optional["PerSentenceGraph"]:
-        if not self._strict_attachment_constraint:
-            self._per_sentence_view = None
-            return None
-
         admitted_nodes = []
 
         for node in explicit_nodes:
@@ -181,10 +179,14 @@ class SentenceRuntime:
                 continue
 
             lemma = label.lower().strip()
-
+            # check that the lemma exists in the story lemma
+            # ie. knight rode through forest -> ["knight"]
             if lemma not in self._story_lemmas:
                 continue
-
+            # look up a canonical node in the graph
+            # this ensures that nodes with the same lemma but different provenance or types are still merged
+            # in the per-sentence view, and that we don't end up with multiple nodes representing the same
+            # concept in the same sentence
             canonical_node = self._graph.get_node(node.lemmas)
 
             if canonical_node is None:
@@ -199,7 +201,7 @@ class SentenceRuntime:
 
             if canonical_node:
                 admitted_nodes.append(canonical_node)
-
+        # call the graph building function with the cumulative graph, the admitted nodes, max distance etc.
         view = build_per_sentence_graph_fn(
             cumulative_graph=self._graph,
             explicit_nodes=admitted_nodes,

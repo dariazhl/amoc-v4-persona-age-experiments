@@ -4,8 +4,7 @@ from amoc.admission.text_normalizer import TextNormalizer
 from amoc.construction.relationship_builder import RelationshipGraphBuilder
 from amoc.construction.sentence_builder import SentenceGraphBuilder
 from amoc.extraction.linguistic import LinguisticProcessing
-from amoc.extraction.llm_extractor import LLMExtractor
-from amoc.extraction.relationship_inference import RelationshipInference
+from amoc.extraction.inference import Inference
 from amoc.output.plotter import GraphPlotter
 from amoc.output.finalizer import OutputFinalizer
 from amoc.output.recorder import TripletRecorder
@@ -16,34 +15,27 @@ from amoc.connectivity.stabilizer import ConnectivityStabilizer
 
 
 def wire_core_dependencies(core) -> None:
-    core._llm_extractor = LLMExtractor(core.client)
-
     core._connectivity_ops = ConnectivityStabilizer(
         graph_ref=core.graph,
         get_explicit_nodes=core._get_explicit_nodes,
         get_carryover_nodes=core._get_carryover_nodes,
         edge_visibility=core.edge_visibility,
-        llm_extractor=core._llm_extractor,
+        llm_extractor=core.client,
     )
     core._text_filter_ops = TextNormalizer(
         spacy_nlp=core.spacy_nlp,
         graph_ref=core.graph,
         story_lemmas=core.story_lemmas,
-        persona_only_lemmas=core._persona_only_lemmas,
     )
 
     core._normalize_edge_label = lambda l: core._text_filter_ops.normalize_edge_label(l)
     core._is_valid_relation_label = (
         lambda l: core._text_filter_ops.is_valid_relation_label(l)
     )
-    core._classify_relation = lambda l: core._text_filter_ops.classify_relation(l)
     core._normalize_endpoint_text = (
-        lambda text, is_subject: core._text_filter_ops.normalize_endpoint_text(
+        lambda text, is_subject: core._text_filter_ops.extract_canonical_node_lemma(
             text, is_subject
         )
-    )
-    core._canonicalize_edge_direction = (
-        lambda l, s, d: core._text_filter_ops.canonicalize_edge_direction(l, s, d)
     )
     core._get_sentences_nodes = lambda sents, create_unexistent_nodes=True: core.collect_sentence_text_based_nodes_wrapper(
         sents, create_unexistent_nodes=create_unexistent_nodes
@@ -57,7 +49,7 @@ def wire_core_dependencies(core) -> None:
     )
     core._edge_ops = EdgeAdmission(
         graph_ref=core.graph,
-        llm_extractor=core._llm_extractor,
+        llm_extractor=core.client,
         spacy_nlp=core.spacy_nlp,
         get_explicit_nodes=core._get_explicit_nodes,
         get_carryover_nodes=core._get_carryover_nodes,
@@ -65,7 +57,6 @@ def wire_core_dependencies(core) -> None:
             core._get_active_edge_nodes
         ),
         edge_visibility=core.edge_visibility,
-        allow_multi_edges=core.allow_multi_edges,
         debug=core.debug,
     )
     core._node_ops = NodeAdmission(
@@ -77,8 +68,10 @@ def wire_core_dependencies(core) -> None:
         debug=core.debug,
     )
     core._node_ops.set_callbacks(
-        has_active_attachment_fn=lambda l: core._activation_ops.has_active_attachment(l),
-        canonicalize_and_classify_fn=lambda t: core._text_filter_ops.canonicalize_and_classify_node_text(
+        has_active_attachment_fn=lambda l: core._activation_ops.has_active_attachment(
+            l
+        ),
+        canonicalize_and_classify_fn=lambda t: core._text_filter_ops.normalize_and_classify_node(
             t
         ),
     )
@@ -88,16 +81,15 @@ def wire_core_dependencies(core) -> None:
         story_lemmas=core.story_lemmas,
         max_distance_from_active_nodes=core.max_distance_from_active_nodes,
         edge_visibility=core.edge_visibility,
-        strict_attachment_constraint=core.strict_attachament_constraint,
     )
     core._sentence_ops.set_runtime_state_refs(
         anchor_nodes=core._anchor_nodes,
         explicit_nodes=core._explicit_nodes_current_sentence,
         triplet_intro=core._triplet_intro,
     )
-    core._inference_ops = RelationshipInference(
+    core._inference_ops = Inference(
         graph_ref=core.graph,
-        llm_extractor=core._llm_extractor,
+        llm_extractor=core.client,
         spacy_nlp=core.spacy_nlp,
         max_new_concepts=core.max_new_concepts,
         max_new_properties=core.max_new_properties,
@@ -112,13 +104,12 @@ def wire_core_dependencies(core) -> None:
     core._linguistic_ops = LinguisticProcessing(
         graph_ref=core.graph,
         spacy_nlp=core.spacy_nlp,
-        llm_extractor=core._llm_extractor,
+        llm_extractor=core.client,
         story_lemmas=core.story_lemmas,
         persona=core.persona,
     )
     core._linguistic_ops.set_callbacks(
         add_edge_fn=core.add_edge_wrapper,
-        classify_relation_fn=core._classify_relation,
     )
     core._plot_ops = GraphPlotter(
         graph_ref=core.graph,
@@ -127,7 +118,6 @@ def wire_core_dependencies(core) -> None:
         persona=core.persona,
         persona_age=core.persona_age,
         layout_depth=core._layout_depth,
-        allow_multi_edges=core.allow_multi_edges,
     )
     core._plot_ops.set_callbacks(
         get_explicit_nodes_fn=core._get_explicit_nodes,
@@ -143,7 +133,7 @@ def wire_core_dependencies(core) -> None:
     )
     core._activation_ops = Decay(
         graph_ref=core.graph,
-        llm_extractor=core._llm_extractor,
+        llm_extractor=core.client,
         get_explicit_nodes=core._get_explicit_nodes,
         max_distance=core.max_distance_from_active_nodes,
         edge_visibility=core.edge_visibility,
@@ -178,7 +168,7 @@ def wire_core_dependencies(core) -> None:
     )
     core._sentence_processing_ops = SentenceGraphBuilder(
         graph_ref=core.graph,
-        llm_extractor=core._llm_extractor,
+        llm_extractor=core.client,
         spacy_nlp=core.spacy_nlp,
         max_distance_from_active_nodes=core.max_distance_from_active_nodes,
         edge_visibility=core.edge_visibility,
@@ -191,9 +181,8 @@ def wire_core_dependencies(core) -> None:
     core._projection_bookkeeping_ops = ProjectionStateManager(
         graph_ref=core.graph,
         max_distance=core.max_distance_from_active_nodes,
-        enforce_attachment_constraint=core.ENFORCE_ATTACHMENT_CONSTRAINT,
         debug=core.debug,
     )
     core._projection_bookkeeping_ops.set_callbacks(
-        record_sentence_activation_fn=core._record_sentence_activation,
+        record_sentence_activation_fn=core.record_activation_matrix_wrapper,
     )

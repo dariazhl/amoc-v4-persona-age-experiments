@@ -28,11 +28,9 @@ class RelationshipGraphBuilder:
         self._is_node_allowed_fn = None
         self._admit_node_fn = None
         self.is_attachable_wrapper_fn = None
-        self._canonicalize_edge_direction_fn = None
         self._canonicalize_and_classify_node_text_fn = None
-        self._classify_relation_fn = None
         self.add_edge_wrapper_fn = None
-        self._get_nodes_with_active_edges_fn = None
+        self.get_nodes_with_active_edges_fn = None
         self._get_node_from_text_fn = None
         self._get_node_from_new_relationship_fn = None
         self._get_concept_lemmas_fn = None
@@ -50,9 +48,7 @@ class RelationshipGraphBuilder:
         is_node_allowed_fn,
         admit_node_fn,
         is_attachable_fn,
-        canonicalize_edge_direction_fn,
         canonicalize_and_classify_node_text_fn,
-        classify_relation_fn,
         add_edge_fn,
         get_nodes_with_active_edges_fn,
         get_node_from_text_fn,
@@ -66,13 +62,11 @@ class RelationshipGraphBuilder:
         self._is_node_allowed_fn = is_node_allowed_fn
         self._admit_node_fn = admit_node_fn
         self.is_attachable_wrapper_fn = is_attachable_fn
-        self._canonicalize_edge_direction_fn = canonicalize_edge_direction_fn
         self._canonicalize_and_classify_node_text_fn = (
             canonicalize_and_classify_node_text_fn
         )
-        self._classify_relation_fn = classify_relation_fn
         self.add_edge_wrapper_fn = add_edge_fn
-        self._get_nodes_with_active_edges_fn = get_nodes_with_active_edges_fn
+        self.get_nodes_with_active_edges_fn = get_nodes_with_active_edges_fn
         self._get_node_from_text_fn = get_node_from_text_fn
         self._get_node_from_new_relationship_fn = get_node_from_new_relationship_fn
         self._get_concept_lemmas_fn = get_concept_lemmas_fn
@@ -96,18 +90,16 @@ class RelationshipGraphBuilder:
                 sent=s,
             ),
             is_attachable_fn=core.is_attachable_wrapper,
-            canonicalize_edge_direction_fn=core._canonicalize_edge_direction,
             canonicalize_and_classify_node_text_fn=lambda t: (
-                core._text_filter_ops.canonicalize_and_classify_node_text(t)
+                core._text_filter_ops.normalize_and_classify_node(t)
             ),
-            classify_relation_fn=core._classify_relation,
             add_edge_fn=core.add_edge_wrapper,
             get_nodes_with_active_edges_fn=core._get_active_edge_nodes,
             get_node_from_text_fn=core.resolve_node_from_text_wrapper,
             get_node_from_new_relationship_fn=core.resolve_node_from_new_relationship_wrapper,
             get_concept_lemmas_fn=lambda text: get_concept_lemmas(core.spacy_nlp, text),
             appears_in_story_fn=lambda t, check_graph=False: (
-                core._text_filter_ops.appears_in_story(t, check_graph=check_graph)
+                core._text_filter_ops.is_grounded_in_story(t, check_graph=check_graph)
             ),
         )
         self.set_state_refs(explicit_nodes_ref=core._get_explicit_nodes)
@@ -156,7 +148,7 @@ class RelationshipGraphBuilder:
                 self._get_concept_lemmas_fn(relationship[2])
             )
 
-            active_nodes_set = set(self._get_nodes_with_active_edges_fn())
+            active_nodes_set = set(self.get_nodes_with_active_edges_fn())
 
             attachment_ok = self.is_attachable_wrapper_fn(
                 relationship[0],
@@ -164,7 +156,7 @@ class RelationshipGraphBuilder:
                 current_sentence_text_based_words,
                 current_sentence_text_based_nodes,
                 list(self.graph.nodes),
-                self._get_nodes_with_active_edges_fn(),
+                self.get_nodes_with_active_edges_fn(),
             )
 
             # SAFE RELAXATION: Allow if at least one endpoint is already active
@@ -218,7 +210,7 @@ class RelationshipGraphBuilder:
                         dest_node is not None
                         and (
                             dest_node in explicit_nodes
-                            or dest_node in self._get_nodes_with_active_edges_fn()
+                            or dest_node in self.get_nodes_with_active_edges_fn()
                         )
                     ),
                 ):
@@ -240,7 +232,7 @@ class RelationshipGraphBuilder:
             if dest_node is None:
                 bypass = source_node is not None and (
                     source_node in explicit_nodes
-                    or source_node in self._get_nodes_with_active_edges_fn()
+                    or source_node in self.get_nodes_with_active_edges_fn()
                 )
 
                 if not self._is_node_allowed_fn(
@@ -259,17 +251,6 @@ class RelationshipGraphBuilder:
 
             if source_node is None or dest_node is None:
                 continue
-
-            canon_label, canon_src, canon_dst, was_swapped = (
-                self._canonicalize_edge_direction_fn(
-                    edge_label,
-                    source_node.get_text_representer(),
-                    dest_node.get_text_representer(),
-                )
-            )
-            if was_swapped:
-                source_node, dest_node = dest_node, source_node
-                edge_label = canon_label
 
             self.add_edge_wrapper_fn(
                 source_node,
@@ -319,7 +300,7 @@ class RelationshipGraphBuilder:
                 curr_sentences_words,
                 curr_sentences_nodes,
                 active_graph_nodes,
-                self._get_nodes_with_active_edges_fn(),
+                self.get_nodes_with_active_edges_fn(),
             ):
                 continue
 
@@ -387,18 +368,6 @@ class RelationshipGraphBuilder:
             if source_node is None or dest_node is None:
                 continue
 
-            canon_label, canon_src, canon_dst, was_swapped = (
-                self._canonicalize_edge_direction_fn(
-                    edge_label,
-                    source_node.get_text_representer(),
-                    dest_node.get_text_representer(),
-                )
-            )
-
-            if was_swapped:
-                source_node, dest_node = dest_node, source_node
-                edge_label = canon_label
-
             source_active = source_node.active
             dest_active = dest_node.active
 
@@ -411,7 +380,7 @@ class RelationshipGraphBuilder:
                 continue
 
             explicit_count = len(explicit_nodes)
-            active_count = len(self._get_nodes_with_active_edges_fn())
+            active_count = len(self.get_nodes_with_active_edges_fn())
 
             base_budget = max(3, explicit_count)
             bonus = 2 if active_count < explicit_count * 2 else 0

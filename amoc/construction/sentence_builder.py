@@ -33,15 +33,13 @@ class SentenceGraphBuilder:
         self._normalize_edge_label_fn = None
         self._is_valid_relation_label_fn = None
         self.is_attachable_wrapper_fn = None
-        self._canonicalize_edge_direction_fn = None
-        self._classify_relation_fn = None
         self.add_edge_wrapper_fn = None
-        self._get_nodes_with_active_edges_fn = None
+        self.get_nodes_with_active_edges_fn = None
         self._append_adjectival_hints_fn = None
         self._extract_deterministic_structure_fn = None
         self.link_to_recently_faded_nodes_wrapper_fn = None
         self._propagate_activation_from_edges_fn = None
-        self._restrict_active_to_current_explicit_fn = None
+        self._restrict_active_nodes_fn = None
         self._get_node_from_new_relationship_fn = None
         self._get_node_from_text_fn = None
         self._extract_main_nouns_fn = None
@@ -57,7 +55,6 @@ class SentenceGraphBuilder:
         self._triplet_intro_ref = None
         self._carryover_nodes_ref = None
         self.persona = None
-        self.ENFORCE_ATTACHMENT_CONSTRAINT = True
         self.ACTIVATION_MAX_DISTANCE = 2
 
     def set_builder_callbacks(
@@ -66,15 +63,13 @@ class SentenceGraphBuilder:
         normalize_edge_label_fn,
         is_valid_relation_label_fn,
         is_attachable_fn,
-        canonicalize_edge_direction_fn,
-        classify_relation_fn,
         add_edge_fn,
         get_nodes_with_active_edges_fn,
         append_adjectival_hints_fn,
         extract_deterministic_structure_fn,
         link_to_recently_faded_nodes_fn,
         propagate_activation_from_edges_fn,
-        restrict_active_to_current_explicit_fn,
+        restrict_active_nodes_fn,
         get_node_from_new_relationship_fn,
         get_node_from_text_fn,
         extract_main_nouns_fn,
@@ -90,17 +85,13 @@ class SentenceGraphBuilder:
         self._normalize_edge_label_fn = normalize_edge_label_fn
         self._is_valid_relation_label_fn = is_valid_relation_label_fn
         self.is_attachable_wrapper_fn = is_attachable_fn
-        self._canonicalize_edge_direction_fn = canonicalize_edge_direction_fn
-        self._classify_relation_fn = classify_relation_fn
         self.add_edge_wrapper_fn = add_edge_fn
-        self._get_nodes_with_active_edges_fn = get_nodes_with_active_edges_fn
+        self.get_nodes_with_active_edges_fn = get_nodes_with_active_edges_fn
         self._append_adjectival_hints_fn = append_adjectival_hints_fn
         self._extract_deterministic_structure_fn = extract_deterministic_structure_fn
         self.link_to_recently_faded_nodes_wrapper_fn = link_to_recently_faded_nodes_fn
         self._propagate_activation_from_edges_fn = propagate_activation_from_edges_fn
-        self._restrict_active_to_current_explicit_fn = (
-            restrict_active_to_current_explicit_fn
-        )
+        self._restrict_active_nodes_fn = restrict_active_nodes_fn
         self._get_node_from_new_relationship_fn = get_node_from_new_relationship_fn
         self._get_node_from_text_fn = get_node_from_text_fn
         self._extract_main_nouns_fn = extract_main_nouns_fn
@@ -135,8 +126,6 @@ class SentenceGraphBuilder:
             normalize_edge_label_fn=core._normalize_edge_label,
             is_valid_relation_label_fn=core._is_valid_relation_label,
             is_attachable_fn=core.is_attachable_wrapper,
-            canonicalize_edge_direction_fn=core._canonicalize_edge_direction,
-            classify_relation_fn=core._classify_relation,
             add_edge_fn=core.add_edge_wrapper,
             get_nodes_with_active_edges_fn=core._get_active_edge_nodes,
             append_adjectival_hints_fn=lambda n, s: (
@@ -152,8 +141,8 @@ class SentenceGraphBuilder:
             propagate_activation_from_edges_fn=lambda: (
                 core._activation_ops.propagate_activation_from_edges()
             ),
-            restrict_active_to_current_explicit_fn=lambda en: (
-                core._activation_ops.restrict_active_to_current_explicit(en)
+            restrict_active_nodes_fn=lambda en: (
+                core._activation_ops.restrict_active_nodes(en)
             ),
             get_node_from_new_relationship_fn=core.resolve_node_from_new_relationship_wrapper,
             get_node_from_text_fn=core.resolve_node_from_text_wrapper,
@@ -174,13 +163,13 @@ class SentenceGraphBuilder:
             persona=core.persona,
         )
 
-    def build_nodes_from_text(self, nodes, words) -> str:
+    def format_nodes_for_prompt(self, nodes, words) -> str:
         result = ""
         for i, node in enumerate(nodes):
             result += f" - ({words[i]}, {node.node_type})\n"
         return result
 
-    def add_relationship_from_tuple(
+    def add_edge_from_triple(
         self,
         rel_tuple,
         current_nodes,
@@ -205,7 +194,7 @@ class SentenceGraphBuilder:
             current_words,
             current_nodes,
             list(self.graph.nodes),
-            self._get_nodes_with_active_edges_fn(),
+            self.get_nodes_with_active_edges_fn(),
         ):
             return False
 
@@ -231,17 +220,6 @@ class SentenceGraphBuilder:
         if not self._is_valid_relation_label_fn(edge_label):
             return False
 
-        canon_label, canon_src, canon_dst, was_swapped = (
-            self._canonicalize_edge_direction_fn(
-                edge_label,
-                source_node.get_text_representer(),
-                dest_node.get_text_representer(),
-            )
-        )
-        if was_swapped:
-            source_node, dest_node = dest_node, source_node
-            edge_label = canon_label
-
         self.add_edge_wrapper_fn(
             source_node,
             dest_node,
@@ -261,14 +239,14 @@ class SentenceGraphBuilder:
 
         self._extract_deterministic_structure_fn(sent, current_nodes, current_words)
 
-        nodes_from_text = self.build_nodes_from_text(current_nodes, current_words)
+        nodes_from_text = self.format_nodes_for_prompt(current_nodes, current_words)
 
         relationships = self.llm.get_new_relationships_first_sentence(
             nodes_from_text, sent.text, self.persona
         )
 
         for rel in relationships:
-            self.add_relationship_from_tuple(rel, current_nodes, current_words)
+            self.add_edge_from_triple(rel, current_nodes, current_words)
 
         for node in explicit_nodes:
             degree = sum(
@@ -279,13 +257,15 @@ class SentenceGraphBuilder:
             if degree > 0:
                 continue
 
-            nodes_from_text = self.build_nodes_from_text(current_nodes, current_words)
+            nodes_from_text = self.format_nodes_for_prompt(current_nodes, current_words)
             extra_relationships = self.llm.get_new_relationships_first_sentence(
                 nodes_from_text, sent.text, self.persona
             )
             for rel in extra_relationships:
-                self.add_relationship_from_tuple(rel, current_nodes, current_words)
+                self.add_edge_from_triple(rel, current_nodes, current_words)
 
+    # first sentence must be handled differently because there is no active graph to compare to,
+    # so we only extract explicit relationships from the text
     def handle_first_sentence(
         self,
         sent,
@@ -293,34 +273,35 @@ class SentenceGraphBuilder:
         prev_sentences: list,
         nodes_before_sentence: set,
     ) -> tuple:
+        # add resolved sentence text
         prev_sentences.append(resolved_text)
+        # initiliaze graph
         self.init_graph(sent)
 
+        # extrat nodes
         current_nodes, current_words = self._get_sentences_text_based_nodes_fn(
             [sent], True
         )
-
         self._extract_deterministic_structure_fn(sent, current_nodes, current_words)
-
         sentence_lemma_set = {token.lemma_.lower() for token in sent}
-
+        # identify explict nodes
         explicit_nodes_current_sentence = {
             n
             for n in current_nodes
             if n.node_type in {NodeType.CONCEPT, NodeType.PROPERTY}
             and any(lemma in sentence_lemma_set for lemma in n.lemmas)
         }
-
+        # activate nodes
         for node in explicit_nodes_current_sentence:
             node.activation_score = self.ACTIVATION_MAX_DISTANCE
             node.active = True
-
+        # add nodes to graph
         for node in explicit_nodes_current_sentence:
             if node not in self.graph.nodes:
                 self.graph.nodes.add(node)
-
+        # explicit nodes
         explicit_nodes_current_sentence = set(explicit_nodes_current_sentence)
-
+        # define anchor nodes = explicit nodes for the first sent
         anchor_nodes = {
             n
             for n in explicit_nodes_current_sentence
@@ -330,25 +311,22 @@ class SentenceGraphBuilder:
             for n in self.graph.nodes
             if n.node_type == NodeType.CONCEPT and any(e.active for e in n.edges)
         }
-
+        # inferred nodes
         inferred_concept_relationships, inferred_property_relationships = (
             self._infer_new_relationships_step_0_fn(sent)
         )
-
         self._add_inferred_relationships_to_graph_step_0_fn(
             inferred_concept_relationships, NodeType.CONCEPT, sent
         )
         self._add_inferred_relationships_to_graph_step_0_fn(
             inferred_property_relationships, NodeType.PROPERTY, sent
         )
-
+        # ensure at least one active edge
         if not any(edge.active for edge in self.graph.edges):
             for edge in self.graph.edges:
                 edge.mark_as_current_sentence(reset_score=True)
 
-        self._restrict_active_to_current_explicit_fn(
-            list(explicit_nodes_current_sentence)
-        )
+        self._restrict_active_nodes_fn(list(explicit_nodes_current_sentence))
 
         return (
             nodes_before_sentence,
@@ -357,7 +335,7 @@ class SentenceGraphBuilder:
             anchor_nodes,
         )
 
-    def _relation_is_syntactically_supported(
+    def is_relation_valid(
         self,
         source_node,
         edge_label,
@@ -386,6 +364,8 @@ class SentenceGraphBuilder:
         # do not admit triplet that does not make sense
         return False
 
+    # handle the rest of the sentences
+    # extract explicit nodes, inferred nodes, reactivate memory
     def handle_nonfirst_sentence(
         self,
         i: int,
@@ -406,18 +386,17 @@ class SentenceGraphBuilder:
         for e in self.graph.edges:
             e.active_this_sentence = False
         added_edges = []
-
+        # snapshot graph state before processing sent
         _graph_snapshot = copy.deepcopy(self.graph)
         _anchor_snapshot = copy.deepcopy(anchor_nodes)
         _triplet_intro_snapshot = copy.deepcopy(triplet_intro)
-
+        # update sent context
         current_sentence = sent
         prev_sentences.append(resolved_text)
         if len(prev_sentences) > self.context_length:
             prev_sentences.pop(0)
-
+        # extract main concepts
         phrase_nodes = self._extract_main_nouns_fn(current_sentence)
-
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
             self._get_sentences_text_based_nodes_fn(
                 [current_sentence], create_unexistent_nodes=True
@@ -427,7 +406,7 @@ class SentenceGraphBuilder:
         sentence_lemma_set = {
             token.lemma_.lower() for token in self.spacy_nlp(original_text)
         }
-
+        # explicit nodes
         new_explicit_nodes = {
             n
             for n in current_sentence_text_based_nodes
@@ -436,19 +415,19 @@ class SentenceGraphBuilder:
         }
         explicit_nodes_current_sentence.clear()
         explicit_nodes_current_sentence.update(new_explicit_nodes)
-
+        # add edges determined by text structure
         self._extract_deterministic_structure_fn(
             current_sentence,
             current_sentence_text_based_nodes,
             current_sentence_text_based_words,
         )
-
+        # activate explicit nodes
         for node in explicit_nodes_current_sentence:
             node.activation_score = self.ACTIVATION_MAX_DISTANCE
             node.active = True
 
         current_all_text = resolved_text
-
+        # retrieve active subgraph within distance from explicit nodes
         graph_active_nodes = self.graph.get_active_nodes_wrapper(
             self.max_distance_from_active_nodes, only_text_based=True
         )
@@ -457,15 +436,16 @@ class SentenceGraphBuilder:
         active_nodes_edges_text, _ = self.graph.get_edges_str(
             graph_active_nodes, only_text_based=True
         )
-
+        # inferred nodes
         nodes_from_text = ""
         for idx, node in enumerate(current_sentence_text_based_nodes):
+            # pass it as list of nodes to the LLM to infer relationships
             nodes_from_text += (
                 f" - ({current_sentence_text_based_words[idx]}, {node.node_type})\n"
             )
 
         nodes_from_text = self._append_adjectival_hints_fn(nodes_from_text, sent)
-
+        # get new relationships from LLM
         new_relationships = self.llm.get_new_relationships(
             nodes_from_text,
             active_nodes_text,
@@ -478,21 +458,13 @@ class SentenceGraphBuilder:
             not new_relationships or len(new_relationships) == 0
         ):
             explicit = list(explicit_nodes_current_sentence)
-            if len(explicit) >= 2:
-                new_relationships = [
-                    (
-                        explicit[0].get_text_representer(),
-                        "co_occurs_with",
-                        explicit[1].get_text_representer(),
-                    )
-                ]
 
         text_based_activated_nodes = current_sentence_text_based_nodes
         sentence_lemma_keys = {
             tuple(n.lemmas) for n in current_sentence_text_based_nodes
         }
-
-        added_edges = self._process_llm_relationships(
+        # process LLM relationships and add to graph, keep track of added edges to reactivate them later if needed
+        added_edges = self.add_edges_from_llm(
             new_relationships,
             current_sentence_text_based_nodes,
             current_sentence_text_based_words,
@@ -500,7 +472,7 @@ class SentenceGraphBuilder:
             sentence_lemma_keys,
             explicit_nodes_current_sentence,
         )
-
+        # inferr new ceoncepts and properties
         inferred_concept_relationships, inferred_property_relationships = (
             self._infer_new_relationships_fn(
                 current_all_text,
@@ -543,21 +515,20 @@ class SentenceGraphBuilder:
             graph_active_nodes,
             added_edges,
         )
-
-        # trouble
-        if self.ENFORCE_ATTACHMENT_CONSTRAINT:
-            targeted_edges = self.link_to_recently_faded_nodes_wrapper_fn(
-                current_sentence_text_based_nodes,
-                current_sentence_text_based_words,
-                current_all_text,
-            )
-            added_edges.extend(targeted_edges)
-
+        # create edges between explicit nodes and carryover nodes
+        targeted_edges = self.link_to_recently_faded_nodes_wrapper_fn(
+            current_sentence_text_based_nodes,
+            current_sentence_text_based_words,
+            current_all_text,
+        )
+        added_edges.extend(targeted_edges)
+        # BFS from explicit nodes, reactivating inactive edges with visibility > 0
         reactivated_edges = self.graph.reactivate_memory_edges_within_distance_wrapper(
             explicit_nodes=explicit_nodes_current_sentence,
             max_distance=self.max_distance_from_active_nodes,
             current_sentence=current_sentence_index,
         )
+        # use LLM to select which memory edges to reactivate based on the sentence context
         self._reactivate_relevant_edges_fn(
             self.graph.get_active_nodes_wrapper(
                 self.max_distance_from_active_nodes, only_text_based=True
@@ -566,34 +537,33 @@ class SentenceGraphBuilder:
             added_edges,
         )
         self._propagate_activation_from_edges_fn()
-
+        # recompute anchors
         new_anchors = {
             n
             for n in explicit_nodes_current_sentence
             if n.node_type == NodeType.CONCEPT
         } | {
             n
-            for n in self._get_nodes_with_active_edges_fn()
+            for n in self.get_nodes_with_active_edges_fn()
             if n.node_type == NodeType.CONCEPT
         }
 
         anchor_nodes.clear()
         anchor_nodes.update(new_anchors)
-
-        self._handle_single_explicit_bridge(
+        # special cases:
+        # 1. isolated explicit node that is not connected to the active graph - create edge to closest active node
+        self.connect_isolated_explicit_node(
             explicit_nodes_current_sentence,
         )
-
-        self._ensure_explicit_nodes_have_edges(
+        # 2. explicit nodes with no edges - try to repair by asking LLM for relationships with active graph
+        self.repair_isolated_explicit_nodes(
             explicit_nodes_current_sentence,
             current_sentence_text,
         )
-
-        self._restrict_active_to_current_explicit_fn(
-            list(explicit_nodes_current_sentence)
-        )
-
-        should_skip = self._handle_empty_projection_retry(
+        # deactivate nodes that are not connected to the active graph and are not explicit
+        self._restrict_active_nodes_fn(list(explicit_nodes_current_sentence))
+        # TROUBLE - THIS RETURNS TRUE BUT IT'S NOT WORKING, NEED TO DEBUG
+        should_skip = self.handle_empty_projection_retry(
             explicit_nodes_current_sentence,
             current_sentence_text_based_nodes,
             current_sentence_text_based_words,
@@ -610,14 +580,14 @@ class SentenceGraphBuilder:
 
         return (nodes_before_sentence, should_skip)
 
-    def _handle_single_explicit_bridge(
+    def connect_isolated_explicit_node(
         self,
         explicit_nodes_current_sentence: set,
     ) -> None:
         if len(explicit_nodes_current_sentence) == 1:
             node = next(iter(explicit_nodes_current_sentence))
 
-            active_nodes = self._get_nodes_with_active_edges_fn()
+            active_nodes = self.get_nodes_with_active_edges_fn()
             if node not in active_nodes and active_nodes:
                 anchor = min(
                     active_nodes,
@@ -634,12 +604,12 @@ class SentenceGraphBuilder:
                     if edge:
                         edge.mark_as_current_sentence(reset_score=True)
 
-    def _ensure_explicit_nodes_have_edges(
+    def repair_isolated_explicit_nodes(
         self,
         explicit_nodes_current_sentence: set,
         current_sentence_text: str,
     ) -> None:
-        active_nodes = self._get_nodes_with_active_edges_fn()
+        active_nodes = self.get_nodes_with_active_edges_fn()
 
         for node in explicit_nodes_current_sentence:
             if node not in active_nodes:
@@ -688,7 +658,7 @@ class SentenceGraphBuilder:
                                 edge.mark_as_current_sentence(reset_score=True)
                                 break
 
-    def _handle_empty_projection_retry(
+    def handle_empty_projection_retry(
         self,
         explicit_nodes_current_sentence: set,
         current_sentence_text_based_nodes: list,
@@ -705,8 +675,8 @@ class SentenceGraphBuilder:
     ) -> bool:
         return False
 
-    def _normalize_relationship(self, relationship):
-        # Normalize LLM output into (subj, rel, obj)
+    # Normalize LLM output into (subj, rel, obj)
+    def normalize_llm_triple(self, relationship):
         if not relationship:
             return None
 
@@ -727,7 +697,8 @@ class SentenceGraphBuilder:
 
         return None
 
-    def _process_llm_relationships(
+    # Take the raw list of triples returned by the LLM, process them and add edges to graph
+    def add_edges_from_llm(
         self,
         new_relationships,
         current_sentence_text_based_nodes,
@@ -738,31 +709,30 @@ class SentenceGraphBuilder:
     ) -> list:
 
         added_edges = []
-
         normalized = []
+        # normalize triplet - subj, rel, obj
         for rel in new_relationships or []:
-            triple = self._normalize_relationship(rel)
+            triple = self.normalize_llm_triple(rel)
             if triple:
                 normalized.append(triple)
-
+        # normalize endpoints - call TextNormalizer.normalize_endpoint_text()
         for subj, rel, obj in normalized:
-
             subj = self._normalize_endpoint_text_fn(subj, is_subject=True)
             obj = self._normalize_endpoint_text_fn(obj, is_subject=False)
 
             if not subj or not obj or subj == obj:
                 continue
-
+            # verifies that at least one of the two endpoints is already in the active nodes + explicit + carryover list
             if not self.is_attachable_wrapper_fn(
                 subj,
                 obj,
                 current_sentence_text_based_words,
                 current_sentence_text_based_nodes,
                 graph_active_nodes,
-                self._get_nodes_with_active_edges_fn(),
+                self.get_nodes_with_active_edges_fn(),
             ):
                 continue
-
+            # attempts to find an existing node, otherwise, it creates a new one
             source_node = self._get_node_from_new_relationship_fn(
                 subj,
                 graph_active_nodes,
@@ -783,35 +753,26 @@ class SentenceGraphBuilder:
 
             if not source_node or not dest_node:
                 continue
-
+            # clean the relation string by removing noise such as (edge)
             edge_label = self._normalize_edge_label_fn(
                 rel.replace("(edge)", "").strip()
             )
+            # validate that the relation is valid in the context of the sentence
             if not self._is_valid_relation_label_fn(edge_label):
                 continue
-
-            canon_label, _, _, swapped = self._canonicalize_edge_direction_fn(
-                edge_label,
-                source_node.get_text_representer(),
-                dest_node.get_text_representer(),
-            )
-
-            if swapped:
-                source_node, dest_node = dest_node, source_node
-                edge_label = canon_label
 
             if tuple(source_node.lemmas) in sentence_lemma_keys:
                 source_node.node_source = NodeSource.TEXT_BASED
             if tuple(dest_node.lemmas) in sentence_lemma_keys:
                 dest_node.node_source = NodeSource.TEXT_BASED
 
-            if not self._relation_is_syntactically_supported(
+            if not self.is_relation_valid(
                 source_node,
                 edge_label,
                 dest_node,
             ):
                 continue
-
+            # create the edge
             edge = self.add_edge_wrapper_fn(
                 source_node,
                 dest_node,
@@ -824,10 +785,9 @@ class SentenceGraphBuilder:
 
         return added_edges
 
-    def sanitize_json_contamination(
-        self, resolved_text: str, original_text: str, sent
-    ) -> tuple:
-        # sometimes, the parser returns sentences such as: "Processing sentence 0: answer is: A man very close to Charlemagne wrote most of the things we know about Charlemagne."
+    # sometimes, the parser returns sentences such as: "Processing sentence 0: answer is: A man very close to Charlemagne wrote most of the things we know about Charlemagne."
+    def clean_llm_output(self, resolved_text: str, original_text: str, sent) -> tuple:
+
         if resolved_text.strip().startswith("{"):
             logging.error("JSON contamination in LLM output — reverting.")
             resolved_text = original_text
@@ -851,7 +811,7 @@ class SentenceGraphBuilder:
         return resolved_text, sents[0]
 
     # decay first, then connect
-    def apply_post_sentence_processing(
+    def run_post_processing(
         self,
         explicit_nodes: set,
         carryover_nodes: set,
@@ -859,5 +819,5 @@ class SentenceGraphBuilder:
         decay_node_activation_fn: callable,
     ) -> None:
         apply_global_edge_decay_fn()
-        self.graph.enforce_cumulative_stability_wrapper(set(explicit_nodes))
+        self.graph.stabilize_cumulative_graph_wrapper(set(explicit_nodes))
         decay_node_activation_fn()

@@ -177,6 +177,8 @@ class PerSentenceGraphBuilder:
         )
 
 
+# computes carryover nodes via BFS from explicit nodes
+# returns PerSentenceGraph with explicit, carryover, active nodes/edges, and anchor nodes
 def build_per_sentence_graph(
     cumulative_graph: Graph,
     explicit_nodes: List[Node],

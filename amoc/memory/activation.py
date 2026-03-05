@@ -48,15 +48,10 @@ class NodeActivationEngine:
 
     def deactivate_all_edges(self):
         for edge in self._graph.edges:
-
-            # Keep cumulative backbone edges alive
-            if edge.created_at_sentence is not None:
-                if edge.created_at_sentence < self._graph._current_sentence_idx:
-                    continue
-
-            # Otherwise reset
             edge.reset_for_sentence_start()
 
+    # Old code: reactivate edges connected to explicit nodes
+    # Expand to neighbors within distance, prioritizing closer ones, up to a max count
     def reactivate_memory_edges_within_distance(
         self,
         explicit_nodes: Set["Node"],
@@ -65,7 +60,7 @@ class NodeActivationEngine:
     ) -> Set["Edge"]:
         if not explicit_nodes or max_distance < 1:
             return set()
-
+        # extract explicit nodes
         concept_seeds = {n for n in explicit_nodes if n.node_type != NodeType.PROPERTY}
         if not concept_seeds:
             return set()
@@ -74,7 +69,7 @@ class NodeActivationEngine:
         queue = deque(concept_seeds)
         visited_edges = set()
         candidates = []
-
+        # BFS to find nodes within distance and candidate edges for reactivation
         while queue:
             node = queue.popleft()
             dist = reachable_nodes[node]
@@ -101,14 +96,14 @@ class NodeActivationEngine:
                 if neighbor not in reachable_nodes:
                     reachable_nodes[neighbor] = dist + 1
                     queue.append(neighbor)
-
+        # sort candidates by distance
         candidates.sort(key=lambda x: x[0])
         reactivated = set()
-
+        # reactivate the top candidates up to the max count
         for dist, edge in candidates[:MAX_REACTIVATION_COUNT]:
             edge.mark_as_reactivated(reset_score=False)
             reactivated.add(edge)
-
+        # edges that are reactivated and added to the active subgrah
         return reactivated
 
     def decay_inactive_edges(self) -> None:

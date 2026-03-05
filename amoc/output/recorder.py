@@ -85,6 +85,7 @@ class TripletRecorder:
             scores[(key[0], key[1])] = edge.activation_score
         return scores
 
+    # returns a list of all triplets currently in the graph
     def reconstruct_semantic_triplets(
         self,
         only_active: bool = False,
@@ -133,6 +134,7 @@ class TripletRecorder:
             if s in active_names and o in active_names
         ]
 
+    # list of (sentence_idx, sentence_text, subj, rel, obj, subj_active, obj_active, intro_sentence_idx) for all triplets in current sent
     def capture_sentence_triplets(
         self,
         original_text: str,
@@ -140,7 +142,6 @@ class TripletRecorder:
         explicit_nodes: Set["Node"],
         nodes_with_active_edges: Set["Node"],
         sentence_triplets: List,
-        anchor_drop_log: Optional[List] = None,
     ) -> None:
         current_nodes = explicit_nodes | nodes_with_active_edges
         for subj, rel, obj in self.reconstruct_semantic_triplets(
@@ -158,18 +159,3 @@ class TripletRecorder:
                     self._triplet_intro.get((subj, rel, obj), -1),
                 )
             )
-
-        if anchor_drop_log:
-            for sent_idx, sent_text, subj, rel, obj in anchor_drop_log:
-                sentence_triplets.append(
-                    (
-                        sent_idx,
-                        sent_text,
-                        subj,
-                        rel,
-                        obj,
-                        False,
-                        False,
-                        -1,
-                    )
-                )

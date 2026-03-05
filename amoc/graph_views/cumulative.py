@@ -26,6 +26,7 @@ class CumulativeGraph:
         return getattr(self._graph, item)
 
 
+# keeps the cumulative graph (long‑term memory) synchronized with the core graph
 class CumulativeGraphBuilder:
     def __init__(self, cumulative_graph: CumulativeGraph):
         self._cumulative_graph = cumulative_graph

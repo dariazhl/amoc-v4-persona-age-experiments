@@ -33,6 +33,7 @@ class ActiveGraph:
         return getattr(self._graph, item)
 
 
+# keeps the active graph synchronized with the core graph
 class ActiveGraphBuilder:
     def __init__(self, active_graph: ActiveGraph):
         self._active_graph = active_graph

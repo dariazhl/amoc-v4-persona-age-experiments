@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from spacy.tokens import Span
 
 
-class RelationshipInference:
+class Inference:
     def __init__(
         self,
         graph_ref: "Graph",
