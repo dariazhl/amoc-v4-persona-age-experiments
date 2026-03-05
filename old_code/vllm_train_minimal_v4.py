@@ -1,8 +1,6 @@
 import multiprocessing
-
 multiprocessing.set_start_method("spawn", force=True)
 import os
-
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 os.environ["HF_HOME"] = "/export/projects/nlp/.cache"
 import logging
@@ -67,11 +65,9 @@ except Exception as e:
 # --- CONFIGURATION FOR OUTPUT & INPUT (kept but unused by new runner) ---
 # Root folders for data and outputs
 INPUT_DIR = "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments/balanced_dfs/normalized"
-OUTPUT_DIR = (
-    "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output/extracted_triplets"
-)
+OUTPUT_DIR = "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output"
 OUTPUT_ANALYSIS_DIR = os.path.join(
-    "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output", "amoc_analysis"
+    "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/", "amoc_analysis"
 )
 os.makedirs(OUTPUT_ANALYSIS_DIR, exist_ok=True)
 
@@ -608,6 +604,9 @@ class VLLMClient:
             )
 
     def generate(self, messages: List[Dict[str, str]]) -> str:
+        """
+        messages: list of {role: 'system'|'user'|'assistant', content: str}
+        """
         if self.llm is None:
             logging.error("VLLM not initialized.")
             return "[]"
@@ -835,6 +834,10 @@ class AMoCv4:
         # - methods to infer relationships, properties, etc.
 
     def analyze(self, text: str, replace_prononuns: bool) -> List[Tuple[str, str, str]]:
+        """
+        Runs the full AMoC cycle and returns a list of extracted triplets
+        (Source, Relation, Target) for external saving.
+        """
         if replace_prononuns:
             text = self.resolve_pronouns(text)
         doc = self.spacy_nlp(text)
@@ -1074,10 +1077,9 @@ class AMoCv4:
                         self.persona,
                     )
                 )
-                return (
-                    new_relationships["concept_relationships"],
-                    new_relationships["property_relationships"],
-                )
+                return new_relationships["concept_relationships"], new_relationships[
+                    "property_relationships"
+                ]
             except:
                 continue
         return [], []
@@ -1120,10 +1122,9 @@ class AMoCv4:
                     text,
                     self.persona,
                 )
-                return (
-                    new_relationships["concept_relationships"],
-                    new_relationships["property_relationships"],
-                )
+                return new_relationships["concept_relationships"], new_relationships[
+                    "property_relationships"
+                ]
             except:
                 continue
         return [], []
@@ -1428,6 +1429,13 @@ class AMoCv4:
 
 
 class AgeAwareAMoCEngine:
+    """
+    Small helper/adapter that:
+      - Combines persona_text + age into a persona_description string
+      - Instantiates AMoCv4 with the shared VLLMClient and GLOBAL_NLP
+      - Calls analyze() and returns (subject, relation, object) triplets
+    """
+
     def __init__(self, vllm_client: VLLMClient):
         self.vllm_client = vllm_client
 
@@ -1715,7 +1723,7 @@ def process_persona_csv(
             f"{len(processed_indices)} indices)"
         )
 
-        # Ensure CSV exists with header (once)
+        # 🔹 Ensure CSV exists with header (once)
         if not os.path.isfile(output_path):
             pd.DataFrame([], columns=CSV_HEADERS).to_csv(
                 output_path, index=False, encoding="utf-8"
@@ -1849,6 +1857,8 @@ def process_persona_csv(
             )
 
 
+
+
 # --- Sentiment + lexical helpers --------------------------------------------
 
 _POSITIVE_WORDS: List[str] = [
@@ -1889,6 +1899,11 @@ _NEGATIVE_WORDS: List[str] = [
 
 
 def simple_sentiment_score(text: str) -> float:
+    """
+    Very simple lexicon-based sentiment:
+    (num_positive - num_negative) / max(total_tokens, 1)
+    Returns a value roughly in [-1, 1].
+    """
     if not text:
         return 0.0
 
@@ -1902,6 +1917,11 @@ def simple_sentiment_score(text: str) -> float:
 
 
 def compute_lexical_metrics(text: str) -> Dict[str, float]:
+    """
+    Compute simple lexical complexity metrics:
+      - lexical_ttr: type-token ratio
+      - lexical_avg_word_len: average word length (chars)
+    """
     if not text:
         return {"lexical_ttr": 0.0, "lexical_avg_word_len": 0.0}
 
@@ -1923,6 +1943,18 @@ def compute_lexical_metrics(text: str) -> Dict[str, float]:
 
 
 def compute_graph_metrics(edges: List[Tuple[str, str]]) -> Dict[str, float]:
+    """
+    Compute simple undirected graph metrics from edges = [(u, v), ...].
+
+    Returns:
+      - graph_num_nodes
+      - graph_num_edges
+      - graph_avg_degree
+      - graph_density
+      - graph_num_components
+      - graph_largest_component_size
+      - graph_largest_component_ratio
+    """
     # Collect nodes and adjacency (undirected)
     nodes = set()
     adj = {}
@@ -1999,6 +2031,13 @@ def compute_graph_metrics(edges: List[Tuple[str, str]]) -> Dict[str, float]:
 
 
 def process_triplets_file(path: str) -> pd.DataFrame:
+    """
+    Read one triplets CSV and compute persona-level metrics.
+    ALSO include raw columns:
+        original_index, age, persona_text, model_name, subject, relation, object
+    so that downstream analyses can join or inspect triplet-level data.
+    """
+
     df = pd.read_csv(path)
 
     if df.empty:
@@ -2128,7 +2167,6 @@ def annotate_stats(ax, pearson_r, pearson_p, spearman_r, spearman_p):
         bbox=dict(facecolor="white", alpha=0.7, edgecolor="black"),
     )
 
-
 def canonicalize_model_name(name: str) -> str:
     name = name.lower().strip()
 
@@ -2138,15 +2176,18 @@ def canonicalize_model_name(name: str) -> str:
         name = name.replace("gemma3", "gemma-3")
     elif "phi4" in name:
         name = name.replace("phi4", "phi-4")
-    elif "llama3.3" in name:
-        name = name.replace("llama3.3", "Llama-3.3")
-    elif "qwen3" in name:
-        name = name.replace("qwen3", "Qwen3")
 
     return name
 
-
 def run_statistical_analysis(model_name: str):
+    """
+    Statistical analysis for AMoC triplet datasets.
+
+    Produces:
+      - 3 correlation stats (age vs num_triplets, num_unique_concepts, graph_density)
+      - 3 scatter/regression plots
+      - A combined CSV output
+    """
     print("\n" + "=" * 60)
     print(f"AMoC AGE STATISTICAL ANALYSIS — MODEL: {model_name}")
     print("=" * 60)
@@ -2156,27 +2197,6 @@ def run_statistical_analysis(model_name: str):
     model_name = canonicalize_model_name(model_name)
     print("DEBUG AFTER:", model_name)
     safe_tag = model_name.replace("/", "-").replace(":", "-").replace(" ", "_")
-    # Apply Qwen-specific capitalization rules
-    safe_tag = safe_tag.lower()  # ensure deterministic base
-
-    if "qwen" in safe_tag:
-        parts = safe_tag.split("-")
-        new_parts = []
-        for p in parts:
-            if p.startswith("qwen"):
-                # qwen -> Qwen, qwen3 -> Qwen3
-                new_parts.append("Qwen" + p[4:])
-            elif p.endswith("b") and any(c.isdigit() for c in p):
-                # 30b -> 30B, a3b -> A3B
-                new_parts.append(p.upper())
-            elif p.isalpha():
-                # instruct -> Instruct
-                new_parts.append(p.capitalize())
-            else:
-                # numbers etc. unchanged (2507)
-                new_parts.append(p)
-
-        safe_tag = "-".join(new_parts)
     print("DEBUG SAFE_TAG:", safe_tag)
 
     pattern = f"model_{safe_tag}_triplets_*.csv"
@@ -2311,6 +2331,10 @@ def run_statistical_analysis(model_name: str):
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
+    """
+    Minimal CLI: only model selection + a few knobs.
+    Input and output folders are fixed by INPUT_DIR and OUTPUT_DIR.
+    """
     p = argparse.ArgumentParser(
         description=(
             "Run AMoCv4 over all persona CSVs in INPUT_DIR using one or more vLLM models "
