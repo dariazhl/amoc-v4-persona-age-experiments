@@ -435,6 +435,12 @@ class AMoCv4:
         )
 
     def stabilize_connectivity_wrapper(self, prev_sentences: list) -> bool:
+        # build per-sentence view first
+        self._per_sentence_view = self.build_per_sentence_view_wrapper(
+            explicit_nodes=list(self._explicit_nodes_current_sentence),
+            sentence_index=self._current_sentence_index,
+        )
+
         # call the unified repair pipeline
         self._connectivity_ops.run_repair_pipeline(
             per_sentence_view=self._per_sentence_view,
@@ -443,6 +449,12 @@ class AMoCv4:
             normalize_edge_label_fn=self._normalize_edge_label,
             create_forced_edges_fn=self.create_forced_connectivity_edges_wrapper,
             persona=self.persona,
+        )
+
+        # after repairs, rebuild the view to reflect new edgess
+        self._per_sentence_view = self.build_per_sentence_view_wrapper(
+            explicit_nodes=list(self._explicit_nodes_current_sentence),
+            sentence_index=self._current_sentence_index,
         )
 
         # update anchors (same as before)
@@ -465,7 +477,7 @@ class AMoCv4:
         )
 
         # validation
-        if not self._connectivity_ops.validate_sentence_state():
+        if not self._connectivity_ops.validate_active_connectivity():
             return True  # rollback needed
 
         return False

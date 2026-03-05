@@ -227,7 +227,7 @@ class ConnectivityStabilizer:
                 nodes.add(edge.dest_node)
         return nodes
 
-    def validate_sentence_state(self) -> bool:
+    def validate_active_connectivity(self) -> bool:
         if not self.is_active_connected_wrapper():
             return False
 
@@ -465,15 +465,15 @@ class ConnectivityStabilizer:
 
         # Step 5: Fallback "relates_to" edges
         logging.info("Step 5: Fallback relates_to edges")
-        self._apply_relates_to_fallback(required_nodes)
+        self.apply_relates_to_fallback(required_nodes)
 
         # Step 6: Ensure cumulative graph connected
         logging.info("Step 6: Connect cumulative graph components")
-        self._connect_cumulative_components()
+        self.connect_cumulative_components()
 
         # Step 7: Repair dangling nodes
         logging.info("Step 7: Repair dangling nodes")
-        self._repair_dangling_nodes(
+        self.repair_dangling_nodes(
             per_sentence_view, prev_sentences, normalize_edge_label_fn, persona
         )
 
