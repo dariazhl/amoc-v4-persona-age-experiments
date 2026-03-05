@@ -435,17 +435,17 @@ class AMoCv4:
         )
 
     def stabilize_connectivity_wrapper(self, prev_sentences: list) -> bool:
-        # Step 1 — deterministic connectivity repair
-        rollback_needed = self._connectivity_ops.run_connectivity_pipeline(
+        # call the unified repair pipeline
+        self._connectivity_ops.run_repair_pipeline(
+            per_sentence_view=self._per_sentence_view,
             prev_sentences=prev_sentences,
             current_sentence_text=self._current_sentence_text,
+            normalize_edge_label_fn=self._normalize_edge_label,
             create_forced_edges_fn=self.create_forced_connectivity_edges_wrapper,
+            persona=self.persona,
         )
 
-        if rollback_needed:
-            return True
-
-        # introducing anchors = all concepts that were explicit
+        # update anchors (same as before)
         explicit_concepts = {
             n
             for n in self._explicit_nodes_current_sentence
@@ -454,32 +454,19 @@ class AMoCv4:
         active_concepts = {
             n for n in self._get_active_edge_nodes() if n.node_type == NodeType.CONCEPT
         }
-
         self._anchor_nodes |= explicit_concepts
         self._anchor_nodes |= active_concepts
-
-        # keep only the active nodes
         self._anchor_nodes = {n for n in self._anchor_nodes if n in self.graph.nodes}
 
+        # rebuild per‑sentence view
         self._per_sentence_view = self.build_per_sentence_view_wrapper(
             explicit_nodes=list(self._explicit_nodes_current_sentence),
             sentence_index=self._current_sentence_index,
         )
 
-        # Step 3 — repair dangling nodes - they appear sometimes
-        repair_needed = self._connectivity_ops.repair_dangling_nodes(
-            per_sentence_view=self._per_sentence_view,
-            prev_sentences=prev_sentences,
-            normalize_edge_label_fn=self._normalize_edge_label,
-            persona=self.persona,
-        )
-
-        if repair_needed:
-            return True
-
-        # Step 4 — validation
+        # validation
         if not self._connectivity_ops.validate_sentence_state():
-            return True
+            return True  # rollback needed
 
         return False
 

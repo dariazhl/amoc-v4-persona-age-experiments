@@ -552,16 +552,7 @@ class SentenceGraphBuilder:
 
         anchor_nodes.clear()
         anchor_nodes.update(new_anchors)
-        # special cases:
-        # 1. isolated explicit node that is not connected to the active graph - create edge to closest active node
-        self.connect_isolated_explicit_node(
-            explicit_nodes_current_sentence,
-        )
-        # 2. explicit nodes with no edges - try to repair by asking LLM for relationships with active graph
-        self.repair_isolated_explicit_nodes(
-            explicit_nodes_current_sentence,
-            current_sentence_text,
-        )
+
         # deactivate nodes that are not connected to the active graph and are not explicit
         self._restrict_active_nodes_fn(list(explicit_nodes_current_sentence))
         # ISSUE: have seen plots where the first sentence is empty

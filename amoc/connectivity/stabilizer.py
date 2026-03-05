@@ -31,6 +31,7 @@ class ConnectivityStabilizer:
         self._story_text: str = ""
         self._current_sentence_text: str = ""
         self._anchor_nodes: set = set()
+        self._persona = ""
 
     def set_context(self, story_text: str, current_sentence_text: str):
         self._story_text = story_text
@@ -182,8 +183,7 @@ class ConnectivityStabilizer:
             )
 
             if edge:
-                edge.asserted_this_sentence = False
-                edge.reactivated_this_sentence = False
+                edge.mark_as_current_sentence(reset_score=True)
                 largest_component.update(comp_set)
 
     # ensure cumulative graph is connected
@@ -216,6 +216,7 @@ class ConnectivityStabilizer:
                 inferred=False,
             )
             if edge:
+                edge.mark_as_current_sentence(reset_score=True)
                 largest.update(comp)
 
     def get_nodes_with_active_edges(self) -> set:
@@ -324,6 +325,7 @@ class ConnectivityStabilizer:
                 )
 
                 if edge:
+                    edge.mark_as_current_sentence(reset_score=True)
                     repair_success = True
                     break
 
@@ -419,3 +421,192 @@ class ConnectivityStabilizer:
     def warn_if_cumulative_disconnected(self) -> None:
         if not self.is_cumulative_connected_wrapper():
             logging.warning("Cumulative graph disconnected - plots may show fragments")
+
+    # Run all connectivity repairs in sequence after decay
+    # Inside ConnectivityStabilizer class
+    def run_repair_pipeline(
+        self,
+        per_sentence_view,
+        prev_sentences: list,
+        current_sentence_text: str,
+        normalize_edge_label_fn: callable,
+        create_forced_edges_fn: callable,
+        persona: str = "",
+    ) -> None:
+        self._persona = persona
+
+        # Step 1: Connect isolated explicit nodes
+        logging.info("Step 1: Connecting isolated explicit node (if any)")
+        self._connect_isolated_explicit_node(
+            per_sentence_view,
+            prev_sentences,
+            current_sentence_text,
+            normalize_edge_label_fn,
+        )
+
+        # Step 2: LLM repair for any remaining isolated explicit nodes
+        logging.info("Step 2: LLM repair for remaining isolated explicit nodes")
+        self._repair_isolated_explicit_nodes(
+            per_sentence_view, current_sentence_text, normalize_edge_label_fn
+        )
+
+        # Step 3: Deterministic reactivation of existing cumulative edges
+        logging.info("Step 3: Deterministic reactivation via cumulative edges")
+        required_nodes = set(per_sentence_view.explicit_nodes) | set(
+            per_sentence_view.carryover_nodes
+        )
+        self._graph.enforce_connectivity(required_nodes, allow_reactivation=True)
+
+        # Step 4: LLM forced‑edge repair
+        logging.info("Step 4: LLM forced‑edge repair (component bridging)")
+        self._create_forced_edges_via_llm(
+            prev_sentences, current_sentence_text, create_forced_edges_fn
+        )
+
+        # Step 5: Fallback "relates_to" edges
+        logging.info("Step 5: Fallback relates_to edges")
+        self._apply_relates_to_fallback(required_nodes)
+
+        # Step 6: Ensure cumulative graph connected
+        logging.info("Step 6: Connect cumulative graph components")
+        self._connect_cumulative_components()
+
+        # Step 7: Repair dangling nodes
+        logging.info("Step 7: Repair dangling nodes")
+        self._repair_dangling_nodes(
+            per_sentence_view, prev_sentences, normalize_edge_label_fn, persona
+        )
+
+    # Connect a single isolated explicit node using LLM with FORCED_CONNECTIVITY_EDGE_PROMPT
+    def _connect_isolated_explicit_node(
+        self,
+        per_sentence_view,
+        prev_sentences: list,
+        current_sentence_text: str,
+        normalize_edge_label_fn: callable,
+    ) -> None:
+        explicit_nodes = per_sentence_view.explicit_nodes
+        if len(explicit_nodes) != 1:
+            return
+        node = next(iter(explicit_nodes))
+        active_nodes = self.get_nodes_with_active_edges()
+        if node in active_nodes or not active_nodes:
+            return  # already connected or no anchor
+
+        # Choose anchor: highest degree among active nodes
+        anchor = max(
+            active_nodes,
+            key=lambda n: sum(
+                1
+                for e in self._graph.edges
+                if e.active and (e.source_node == n or e.dest_node == n)
+            ),
+        )
+        if anchor == node:
+            return
+
+        # Build story context from previous sentences
+        story_context = " ".join(prev_sentences[:-1]) if len(prev_sentences) > 1 else ""
+
+        # Call LLM to get relation label
+        result = self._llm.get_forced_connectivity_edge_label(
+            node_a=node.get_text_representer(),
+            node_b=anchor.get_text_representer(),
+            story_context=story_context,
+            current_sentence=current_sentence_text,
+            persona=self._persona,
+        )
+        relation = result.get("label") if isinstance(result, dict) else result
+        if not relation:
+            # Fallback to generic "relates_to" if LLM fails
+            relation = "relates_to"
+
+        relation = normalize_edge_label_fn(relation)
+        if not relation:
+            return
+
+        edge = self._graph.add_edge(
+            node,
+            anchor,
+            relation,
+            self._edge_visibility,
+            inferred=True,
+        )
+        if edge:
+            edge.mark_as_current_sentence(reset_score=True)
+
+    # Use LLM to connect isolated explicit nodes, forcing the isolated node as subject
+    def _repair_isolated_explicit_nodes(
+        self,
+        per_sentence_view,
+        current_sentence_text: str,
+        normalize_edge_label_fn: callable,
+    ) -> None:
+        active_nodes = self.get_nodes_with_active_edges()
+        if not active_nodes:
+            return
+
+        for node in per_sentence_view.explicit_nodes:
+            if any(
+                e.source_node == node or e.dest_node == node
+                for e in per_sentence_view.active_edges
+            ):
+                continue  # already connected
+
+            # Choose anchor: highest degree among active nodes
+            anchor = max(
+                active_nodes,
+                key=lambda n: sum(
+                    1
+                    for e in self._graph.edges
+                    if e.active and (e.source_node == n or e.dest_node == n)
+                ),
+            )
+            if anchor == node:
+                continue
+
+            # Build story context from previous sentences (if needed)
+            story_context = ""  # you may need to pass prev_sentences to this method, or store it in self
+
+            result = self._llm.get_forced_connectivity_edge_label(
+                node_a=node.get_text_representer(),
+                node_b=anchor.get_text_representer(),
+                story_context=story_context,
+                current_sentence=current_sentence_text,
+                persona=self._persona,
+            )
+            relation = result.get("label") if isinstance(result, dict) else result
+            if not relation:
+                continue
+
+            relation = normalize_edge_label_fn(relation)
+            if not relation:
+                continue
+
+            edge = self._graph.add_edge(
+                node,
+                anchor,
+                relation,
+                self._edge_visibility,
+                inferred=True,
+            )
+            if edge:
+                edge.mark_as_current_sentence(reset_score=True)
+
+    # Try twice to connect disconnected components using LLM
+    def _create_forced_edges_via_llm(
+        self,
+        prev_sentences: list,
+        current_sentence_text: str,
+        create_forced_edges_fn: callable,
+    ) -> None:
+        for attempt in range(2):
+            create_forced_edges_fn(
+                story_context=(
+                    " ".join(prev_sentences[:-1]) if len(prev_sentences) > 1 else ""
+                ),
+                current_sentence=current_sentence_text,
+                mode="active",
+            )
+            if self.is_active_connected_wrapper():
+                break
