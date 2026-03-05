@@ -6,7 +6,7 @@
 *.png
 *.json
 venv/
-old_code/
+venv311/
 *.csv
 *.pdf
 *.def
@@ -22,3 +22,4 @@ amoc/graph/connectvity_invariants.py
 *.patch
 tests/*
 pytest.ini
+local_tests/

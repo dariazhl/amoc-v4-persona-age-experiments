@@ -15,7 +15,9 @@ from typing import Optional, Dict, Any, List, Tuple
 tokenizer = None
 OUTPUT_FOLDER = "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments/personas_dfs"
 FINAL_HS_FILE = os.path.join(OUTPUT_FOLDER, "highschool_FINAL.csv")
-
+# -------------------------------------------------------------------
+# Multiprocessing & environment setup
+# -------------------------------------------------------------------
 multiprocessing.set_start_method("spawn", force=True)
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 os.environ["HF_HOME"] = "/export/projects/nlp/.cache"
@@ -396,6 +398,8 @@ HIGH_SCHOOL_KEYWORDS = [
     "debate team",
 ]
 
+# 1. UNIVERSITY KEYWORDS (18 + - including 18)
+# =========================================================
 UNIVERSITY_KEYWORDS = [
     # Institutions
     "university",
@@ -483,6 +487,9 @@ HIGH_SCHOOL_ROLE_KEYWORDS = [
 ]
 
 
+# -------------------------------------------------------------------
+# Simple exclusion helpers
+# -------------------------------------------------------------------
 def should_exclude_primary(text: str) -> bool:
     t = text.lower()
     return any(kw in t for kw in PRIMARY_EXCLUDE_KEYWORDS)
@@ -961,6 +968,7 @@ def loading_filtering_highschool_students(
 
     FINAL_OUT = os.path.join(OUTPUT_FOLDER, "highschool_FINAL.csv")
 
+    # -------- STEP 1: DOMAIN FILTER --------
     for config_name in PERSONAHUB_CONFIGS:
         try:
             ds = load_dataset(
@@ -974,6 +982,7 @@ def loading_filtering_highschool_students(
                 persona_text = preferred_persona_text(rec)
                 age = extract_age(persona_text)
 
+                # ---- HARD GATE ----
                 if strict:
                     violations = strict_high_school_filter(persona_text, age)
                     if violations:
@@ -995,16 +1004,24 @@ def loading_filtering_highschool_students(
         print("V2: No high school candidates found.")
         return df
 
+    # if len(df) > num_rows:
+    #     print(
+    #         f"V2: Limiting PRIMARY candidates to first {num_rows} rows for LLM judging."
+    #     )
+    #     df = df.sample(n=num_rows, random_state=42).copy()
     print(f"V2: Initial high school domain matches: {len(df)}")
 
+    # -------- STEP 2: NORMALIZE TEXT + EXTRACT AGE (for info only) --------
     df["persona_text"] = df["persona_text"].astype(str)
     df["age"] = df["persona_text"].apply(extract_age)
 
+    # -------- STEP 3: MINIMAL KEYWORD-BASED EXCLUDE --------
     df["is_excluded"] = df["persona_text"].apply(should_exclude_highschool)
     df = df[~df["is_excluded"]].copy()
 
     print(f"V2: High school candidates after keyword exclude: {len(df)}")
     df["persona_id"] = df["source_config"].astype(str) + "::" + df["idx"].astype(str)
+    # -------- SHARDING (AFTER HARD GATE, BEFORE LLM) --------
     if num_shards > 1:
         df = df.sort_values("idx").reset_index(drop=True)
         df = df.iloc[shard_id::num_shards].copy()
@@ -1032,6 +1049,7 @@ def loading_filtering_highschool_students(
     df = df[df["persona_text"].apply(is_role_based_high_school)]
     print(f"V2: High school candidates after school context exclude: {len(df)}")
 
+    # -------- STEP 4: LLM JUDGE FOR HIGH SCHOOL --------
     print("V2: Running LLM judge for HIGH SCHOOL classification...")
 
     write_header = not os.path.exists(FINAL_OUT)
@@ -1080,12 +1098,18 @@ def loading_filtering_highschool_students(
     return df
 
 
+# -------------------------------------------------------------------
+# Age extraction
+# -------------------------------------------------------------------
 AGE_REGEX = re.compile(
     r"(\d{1,2})\s*-*\s*(?:year[s]?\s*[-]?\s*old|y/o|yr[s]?)",
     re.IGNORECASE,
 )
 
 
+# -------------------------------------------------------------------
+# Global LLM + sampling_params will be initialized in init_llm()
+# -------------------------------------------------------------------
 llm = None
 sampling_params = None
 
@@ -1176,6 +1200,9 @@ def init_llm(model_name: str, tensor_parallel_size: int):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
 
+# -------------------------------------------------------------------
+# Utility functions
+# -------------------------------------------------------------------
 def text_fields(record):
     fields = []
     for k, v in record.items():
@@ -1288,6 +1315,9 @@ def extract_age(text):
     return None
 
 
+# -------------------------------------------------------------------
+# LLM judging helpers
+# -------------------------------------------------------------------
 def judge_persona(persona: str, system_prompt: str) -> Dict:
     if llm is None or sampling_params is None or tokenizer is None:
         raise RuntimeError("LLM/tokenizer not initialized. Call init_llm() first.")
@@ -1430,6 +1460,7 @@ def main():
             f"{out_file}_shard{args.shard_id}.csv",
         )
 
+        # -------- HIGH SCHOOL SPECIAL CASE --------
         if "highschool" in filename and args.strict_high_school:
             # Phase 1: sharded jobs
             if args.num_shards > 1:
