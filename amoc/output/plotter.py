@@ -410,18 +410,20 @@ class GraphPlotter:
             )
             if triplets:
                 logging.info(
-                    "[Plot] Saved sentence %d graph to %s", sentence_index, saved_path
+                    "[Plot] Saved sentence %d graph to %s",
+                    sentence_index + 1,
+                    saved_path,
                 )
             elif explicit_nodes:
                 logging.info(
                     "[Plot] Saved sentence %d graph (explicit nodes only) to %s",
-                    sentence_index,
+                    sentence_index + 1,
                     saved_path,
                 )
             else:
                 logging.info(
                     "[Plot] Sentence %d graph empty (no explicit nodes, no edges)",
-                    sentence_index,
+                    sentence_index + 1,
                 )
         except Exception:
             logging.error("Failed to plot graph snapshot", exc_info=True)

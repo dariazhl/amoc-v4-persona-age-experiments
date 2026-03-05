@@ -52,61 +52,61 @@ class NodeActivationEngine:
 
     # Old code: reactivate edges connected to explicit nodes
     # Expand to neighbors within distance, prioritizing closer ones, up to a max count
-    def reactivate_memory_edges_within_distance(
-        self,
-        explicit_nodes: Set["Node"],
-        max_distance: int,
-        current_sentence: int,
-    ) -> Set["Edge"]:
-        if not explicit_nodes or max_distance < 1:
-            return set()
-        # extract explicit nodes
-        concept_seeds = {n for n in explicit_nodes if n.node_type != NodeType.PROPERTY}
-        if not concept_seeds:
-            return set()
+    # def reactivate_memory_edges_within_distance(
+    #     self,
+    #     explicit_nodes: Set["Node"],
+    #     max_distance: int,
+    #     current_sentence: int,
+    # ) -> Set["Edge"]:
+    #     if not explicit_nodes or max_distance < 1:
+    #         return set()
+    #     # extract explicit nodes
+    #     concept_seeds = {n for n in explicit_nodes if n.node_type != NodeType.PROPERTY}
+    #     if not concept_seeds:
+    #         return set()
 
-        reachable_nodes = {n: 0 for n in concept_seeds}
-        queue = deque(concept_seeds)
-        visited_edges = set()
-        candidates = []
-        # BFS to find nodes within distance and candidate edges for reactivation
-        while queue:
-            node = queue.popleft()
-            dist = reachable_nodes[node]
+    #     reachable_nodes = {n: 0 for n in concept_seeds}
+    #     queue = deque(concept_seeds)
+    #     visited_edges = set()
+    #     candidates = []
+    #     # BFS to find nodes within distance and candidate edges for reactivation
+    #     while queue:
+    #         node = queue.popleft()
+    #         dist = reachable_nodes[node]
 
-            if dist >= max_distance:
-                continue
+    #         if dist >= max_distance:
+    #             continue
 
-            for edge in node.edges:
-                if edge in visited_edges:
-                    continue
-                if edge.forced_connection:
-                    continue
-                if edge.visibility_score <= 0:
-                    continue
-                if edge.active:
-                    continue
+    #         for edge in node.edges:
+    #             if edge in visited_edges:
+    #                 continue
+    #             if edge.forced_connection:
+    #                 continue
+    #             if edge.visibility_score <= 0:
+    #                 continue
+    #             if edge.active:
+    #                 continue
 
-                visited_edges.add(edge)
-                candidates.append((dist, edge))
+    #             visited_edges.add(edge)
+    #             candidates.append((dist, edge))
 
-                neighbor = (
-                    edge.dest_node if edge.source_node == node else edge.source_node
-                )
-                if neighbor not in reachable_nodes:
-                    reachable_nodes[neighbor] = dist + 1
-                    queue.append(neighbor)
-        # sort candidates by distance
-        candidates.sort(key=lambda x: x[0])
-        reactivated = set()
-        # reactivate the top candidates up to the max count
-        for dist, edge in candidates[:MAX_REACTIVATION_COUNT]:
-            edge.mark_as_reactivated(
-                reset_score=False, new_visibility=self._edge_visibility
-            )
-            reactivated.add(edge)
-        # edges that are reactivated and added to the active subgrah
-        return reactivated
+    #             neighbor = (
+    #                 edge.dest_node if edge.source_node == node else edge.source_node
+    #             )
+    #             if neighbor not in reachable_nodes:
+    #                 reachable_nodes[neighbor] = dist + 1
+    #                 queue.append(neighbor)
+    #     # sort candidates by distance
+    #     candidates.sort(key=lambda x: x[0])
+    #     reactivated = set()
+    #     # reactivate the top candidates up to the max count
+    #     for dist, edge in candidates[:MAX_REACTIVATION_COUNT]:
+    #         edge.mark_as_reactivated(
+    #             reset_score=False, new_visibility=self._edge_visibility
+    #         )
+    #         reactivated.add(edge)
+    #     # edges that are reactivated and added to the active subgrah
+    #     return reactivated
 
     def decay_inactive_edges(self) -> None:
         for edge in list(self._graph.edges):

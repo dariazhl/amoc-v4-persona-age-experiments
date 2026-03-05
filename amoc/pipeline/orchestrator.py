@@ -184,13 +184,13 @@ class AMoCv4:
             append_record_fn=self._amoc_matrix_records.append,
         )
 
-    def link_to_recently_faded_nodes_wrapper(
+    def llm_attach_explicit_to_carryover_wrapper(
         self,
         current_sentence_nodes: List[Node],
         current_sentence_words: List[str],
         current_text: str,
     ) -> List[Edge]:
-        return self._edge_ops.link_to_recently_faded_nodes(
+        return self._edge_ops.llm_attach_explicit_to_carryover(
             current_sentence_nodes=current_sentence_nodes,
             current_sentence_words=current_sentence_words,
             current_text=current_text,

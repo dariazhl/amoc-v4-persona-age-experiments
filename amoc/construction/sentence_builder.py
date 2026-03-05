@@ -37,7 +37,7 @@ class SentenceGraphBuilder:
         self.get_nodes_with_active_edges_fn = None
         self._append_adjectival_hints_fn = None
         self._extract_deterministic_structure_fn = None
-        self.link_to_recently_faded_nodes_wrapper_fn = None
+        self.llm_attach_explicit_to_carryover_wrapper_fn = None
         self._propagate_activation_from_edges_fn = None
         self._restrict_active_nodes_fn = None
         self._get_node_from_new_relationship_fn = None
@@ -67,7 +67,7 @@ class SentenceGraphBuilder:
         get_nodes_with_active_edges_fn,
         append_adjectival_hints_fn,
         extract_deterministic_structure_fn,
-        link_to_recently_faded_nodes_fn,
+        llm_attach_explicit_to_carryover_fn,
         propagate_activation_from_edges_fn,
         restrict_active_nodes_fn,
         get_node_from_new_relationship_fn,
@@ -89,7 +89,9 @@ class SentenceGraphBuilder:
         self.get_nodes_with_active_edges_fn = get_nodes_with_active_edges_fn
         self._append_adjectival_hints_fn = append_adjectival_hints_fn
         self._extract_deterministic_structure_fn = extract_deterministic_structure_fn
-        self.link_to_recently_faded_nodes_wrapper_fn = link_to_recently_faded_nodes_fn
+        self.llm_attach_explicit_to_carryover_wrapper_fn = (
+            llm_attach_explicit_to_carryover_fn
+        )
         self._propagate_activation_from_edges_fn = propagate_activation_from_edges_fn
         self._restrict_active_nodes_fn = restrict_active_nodes_fn
         self._get_node_from_new_relationship_fn = get_node_from_new_relationship_fn
@@ -137,7 +139,7 @@ class SentenceGraphBuilder:
                 ),
                 core._linguistic_ops.extract_deterministic_structure(s, n, w),
             )[-1],
-            link_to_recently_faded_nodes_fn=core.link_to_recently_faded_nodes_wrapper,
+            llm_attach_explicit_to_carryover_fn=core.llm_attach_explicit_to_carryover_wrapper,
             propagate_activation_from_edges_fn=lambda: (
                 core._activation_ops.propagate_activation_from_edges()
             ),
@@ -516,7 +518,7 @@ class SentenceGraphBuilder:
             added_edges,
         )
         # create edges between explicit nodes and carryover nodes
-        targeted_edges = self.link_to_recently_faded_nodes_wrapper_fn(
+        targeted_edges = self.llm_attach_explicit_to_carryover_wrapper_fn(
             current_sentence_text_based_nodes,
             current_sentence_text_based_words,
             current_all_text,
@@ -562,7 +564,9 @@ class SentenceGraphBuilder:
         )
         # deactivate nodes that are not connected to the active graph and are not explicit
         self._restrict_active_nodes_fn(list(explicit_nodes_current_sentence))
-        # TROUBLE - THIS RETURNS TRUE BUT IT'S NOT WORKING, NEED TO DEBUG
+        # ISSUE: have seen plots where the first sentence is empty
+        # DESIGN: prevent the first sentence plot from collapsing
+        # TROUBLE - THIS ALWAYS RETURNS FALSE SO DEAD CODE, NEED TO DEBUG
         should_skip = self.handle_empty_projection_retry(
             explicit_nodes_current_sentence,
             current_sentence_text_based_nodes,

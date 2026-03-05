@@ -370,8 +370,7 @@ class EdgeAdmission:
                 if active_graph.has_edge(u, v, key=edge_key):
                     active_graph.remove_edge(u, v, key=edge_key)
 
-    # trouble
-    def link_to_recently_faded_nodes(
+    def llm_attach_explicit_to_carryover(
         self,
         current_sentence_nodes: List["Node"],
         current_sentence_words: List[str],

@@ -1,25 +1,28 @@
-######################
+# Byte-compiled / optimized / DLL files
 .DS_Store
 ._*
 /pycache__/
+pytest.ini
+
+# file types
 *.pyc
 *.png
 *.json
-venv/
-venv311/
 *.csv
 *.pdf
 *.def
 *.txt
 *.md
-me_learning/
-amoc_v4.py
-correlation_matrix.py
-create_grid_sentences_same_persona.py
-parse_tasa.py
-quick_stats.py
-amoc/graph/connectvity_invariants.py
+
+# environments
+venv/
+venv311/
+
+# patches
+patches/
 *.patch
+
+# folders
+me_learning/
 tests/*
-pytest.ini
 local_tests/
