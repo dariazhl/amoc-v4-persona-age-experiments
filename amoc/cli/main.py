@@ -221,6 +221,11 @@ def main(argv: List[str]) -> None:
     else:
         output_dir = OUTPUT_DIR
 
+    if args.output_dir:
+        graphs_output_dir = os.path.join(args.output_dir, "graphs")
+    else:
+        graphs_output_dir = os.path.join(OUTPUT_ANALYSIS_DIR, "graphs")
+
     try:
         for filename in files_to_process:
             print(f"\n=== Processing file: {os.path.basename(filename)} ===")
@@ -234,7 +239,7 @@ def main(argv: List[str]) -> None:
                 tensor_parallel_size=args.tp_size,
                 resume_only=args.resume_only,
                 plot_after_each_sentence=args.plot_after_each_sentence,
-                graphs_output_dir=os.path.join(OUTPUT_ANALYSIS_DIR, "graphs"),
+                graphs_output_dir=graphs_output_dir,
                 highlight_nodes=highlight_nodes,
                 plot_final_graph=args.plot_final_graph,
                 plot_largest_component_only=args.plot_largest_component_only,

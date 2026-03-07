@@ -25,7 +25,7 @@ export NCCL_P2P_DISABLE=1
 export NCCL_IB_DISABLE=1
 
 
-RUN_ID="run_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+RUN_ID="run_${SLURM_ARRAY_JOB_ID}"
 BASE_OUTPUT_DIR="/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output/extracted_triplets/small_example_output_llama"
 RUN_OUTPUT_DIR="${BASE_OUTPUT_DIR}/${RUN_ID}"
 mkdir -p "${RUN_OUTPUT_DIR}"

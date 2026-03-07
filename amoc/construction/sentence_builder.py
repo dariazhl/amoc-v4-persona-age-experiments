@@ -61,6 +61,10 @@ class SentenceGraphBuilder:
         self.text_normalizer = text_normalizer
         self.triple_validator = None
 
+        self._current_sentence_span = None
+        self._current_sentence_text = ""
+        self._current_sentence_index = None
+
     def set_builder_callbacks(
         self,
         normalize_endpoint_text_fn,
@@ -389,6 +393,7 @@ class SentenceGraphBuilder:
     ) -> Tuple[set, bool]:
         self._current_sentence_index = current_sentence_index
         self._current_sentence_text = current_sentence_text
+        self._current_sentence_span = sent
 
         for e in self.graph.edges:
             e.active_this_sentence = False
@@ -718,11 +723,18 @@ class SentenceGraphBuilder:
         if not normalized_triples:
             return added_edges
 
+        explicit_node_texts = [
+            n.get_text_representer() for n in current_sentence_text_based_nodes
+        ]
+        normalized_triples = validator.prioritize_hub(
+            normalized_triples, explicit_node_texts
+        )
+
         # step 2: build deterministic lookup for validation
         deterministic_lookup = validator.build_deterministic_lookup(
             current_sentence_text_based_nodes,
             current_sentence_text_based_words,
-            self._current_sentence,
+            self._current_sentence_span,
         )
 
         # step 3: get current sentence text for llm validation
@@ -737,7 +749,11 @@ class SentenceGraphBuilder:
 
             # validate against deterministic structure
             validated = validator.validate_against_deterministic(
-                subj_norm, rel, obj_norm, deterministic_lookup
+                subj_norm,
+                rel,
+                obj_norm,
+                deterministic_lookup,
+                sentence=current_sentence_text,
             )
             if not validated["valid"]:
                 continue
@@ -808,10 +824,11 @@ class SentenceGraphBuilder:
 
     def get_triplet_validator(self):
         if not hasattr(self, "_triple_validator") or self._triple_validator is None:
-            self._triple_validator = TripleValidator(
+            self._triple_validator = TripletValidator(
                 linguistic_ops=self,
+                extract_deterministic_fn=self._extract_deterministic_structure_fn,
                 text_normalizer=self.text_normalizer,
-                llm_client=self.llm,
+                client=self.llm,
                 persona=self.persona,
             )
         return self._triple_validator

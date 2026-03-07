@@ -429,15 +429,19 @@ VALIDATE_TRIPLE_PROMPT = """You are validating a candidate relationship for a kn
 Given the sentence:
 "{sentence}"
 
-Determine if the following triple makes sense based ONLY on what is stated or clearly implied in the sentence:
+Determine if the following triple is EXPLICITLY STATED in the sentence:
 ({subject}, {relation}, {object})
 
-Rules:
-- The triple must be directly supported by the sentence content.
-- The relation must accurately reflect what the sentence says about how the subject and object relate.
-- If the triple reverses the actual direction (e.g., sentence says "man wrote about king" but triple says "king wrote about man"), it is INVALID.
-- If the triple invents a relationship not present in the sentence, it is INVALID.
-- If the triple accurately captures a relationship from the sentence (even if paraphrased), it is VALID.
+STRICT RULES:
+- The triple must be directly and explicitly stated in the sentence, not just implied.
+- The exact words or a very close synonym must appear in the sentence.
+- The subject must be the actual doer of the action in the sentence.
+- The object must be the actual receiver of the action in the sentence.
+- If the sentence does NOT explicitly state this relationship, it is INVALID.
+- If the triple reverses subject and object, it is INVALID.
+- If the triple uses a word not in the sentence (e.g., "knows about" when sentence says "wrote about"), it is INVALID.
+- Abstract concepts like "thing" should NOT be the subject of actions unless the sentence explicitly makes them the subject (e.g., "the thing fell").
+- In the sentence "A man wrote about the king", "thing" is the object, not the subject - so "thing writes about king" is INVALID.
 
 Respond with a JSON object containing:
 1. "valid": true or false
@@ -449,4 +453,7 @@ Example response format:
 
 OR if reversed:
 {{"valid": false, "reason": "The sentence says the man wrote about the king, not the other way around.", "corrected_triple": ["man", "wrote about", "king"]}}
+
+OR if completely wrong:
+{{"valid": false, "reason": "The sentence does not mention anything about 'thing' knowing about anything.", "corrected_triple": null}}
 """

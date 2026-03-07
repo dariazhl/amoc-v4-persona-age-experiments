@@ -129,7 +129,8 @@ class NodeActivationEngine:
                 continue
             distances[curr_node] = curr_distance
             for edge in curr_node.edges:
-                if not edge.active:
+                # Only traverse edges that are active AND have positive visibility
+                if not (edge.active and edge.visibility_score > 0):
                     continue
 
                 next_node = None

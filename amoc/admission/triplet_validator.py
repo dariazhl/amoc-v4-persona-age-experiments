@@ -14,12 +14,14 @@ class TripletValidator:
     def __init__(
         self,
         linguistic_ops: LinguisticProcessing,
+        extract_deterministic_fn,
         text_normalizer: TextNormalizer,
         client: VLLMClient,
         persona: str = "",
         similarity_threshold: float = 0.8,
     ):
         self.linguistic_ops = linguistic_ops
+        self.extract_deterministic_fn = extract_deterministic_fn
         self.text_normalizer = text_normalizer
         self.client = client
         self.persona = persona
@@ -64,7 +66,7 @@ class TripletValidator:
         self, sentence_nodes: List[Node], sentence_words: List[str], current_sentence
     ) -> Dict[str, Dict]:
         candidates = (
-            self.linguistic_ops.extract_deterministic_structure_fn(
+            self.extract_deterministic_fn(
                 current_sentence,
                 sentence_nodes,
                 sentence_words,
@@ -85,40 +87,77 @@ class TripletValidator:
 
     # check if an llm triple conflicts with deterministic extraction
     def validate_against_deterministic(
-        self, subj: str, rel: str, obj: str, det_lookup: Dict
+        self, subj: str, rel: str, obj: str, det_lookup: Dict, sentence: str = None
     ) -> Dict:
         forward = det_lookup["forward"]
         reverse = det_lookup["reverse"]
 
-        forward_key = (subj, obj)
-        reverse_key = (obj, subj)
+        # If we have deterministic info, use it strictly
+        if forward or reverse:
+            forward_key = (subj, obj)
+            reverse_key = (obj, subj)
 
-        # case 1: exact match exists
-        if forward_key in forward:
-            det_rel = forward[forward_key]
-            if self.labels_are_similar(rel, det_rel):
-                return {"valid": True, "subj": subj, "obj": obj, "rel": rel}
-            else:
+            # case 1: exact match exists
+            if forward_key in forward:
+                det_rel = forward[forward_key]
+                if self.labels_are_similar(rel, det_rel):
+                    return {"valid": True, "subj": subj, "obj": obj, "rel": rel}
+                else:
+                    logging.info(
+                        f"llm edge ({subj},{rel},{obj}) conflicts with deterministic ({det_rel})"
+                    )
+                    return {"valid": False}
+
+            # case 2: reverse match exists (likely swapped)
+            if reverse_key in reverse:
+                det_rel = reverse[reverse_key]
                 logging.info(
-                    f"llm edge ({subj},{rel},{obj}) conflicts with deterministic ({det_rel})"
+                    f"llm edge ({subj},{rel},{obj}) appears reversed - swapping to ({obj},{rel},{subj})"
                 )
-                return {"valid": False}
+                if self.labels_are_similar(rel, det_rel):
+                    return {"valid": True, "subj": obj, "obj": subj, "rel": rel}
+                else:
+                    logging.info(
+                        f"swapped edge relation ({rel}) conflicts with deterministic ({det_rel})"
+                    )
+                    return {"valid": False}
 
-        # case 2: reverse match exists (likely swapped)
-        if reverse_key in reverse:
-            det_rel = reverse[reverse_key]
+            # case 3: deterministic info exists but no match
             logging.info(
-                f"llm edge ({subj},{rel},{obj}) appears reversed - swapping to ({obj},{rel},{subj})"
+                f"llm edge ({subj},{rel},{obj}) has no deterministic match - rejecting"
             )
-            if self.labels_are_similar(rel, det_rel):
-                return {"valid": True, "subj": obj, "obj": subj, "rel": rel}
-            else:
-                logging.info(
-                    f"swapped edge relation ({rel}) conflicts with deterministic ({det_rel})"
-                )
+            return {"valid": False}
+
+        # case 4: NO deterministic info - apply stricter rules
+        # For first sentence or when parsing fails, use heuristics
+
+        # trouble
+        # "thing" should never be the subject of an action verb
+        if subj.lower() == "thing" and rel.lower() in [
+            "writes",
+            "knows",
+            "describes",
+            "says",
+            "tells",
+        ]:
+            logging.info(f"rejecting - 'thing' cannot be the subject of '{rel}'")
+            return {"valid": False}
+
+        # If object is "thing", subject should be a person/entity
+        if obj.lower() == "thing" and subj.lower() in ["thing", "it", "this"]:
+            logging.info(f"rejecting - vague subject '{subj}' with 'thing' as object")
+            return {"valid": False}
+
+        # Check if relation words appear in the sentence
+        if sentence:
+            if not self.relation_words_in_sentence(rel, sentence):
+                logging.info(f"rejecting - relation '{rel}' not found in sentence")
                 return {"valid": False}
 
-        # case 3: no deterministic info – accept llm triple as is
+        # If no deterministic info and no rule violations, accept with caution
+        logging.info(
+            f"no deterministic info for ({subj},{rel},{obj}) - accepting with caution"
+        )
         return {"valid": True, "subj": subj, "obj": obj, "rel": rel}
 
     # use llm to validate semantic plausibility of a triple
@@ -189,3 +228,51 @@ class TripletValidator:
         if not self.text_normalizer.is_valid_relation_label(edge_label):
             return None
         return edge_label
+
+    def prioritize_hub(
+        self, triplets: List[Tuple[str, str, str]], explicit_nodes: List[str]
+    ) -> List[Tuple[str, str, str]]:
+        if not triplets or not explicit_nodes:
+            return triplets
+
+        # Find the most specific entity (usually a person name)
+        generic_terms = {
+            "thing",
+            "something",
+            "it",
+            "this",
+            "that",
+            "they",
+            "he",
+            "she",
+        }
+        specific_nodes = [n for n in explicit_nodes if n.lower() not in generic_terms]
+
+        if specific_nodes:
+            # Use the first specific node as hub candidate
+            hub_candidate = specific_nodes[0]
+
+            # Split triples into those with hub as subject and others
+            hub_as_subject = [t for t in triplets if t[0] == hub_candidate]
+            other_triples = [t for t in triplets if t[0] != hub_candidate]
+
+            # Return hub-first triples followed by others
+            return hub_as_subject + other_triples
+
+        return triplets
+
+    # Check if the relation words appear in the sentence
+    def relation_words_in_sentence(self, rel: str, sentence: str) -> bool:
+        if not sentence:
+            return True
+
+        # Parse the relation to get its lemmas
+        rel_doc = self.text_normalizer._spacy_nlp(rel)
+        rel_lemmas = {token.lemma_.lower() for token in rel_doc if token.is_alpha}
+
+        # Parse the sentence to get its lemmas
+        sent_doc = self.text_normalizer._spacy_nlp(sentence)
+        sent_lemmas = {token.lemma_.lower() for token in sent_doc if token.is_alpha}
+
+        # Check if any relation lemma appears in the sentence
+        return bool(rel_lemmas & sent_lemmas)
