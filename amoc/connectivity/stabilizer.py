@@ -114,6 +114,12 @@ class ConnectivityStabilizer:
         # find disconnected components
         components, _ = self._graph.get_disconnected_components_wrapper(required_nodes)
 
+        # Include required nodes that have no active edges as separate components
+        all_required_nodes = set(required_nodes)
+        covered_nodes = set().union(*components) if components else set()
+        for node in all_required_nodes - covered_nodes:
+            components.append({node})
+
         if len(components) <= 1:
             return
 

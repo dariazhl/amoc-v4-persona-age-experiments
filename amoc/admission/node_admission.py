@@ -273,6 +273,8 @@ class NodeAdmission:
             return True
 
         active_nodes = set(get_nodes_with_active_edges_fn())
+        if not active_nodes:
+            return True
         frontier_nodes = active_nodes | explicit_nodes | carryover_nodes
         frontier_keys = {tuple(n.lemmas) for n in frontier_nodes}
 

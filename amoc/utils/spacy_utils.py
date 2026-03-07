@@ -281,6 +281,7 @@ def extract_deterministic_relation_candidates(
     sent: Span,
 ) -> List[DeterministicRelationCandidate]:
     candidates: list[DeterministicRelationCandidate] = []
+    print(f"DEBUG: Processing sentence: {sent.text}")  # or logging.info
 
     def _lemma(tok) -> str:
         return (tok.lemma_ or "").lower().strip()
@@ -295,6 +296,9 @@ def extract_deterministic_relation_candidates(
                 object_lemma=obj_lemma,
                 object_is_property=obj_is_property,
             )
+        )
+        print(
+            f"DEBUG: Appended candidate: ({subj_lemma}, {rel}, {obj_lemma}, property={obj_is_property})"
         )
 
     for token in sent:
@@ -363,4 +367,13 @@ def extract_deterministic_relation_candidates(
                 for conj in (c for c in pobj.children if c.dep_ == "conj"):
                     _append(subj_lemma, rel, _lemma(conj), False)
 
+    print(f"DEBUG: Total deterministic candidates: {len(candidates)}")
+    if candidates:
+        print("DEBUG: Candidates list:")
+        for c in candidates:
+            print(
+                f"  {c.subject_lemma} --{c.relation_label}--> {c.object_lemma} (property={c.object_is_property})"
+            )
+    else:
+        print("DEBUG: No deterministic candidates found.")
     return candidates

@@ -128,10 +128,7 @@ class TripletValidator:
             )
             return {"valid": False}
 
-        # case 4: NO deterministic info - apply stricter rules
-        # For first sentence or when parsing fails, use heuristics
-
-        # trouble
+        # case 4: NO deterministic info – apply simple heuristics
         # "thing" should never be the subject of an action verb
         if subj.lower() == "thing" and rel.lower() in [
             "writes",
@@ -139,6 +136,11 @@ class TripletValidator:
             "describes",
             "says",
             "tells",
+            "wrote",
+            "knew",
+            "described",
+            "said",
+            "told",
         ]:
             logging.info(f"rejecting - 'thing' cannot be the subject of '{rel}'")
             return {"valid": False}
@@ -148,16 +150,8 @@ class TripletValidator:
             logging.info(f"rejecting - vague subject '{subj}' with 'thing' as object")
             return {"valid": False}
 
-        # Check if relation words appear in the sentence
-        if sentence:
-            if not self.relation_words_in_sentence(rel, sentence):
-                logging.info(f"rejecting - relation '{rel}' not found in sentence")
-                return {"valid": False}
-
-        # If no deterministic info and no rule violations, accept with caution
-        logging.info(
-            f"no deterministic info for ({subj},{rel},{obj}) - accepting with caution"
-        )
+        # No deterministic info and heuristics passed – let LLM decide
+        logging.info(f"no deterministic info for ({subj},{rel},{obj}) - passing to LLM")
         return {"valid": True, "subj": subj, "obj": obj, "rel": rel}
 
     # use llm to validate semantic plausibility of a triple
@@ -260,19 +254,3 @@ class TripletValidator:
             return hub_as_subject + other_triples
 
         return triplets
-
-    # Check if the relation words appear in the sentence
-    def relation_words_in_sentence(self, rel: str, sentence: str) -> bool:
-        if not sentence:
-            return True
-
-        # Parse the relation to get its lemmas
-        rel_doc = self.text_normalizer._spacy_nlp(rel)
-        rel_lemmas = {token.lemma_.lower() for token in rel_doc if token.is_alpha}
-
-        # Parse the sentence to get its lemmas
-        sent_doc = self.text_normalizer._spacy_nlp(sentence)
-        sent_lemmas = {token.lemma_.lower() for token in sent_doc if token.is_alpha}
-
-        # Check if any relation lemma appears in the sentence
-        return bool(rel_lemmas & sent_lemmas)

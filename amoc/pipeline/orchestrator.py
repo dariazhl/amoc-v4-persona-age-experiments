@@ -566,8 +566,21 @@ class AMoCv4:
         previous_prev_active_nodes,
     ) -> None:
         logging.error("Sentence invalid — reverting to previous state.")
+
+        # Restore state first
+        self.graph = previous_graph_state
+        self.rebind_ops_graph_refs()
+        self._anchor_nodes.clear()
+        self._anchor_nodes.update(previous_anchor_nodes)
+        self._triplet_intro.clear()
+        self._triplet_intro.update(previous_triplet_intro)
+        self._recently_deactivated_nodes_for_inference = previous_recently_deactivated
+        self._prev_active_nodes_for_plot = previous_prev_active_nodes
+        self._per_sentence_view = previous_per_sentence_view
+
         if plot_after_each_sentence:
             try:
+                # Active plot
                 explicit = [
                     n.get_text_representer()
                     for n in self._explicit_nodes_current_sentence
@@ -583,23 +596,34 @@ class AMoCv4:
                     only_active=True,
                     largest_component_only=largest_component_only,
                     mode="sentence_active",
-                    triplets_override=self._previous_active_triplets,
+                    triplets_override=self._previous_active_triplets,  # from previous state
+                    active_edges=set(),
+                    active_triplets_for_overlay=self._previous_active_triplets,
+                    property_nodes=[],
+                )
+
+                # Cumulative plot using restored graph
+                cumulative_triplets = self._triplet_ops.reconstruct_semantic_triplets(
+                    only_active=False
+                )
+                self.plot_graph_snapshot_wrapper(
+                    sentence_index=i,
+                    sentence_text=original_text,
+                    output_dir=graphs_output_dir,
+                    highlight_nodes=highlight_nodes,
+                    inactive_nodes=[],
+                    explicit_nodes=explicit,
+                    salient_nodes=[],
+                    only_active=False,
+                    largest_component_only=largest_component_only,
+                    mode="sentence_cumulative",
+                    triplets_override=cumulative_triplets,
                     active_edges=set(),
                     active_triplets_for_overlay=self._previous_active_triplets,
                     property_nodes=[],
                 )
             except Exception as e:
                 logging.warning(f"Rollback plot failed: {e}")
-
-        self.graph = previous_graph_state
-        self.rebind_ops_graph_refs()
-        self._anchor_nodes.clear()
-        self._anchor_nodes.update(previous_anchor_nodes)
-        self._triplet_intro.clear()
-        self._triplet_intro.update(previous_triplet_intro)
-        self._recently_deactivated_nodes_for_inference = previous_recently_deactivated
-        self._prev_active_nodes_for_plot = previous_prev_active_nodes
-        self._per_sentence_view = previous_per_sentence_view
 
     def capture_sentence_triplets_wrapper(self, original_text: str) -> None:
         self._triplet_ops.capture_sentence_triplets(
