@@ -182,7 +182,7 @@ class EdgeAdmission:
                 existing_edge.mark_as_current_sentence(reset_score=True)
 
                 if self._debug:
-                    logging.debug(
+                    logging.info(
                         "Replaced equivalent edge: %s --%s--> %s (was: %s)",
                         source_node.get_text_representer(),
                         label,
@@ -310,6 +310,7 @@ class EdgeAdmission:
                 )
                 # add edge to backbone component
                 if edge:
+                    edge.mark_as_current_sentence(reset_score=True)
                     forced_edges.append(edge)
                     backbone.update(comp)
                     break

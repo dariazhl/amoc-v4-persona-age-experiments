@@ -119,15 +119,9 @@ class PerSentenceGraphBuilder:
                 continue
 
             for edge in node.edges:
-                if not edge.active:
+                # Only traverse edges that are active AND have positive visibility
+                if not (edge.active and edge.visibility_score > 0):
                     continue
-                if (
-                    edge.created_at_sentence is not None
-                    and self._sentence_index is not None
-                    and edge.created_at_sentence > self._sentence_index
-                ):
-                    continue
-
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
@@ -155,24 +149,36 @@ class PerSentenceGraphBuilder:
     def build(self, sentence_index: int) -> PerSentenceGraph:
         self._sentence_index = sentence_index
 
-        active_nodes, active_edges = self.cumulative_graph.get_active_subgraph_wrapper()
-        active_nodes = set(active_nodes)
-        active_edges = set(active_edges)
+        # Get global active subgraph (edges with active=True and visibility_score>0)
+        global_active_nodes, global_active_edges = (
+            self.cumulative_graph.get_active_subgraph_wrapper()
+        )
+        global_active_nodes = set(global_active_nodes)
+        global_active_edges = set(global_active_edges)
 
-        nodes_with_edges = {e.source_node for e in active_edges} | {
-            e.dest_node for e in active_edges
+        # Explicit nodes: all from the current sentence (even if they have no active edges)
+        explicit_nodes = set(self._explicit_nodes)
+
+        # Carryover nodes: those found via BFS (already filtered by distance and edge visibility)
+        # They are guaranteed to be in global_active_nodes because they were reached via active edges.
+        carryover_nodes = set(self._carryover_nodes)
+
+        # The nodes that will appear in the active view
+        view_nodes = explicit_nodes | carryover_nodes
+
+        # Active edges: only those that are globally active and connect nodes in the view
+        view_edges = {
+            e
+            for e in global_active_edges
+            if e.source_node in view_nodes and e.dest_node in view_nodes
         }
-        active_nodes = nodes_with_edges
-
-        explicit_nodes = {n for n in self._explicit_nodes if n in active_nodes}
-        carryover_nodes = {n for n in self._carryover_nodes if n in active_nodes}
 
         return PerSentenceGraph(
             sentence_index=sentence_index,
             explicit_nodes=frozenset(explicit_nodes),
             carryover_nodes=frozenset(carryover_nodes),
-            active_nodes=frozenset(active_nodes),
-            active_edges=frozenset(active_edges),
+            active_nodes=frozenset(view_nodes),
+            active_edges=frozenset(view_edges),
             anchor_nodes=self.anchor_nodes,
         )
 

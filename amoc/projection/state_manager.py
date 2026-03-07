@@ -63,6 +63,8 @@ class ProjectionStateManager:
                 explicit_nodes=list(explicit_nodes_current_sentence),
                 newly_inferred_nodes=newly_inferred_nodes,
             )
+        # Update all_nodes
+        self._all_nodes.update(self.graph.nodes)
         # find active nodes
         current_active_nodes = set(per_sentence_view.explicit_nodes) | set(
             per_sentence_view.carryover_nodes
@@ -153,7 +155,7 @@ class ProjectionStateManager:
             and per_sentence_view.is_empty()
             and previous_active_triplets
         ):
-            logging.debug("Per-sentence view empty — preserving previous projection.")
+            logging.info("Per-sentence view empty — preserving previous projection.")
 
         if self.debug and per_sentence_view is not None:
             logging.info(

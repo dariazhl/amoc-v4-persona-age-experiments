@@ -423,3 +423,30 @@ Respond in this exact JSON format:
     "label": "relationship_label",
     "explanation": "Brief explanation (1 sentence) of why this connection is reasonable"
 }}"""
+
+VALIDATE_TRIPLE_PROMPT = """You are validating a candidate relationship for a knowledge graph.
+
+Given the sentence:
+"{sentence}"
+
+Determine if the following triple makes sense based ONLY on what is stated or clearly implied in the sentence:
+({subject}, {relation}, {object})
+
+Rules:
+- The triple must be directly supported by the sentence content.
+- The relation must accurately reflect what the sentence says about how the subject and object relate.
+- If the triple reverses the actual direction (e.g., sentence says "man wrote about king" but triple says "king wrote about man"), it is INVALID.
+- If the triple invents a relationship not present in the sentence, it is INVALID.
+- If the triple accurately captures a relationship from the sentence (even if paraphrased), it is VALID.
+
+Respond with a JSON object containing:
+1. "valid": true or false
+2. "reason": a brief explanation of your decision (1 sentence)
+3. "corrected_triple": if you think the triple is almost correct but needs adjustment (e.g., wrong direction), provide the corrected (subject, relation, object) as a list. Otherwise, null.
+
+Example response format:
+{{"valid": true, "reason": "The sentence states that the man wrote about the king.", "corrected_triple": null}}
+
+OR if reversed:
+{{"valid": false, "reason": "The sentence says the man wrote about the king, not the other way around.", "corrected_triple": ["man", "wrote about", "king"]}}
+"""

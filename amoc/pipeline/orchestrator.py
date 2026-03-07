@@ -175,7 +175,7 @@ class AMoCv4:
         explicit_nodes: List[Node],
         newly_inferred_nodes: set[Node],
     ) -> None:
-        self._activation_ops.record_sentence_activation_matrix(
+        view = self._activation_ops.record_sentence_activation_matrix(
             sentence_id=sentence_id,
             explicit_nodes=explicit_nodes,
             newly_inferred_nodes=newly_inferred_nodes,
@@ -183,6 +183,23 @@ class AMoCv4:
             node_token_fn=lambda n: self._node_ops.node_token_for_matrix(n),
             append_record_fn=self._amoc_matrix_records.append,
         )
+
+        # If view is None or has no active nodes, create a minimal view with explicit nodes only
+        if view is None or (
+            len(view.explicit_nodes) == 0 and len(view.carryover_nodes) == 0
+        ):
+            # Create a minimal view with just the explicit nodes (no edges)
+            view = PerSentenceGraph(
+                sentence_index=sentence_id,
+                explicit_nodes=frozenset(explicit_nodes),
+                carryover_nodes=frozenset(),
+                active_nodes=frozenset(explicit_nodes),
+                active_edges=frozenset(),
+                anchor_nodes=frozenset(self._anchor_nodes),
+            )
+
+        self._per_sentence_view = view
+        return view
 
     def llm_attach_explicit_to_carryover_wrapper(
         self,
@@ -457,7 +474,37 @@ class AMoCv4:
             sentence_index=self._current_sentence_index,
         )
 
-        # update anchors (same as before)
+        # Check if the final view is valid
+        if self._per_sentence_view is None:
+            logging.error("Final per‑sentence view is None – rolling back")
+            return True  # rollback needed
+
+        # Empty view
+        if len(self._per_sentence_view.active_nodes) == 0:
+            logging.error("Empty per‑sentence view after repairs – rolling back")
+            return True
+
+        # Single isolated node with no edges
+        if (
+            len(self._per_sentence_view.active_nodes) == 1
+            and len(self._per_sentence_view.active_edges) == 0
+        ):
+            logging.error(
+                "Single isolated node with no edges after repairs – rolling back"
+            )
+            return True
+
+        # all explicit nodes are isolated
+        if (
+            len(self._per_sentence_view.active_edges) == 0
+            and len(self._explicit_nodes_current_sentence) > 1
+        ):
+            logging.error(
+                "multiple explicit nodes but no edges after repairs – rolling back"
+            )
+            return True
+
+        # update anchors
         explicit_concepts = {
             n
             for n in self._explicit_nodes_current_sentence
@@ -470,14 +517,11 @@ class AMoCv4:
         self._anchor_nodes |= active_concepts
         self._anchor_nodes = {n for n in self._anchor_nodes if n in self.graph.nodes}
 
-        # rebuild per‑sentence view
-        self._per_sentence_view = self.build_per_sentence_view_wrapper(
-            explicit_nodes=list(self._explicit_nodes_current_sentence),
-            sentence_index=self._current_sentence_index,
-        )
-
         # validation
         if not self._connectivity_ops.validate_active_connectivity():
+            logging.error(
+                "Active connectivity validation failed after repairs – rolling back"
+            )
             return True  # rollback needed
 
         return False

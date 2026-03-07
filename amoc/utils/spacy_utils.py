@@ -276,6 +276,7 @@ def extract_prepositional_objects(sent: Span) -> List[dict]:
     return prep_objects
 
 
+# trouble - "is" case
 def extract_deterministic_relation_candidates(
     sent: Span,
 ) -> List[DeterministicRelationCandidate]:

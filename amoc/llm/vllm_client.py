@@ -19,6 +19,7 @@ from amoc.prompts.amoc_prompts import (
     REPLACE_PRONOUNS_PROMPT,
     HUB_EDGE_LABEL_WITH_EXPLANATION_PROMPT,
     FORCED_CONNECTIVITY_EDGE_PROMPT,
+    VALIDATE_TRIPLE_PROMPT,
 )
 
 
@@ -274,4 +275,33 @@ class VLLMClient:
         return {
             "label": result.get("label", "relates to"),
             "explanation": result.get("explanation", ""),
+        }
+
+    # Ask LLM to validate if a triple makes sense given the sentence
+    def validate_triple(
+        self,
+        sentence: str,
+        subject: str,
+        relation: str,
+        object: str,
+        persona: str,
+    ) -> Dict[str, any]:
+        prompt = VALIDATE_TRIPLE_PROMPT.format(
+            sentence=sentence, subject=subject, relation=relation, object=object
+        )
+        response = self.call_vllm(prompt, persona)
+        result = parse_for_dict(response)
+
+        if not isinstance(result, dict):
+            logging.warning(f"LLM validation returned invalid format: {response}")
+            return {
+                "valid": True,
+                "reason": "Validation failed, accepting by default",
+                "corrected_triple": None,
+            }
+
+        return {
+            "valid": result.get("valid", True),
+            "reason": result.get("reason", ""),
+            "corrected_triple": result.get("corrected_triple", None),
         }

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, List, Optional, Tuple, Set
 import networkx as nx
 
 from amoc.core.node import NodeType, NodeSource, NodeProvenance
+from amoc.admission.triplet_validator import TripletValidator
 
 if TYPE_CHECKING:
     from amoc.pipeline.orchestrator import AMoCv4
@@ -19,6 +20,7 @@ class SentenceGraphBuilder:
         max_distance_from_active_nodes: int,
         edge_visibility: int,
         context_length: int,
+        text_normalizer,
         debug: bool = False,
     ):
         self.graph = graph_ref
@@ -56,6 +58,8 @@ class SentenceGraphBuilder:
         self._carryover_nodes_ref = None
         self.persona = None
         self.ACTIVATION_MAX_DISTANCE = 2
+        self.text_normalizer = text_normalizer
+        self.triple_validator = None
 
     def set_builder_callbacks(
         self,
@@ -123,6 +127,7 @@ class SentenceGraphBuilder:
         self.persona = persona
 
     def configure_sentence_builder_with_core(self, core: "AMoCv4") -> None:
+        self.text_normalizer = core._text_filter_ops
         self.set_builder_callbacks(
             normalize_endpoint_text_fn=core._normalize_endpoint_text,
             normalize_edge_label_fn=core._normalize_edge_label,
@@ -704,68 +709,89 @@ class SentenceGraphBuilder:
     ) -> list:
 
         added_edges = []
-        normalized = []
-        # normalize triplet - subj, rel, obj
-        for rel in new_relationships or []:
-            triple = self.normalize_llm_triple(rel)
-            if triple:
-                normalized.append(triple)
-        # normalize endpoints - call TextNormalizer.normalize_endpoint_text()
-        for subj, rel, obj in normalized:
-            subj = self._normalize_endpoint_text_fn(subj, is_subject=True)
-            obj = self._normalize_endpoint_text_fn(obj, is_subject=False)
 
-            if not subj or not obj or subj == obj:
+        # get or create triple validator
+        validator = self.get_triplet_validator()
+
+        # step 1: normalize raw llm output to (subj, rel, obj) triples
+        normalized_triples = validator.normalize_llm_triplets(new_relationships)
+        if not normalized_triples:
+            return added_edges
+
+        # step 2: build deterministic lookup for validation
+        deterministic_lookup = validator.build_deterministic_lookup(
+            current_sentence_text_based_nodes,
+            current_sentence_text_based_words,
+            self._current_sentence,
+        )
+
+        # step 3: get current sentence text for llm validation
+        current_sentence_text = self._current_sentence_text
+
+        # step 4: process each triple through validation pipeline
+        for subj, rel, obj in normalized_triples:
+            # normalize endpoints
+            subj_norm, obj_norm = validator.normalize_endpoints(subj, obj)
+            if not subj_norm or not obj_norm or subj_norm == obj_norm:
                 continue
-            # verifies that at least one of the two endpoints is already in the active nodes + explicit + carryover list
-            if not self.is_attachable_wrapper_fn(
-                subj,
-                obj,
+
+            # validate against deterministic structure
+            validated = validator.validate_against_deterministic(
+                subj_norm, rel, obj_norm, deterministic_lookup
+            )
+            if not validated["valid"]:
+                continue
+
+            subj_final, obj_final = validated["subj"], validated["obj"]
+            rel_final = validated["rel"]
+
+            # llm semantic validation
+            llm_validated = validator.validate_with_llm(
+                subj_final, rel_final, obj_final, current_sentence_text
+            )
+            if not llm_validated["valid"]:
+                # check if llm provided a corrected triple
+                corrected = llm_validated.get("corrected_triple")
+                if corrected and len(corrected) == 3:
+                    subj_final, rel_final, obj_final = corrected
+                    logging.debug(
+                        f"using llm-corrected triple: ({subj_final},{rel_final},{obj_final})"
+                    )
+                else:
+                    continue
+
+            # check attachability
+            if not self.check_attachable(
+                subj_final,
+                obj_final,
                 current_sentence_text_based_words,
                 current_sentence_text_based_nodes,
                 graph_active_nodes,
-                self.get_nodes_with_active_edges_fn(),
             ):
                 continue
-            # attempts to find an existing node, otherwise, it creates a new one
-            source_node = self._get_node_from_new_relationship_fn(
-                subj,
+
+            # find or create nodes
+            source_node, dest_node = self.get_or_create_nodes(
+                subj_final,
+                obj_final,
                 graph_active_nodes,
                 current_sentence_text_based_nodes,
                 current_sentence_text_based_words,
-                node_source=NodeSource.TEXT_BASED,
-                create_node=False,
             )
-
-            dest_node = self._get_node_from_new_relationship_fn(
-                obj,
-                graph_active_nodes,
-                current_sentence_text_based_nodes,
-                current_sentence_text_based_words,
-                node_source=NodeSource.TEXT_BASED,
-                create_node=False,
-            )
-
             if not source_node or not dest_node:
                 continue
-            # clean the relation string by removing noise such as (edge)
-            edge_label = self._normalize_edge_label_fn(
-                rel.replace("(edge)", "").strip()
-            )
-            # validate that the relation is valid in the context of the sentence
-            if not self._is_valid_relation_label_fn(edge_label):
+
+            # clean and validate relation label
+            edge_label = validator.clean_and_validate_relation(rel_final)
+            if not edge_label:
                 continue
 
-            if tuple(source_node.lemmas) in sentence_lemma_keys:
-                source_node.node_source = NodeSource.TEXT_BASED
-            if tuple(dest_node.lemmas) in sentence_lemma_keys:
-                dest_node.node_source = NodeSource.TEXT_BASED
+            # update node sources if they appear in current sentence
+            self.update_node_source_if_in_sentence(source_node, sentence_lemma_keys)
+            self.update_node_source_if_in_sentence(dest_node, sentence_lemma_keys)
 
-            if not self.is_relation_valid(
-                source_node,
-                edge_label,
-                dest_node,
-            ):
+            # validate against sentence structure
+            if not self.is_relation_valid(source_node, edge_label, dest_node):
                 continue
             # create the edge
             edge = self.add_edge_wrapper_fn(
@@ -779,6 +805,65 @@ class SentenceGraphBuilder:
                 added_edges.append(edge)
 
         return added_edges
+
+    def get_triplet_validator(self):
+        if not hasattr(self, "_triple_validator") or self._triple_validator is None:
+            self._triple_validator = TripleValidator(
+                linguistic_ops=self,
+                text_normalizer=self.text_normalizer,
+                llm_client=self.llm,
+                persona=self.persona,
+            )
+        return self._triple_validator
+
+    def check_attachable(
+        self,
+        subj: str,
+        obj: str,
+        current_words: list,
+        current_nodes: list,
+        graph_active_nodes: list,
+    ) -> bool:
+        return self.is_attachable_wrapper_fn(
+            subj,
+            obj,
+            current_words,
+            current_nodes,
+            graph_active_nodes,
+            self.get_nodes_with_active_edges_fn(),
+        )
+
+    def get_or_create_nodes(
+        self,
+        subj: str,
+        obj: str,
+        graph_active_nodes: list,
+        current_nodes: list,
+        current_words: list,
+    ) -> tuple:
+        source_node = self._get_node_from_new_relationship_fn(
+            subj,
+            graph_active_nodes,
+            current_nodes,
+            current_words,
+            node_source=NodeSource.TEXT_BASED,
+            create_node=False,
+        )
+
+        dest_node = self._get_node_from_new_relationship_fn(
+            obj,
+            graph_active_nodes,
+            current_nodes,
+            current_words,
+            node_source=NodeSource.TEXT_BASED,
+            create_node=False,
+        )
+
+        return source_node, dest_node
+
+    def update_node_source_if_in_sentence(self, node, sentence_lemma_keys):
+        if tuple(node.lemmas) in sentence_lemma_keys:
+            node.node_source = NodeSource.TEXT_BASED
 
     # sometimes, the parser returns sentences such as: "Processing sentence 0: answer is: A man very close to Charlemagne wrote most of the things we know about Charlemagne."
     def clean_llm_output(self, resolved_text: str, original_text: str, sent) -> tuple:

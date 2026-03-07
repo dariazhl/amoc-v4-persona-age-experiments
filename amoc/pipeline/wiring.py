@@ -173,6 +173,7 @@ def wire_core_dependencies(core) -> None:
         max_distance_from_active_nodes=core.max_distance_from_active_nodes,
         edge_visibility=core.edge_visibility,
         context_length=core.context_length,
+        text_normalizer=core._text_filter_ops,
         debug=core.debug,
     )
     core._edge_ops.configure_edge_admission_with_core(core)

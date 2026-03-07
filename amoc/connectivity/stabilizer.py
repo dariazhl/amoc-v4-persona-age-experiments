@@ -436,7 +436,6 @@ class ConnectivityStabilizer:
         self._persona = persona
 
         # Step 1: Connect isolated explicit nodes
-        logging.info("Step 1: Connecting isolated explicit node (if any)")
         self._connect_isolated_explicit_node(
             per_sentence_view,
             prev_sentences,
@@ -445,34 +444,28 @@ class ConnectivityStabilizer:
         )
 
         # Step 2: LLM repair for any remaining isolated explicit nodes
-        logging.info("Step 2: LLM repair for remaining isolated explicit nodes")
         self._repair_isolated_explicit_nodes(
             per_sentence_view, current_sentence_text, normalize_edge_label_fn
         )
 
         # Step 3: Deterministic reactivation of existing cumulative edges
-        logging.info("Step 3: Deterministic reactivation via cumulative edges")
         required_nodes = set(per_sentence_view.explicit_nodes) | set(
             per_sentence_view.carryover_nodes
         )
         self._graph.enforce_connectivity(required_nodes, allow_reactivation=True)
 
         # Step 4: LLM forced‑edge repair
-        logging.info("Step 4: LLM forced‑edge repair (component bridging)")
         self._create_forced_edges_via_llm(
             prev_sentences, current_sentence_text, create_forced_edges_fn
         )
 
         # Step 5: Fallback "relates_to" edges
-        logging.info("Step 5: Fallback relates_to edges")
         self.apply_relates_to_fallback(required_nodes)
 
         # Step 6: Ensure cumulative graph connected
-        logging.info("Step 6: Connect cumulative graph components")
         self.connect_cumulative_components()
 
         # Step 7: Repair dangling nodes
-        logging.info("Step 7: Repair dangling nodes")
         self.repair_dangling_nodes(
             per_sentence_view, prev_sentences, normalize_edge_label_fn, persona
         )
