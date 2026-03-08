@@ -422,31 +422,29 @@ Respond in this exact JSON format:
     "explanation": "Brief explanation (1 sentence) of why this connection is reasonable"
 }}"""
 
-VALIDATE_TRIPLE_PROMPT = """You are validating a candidate relationship for a knowledge graph.
+VALIDATE_TRIPLET_PROMPT = """You are validating a candidate relationship for a knowledge graph.
 
 Given the sentence:
 "{sentence}"
 
-Determine if the following triple is EXPLICITLY STATED in the sentence:
-({subject}, {relation}, {object})
 
-STRICT RULES:
-- The triple must be directly and explicitly stated in the sentence, not just implied.
-- The exact words or a very close synonym must appear in the sentence.
-- The subject must be the actual doer of the action in the sentence.
-- The object must be the actual receiver of the action in the sentence.
-- If the sentence does NOT explicitly state this relationship, it is INVALID.
-- If the triple reverses subject and object, it is INVALID.
-- If the triple uses a word not in the sentence (e.g., "knows about" when sentence says "wrote about"), it is INVALID.
+Candidate triple: ({subject}, {relation}, {object})
 
-**GENERIC WORD RULES:**
-- Vague, generic words like "thing", "something", "certain", "some", "any", "other" should NOT appear as subject or object nodes unless they are essential, specific concepts in the context.
-- If a generic word appears in the sentence (e.g., "most of the things"), do NOT extract it as a separate node. Instead, extract the specific concepts it refers to (e.g., if "things" refers to "writings" or "stories", use those instead).
-- Words like "certain" are adjectives that modify nouns - they should be attached as properties to the noun they modify, not extracted as standalone objects.
-- Example: In "wrote most of the things", "things" is too vague - if the context suggests it means "writings" or "stories", use those specific terms instead. If no specific meaning is clear, reject triples containing "thing".
-- Abstract concepts like "thing" should NOT be the subject of actions unless the sentence explicitly makes them the subject (e.g., "the thing fell").
-- In the sentence "A man wrote about the king", "thing" is the object, not the subject - so "thing writes about king" is INVALID.
-- If the object is a generic word like "thing" and the relation is a generic relation like "is", "has", "involves", the triple is INVALID.
+**CRITICAL RULES ABOUT GENERIC WORDS:**
+- Words like "thing", "something", "anything", "it", "this", "that" should NEVER be the SUBJECT of an action verb (writes, describes, knows, says, tells, etc.)
+- Example: "thing describes charlemagne" is ALWAYS INVALID because "thing" cannot perform the action "describes"
+- Generic words can only be objects, never subjects
+- If the subject is a generic word, the triple is automatically INVALID
+
+**VALIDATION RULES:**
+- The triple must be EXPLICITLY STATED in the sentence
+- The subject must be the actual doer of the action in the sentence
+- The object must be the actual receiver of the action
+- If the sentence says "man wrote about king", then:
+  - ✓ (man, wrote about, king) is VALID
+  - ✗ (thing, describes, charlemagne) is INVALID because "thing" is not the subject
+  - ✗ (king, wrote about, man) is INVALID (wrong direction)
+  - ✗ (man, knows, king) is INVALID ("knows" not in sentence)
 
 Respond with a JSON object containing:
 1. "valid": true or false
@@ -454,19 +452,14 @@ Respond with a JSON object containing:
 3. "corrected_triple": if you think the triple is almost correct but needs adjustment (e.g., wrong direction, or replacing a generic word with a more specific one from context), provide the corrected (subject, relation, object) as a list. Otherwise, null.
 
 Example response format:
-{{"valid": true, "reason": "The sentence states that the man wrote about the king.", "corrected_triple": null}}
+Input: (thing, describes, charlemagne)
+Output: {{"valid": false, "reason": "'thing' cannot be the subject of 'describes' - generic words cannot perform actions", "corrected_triple": null}}
 
-OR if reversed:
-{{"valid": false, "reason": "The sentence says the man wrote about the king, not the other way around.", "corrected_triple": ["man", "wrote about", "king"]}}
-
-OR if generic word:
-{{"valid": false, "reason": "The object 'thing' is too vague and does not add meaningful context.", "corrected_triple": null}}
-
-OR if completely wrong:
-{{"valid": false, "reason": "The sentence does not mention anything about 'thing' knowing about anything.", "corrected_triple": null}}
+Input: (man, wrote, thing)
+Output: {{"valid": true, "reason": "The sentence says 'man wrote most of the things'", "corrected_triple": null}}
 """
 
-NARRATIVE_RELEVANCE_PROMPT = """You are evaluating whether a relationship in a knowledge graph is reasonably relevant to the narrative of a story.
+NARRATIVE_RELEVANCE_PROMPT = """You are helping to maintain a clean knowledge graph of a story. Your task is to identify which relationships are **least important** and could be removed without harming the reader's understanding.
 
 Story so far:
 {story_context}
@@ -474,41 +467,33 @@ Story so far:
 Current sentence:
 {current_sentence}
 
-Candidate triple:
-({subject}, {relation}, {object})
+Here are the active relationships in the reader's memory:
+{active_triplets}
 
-A relationship can be considered narratively relevant if it:
-- Captures an action, event, or interaction in the story
-- Reveals something meaningful about a character, object, or situation
-- Helps explain relationships between entities
-- Provides context that helps the reader understand the situation
-- Contributes in some way to understanding what is happening in the story
+For each relationship, assign a **importance score** from 1-5:
+5 = Essential for understanding the plot or characters
+4 = Helpful context that adds meaningful detail
+3 = Somewhat relevant but not crucial
+2 = Minor detail that doesn't affect understanding
+1 = Generic, vague, or redundant
 
-Some relationships may still be acceptable even if they are not central to the plot, as long as they meaningfully describe the story context.
+IMPORTANT GUIDELINES:
+- Relationships involving main characters (Charlemagne, his family, kingdoms, etc.) should generally score 4-5
+- Generic relations like "relates to", "is associated with" should score lower (1-2) unless they carry specific meaning
+- Vague placeholders ("thing", "certain", "good") used as subjects or objects lower the score
+- A relationship that connects an isolated node to the main graph is valuable even if the relation itself is generic
+- **Do NOT** suggest removing a relationship if it's the only connection between a node and the rest of the graph
 
-A relationship is likely NOT narratively relevant if it:
-- States a very generic or universal fact unrelated to the story
-- Uses vague placeholder entities ("thing", "something", "certain") in a way that adds little meaning
-- Describes background knowledge that does not relate to the current narrative
-- Creates a connection that does not help explain the story or its context
-
-Examples of less relevant triples:
-- (year, is_given_in, good) — just states when payment occurred, not why it matters
-- (certain, describes, good) — "certain" is a determiner, not a story-relevant property
-- (tribe, pays, good) — this one might be relevant IF the payment is important to the plot
-- (year, is_unit_of, time)
-- (king, is, man)
-
-Examples of narratively relevant triples:
-- (conquered tribes, pay tribute to, king)
-- (Charlemagne, protects, kingdom)
-- (fierce Asiatic tribes, threaten, kingdom)
-- (sons, learn to ride from, father)
-
-Respond with a JSON object:
+Return a JSON object mapping each triple to its score:
 {{
-    "relevant": true/false,
-    "reason": "Brief explanation of why this relationship is or is not useful for understanding the story",
-    "suggested_replacement": "If the triple could be slightly rephrased to better reflect the narrative, suggest an improved (subject, relation, object). Otherwise null."
+    "scores": {{
+        "(subject1, relation1, object1)": 4,
+        "(subject2, relation2, object2)": 2,
+        ...
+    }},
+    "to_remove": ["(subject1, relation1, object1)", ...],
+    "reasoning": "Brief explanation of pruning strategy"
 }}
+
+Only include in "to_remove" relationships that score 1-2 AND are not the sole connection for any node.
 """

@@ -336,6 +336,32 @@ class SentenceGraphBuilder:
         )
         # self._extract_deterministic_structure_fn(sent, current_nodes, current_words)
         sentence_lemma_set = {token.lemma_.lower() for token in sent}
+
+        # Get the validator
+        validator = self.get_triplet_validator()
+        current_sentence_text = self._current_sentence_text
+
+        # Validate each edge that was just added in init_graph
+        for edge in list(
+            self.graph.edges
+        ):  # Use list to avoid modification during iteration
+            if not hasattr(edge, "validated") or not edge.validated:
+                subj = edge.source_node.get_text_representer()
+                rel = edge.label
+                obj = edge.dest_node.get_text_representer()
+
+                # Ask LLM if this triple makes sense
+                result = validator.validate_with_llm(
+                    subj, rel, obj, current_sentence_text
+                )
+
+                if not result.get("valid", False):
+                    # Remove invalid edge
+                    self.graph.remove_edge(edge)
+                    logging.info(
+                        f"First sentence: removed invalid edge ({subj}, {rel}, {obj})"
+                    )
+
         # identify explict nodes
         explicit_nodes_current_sentence = {
             n
@@ -529,6 +555,7 @@ class SentenceGraphBuilder:
             graph_active_nodes,
             sentence_lemma_keys,
             explicit_nodes_current_sentence,
+            prev_sentences,
         )
         # inferr new ceoncepts and properties
         inferred_concept_relationships, inferred_property_relationships = (
@@ -749,32 +776,50 @@ class SentenceGraphBuilder:
         return None
 
     # Check if a triple is narratively relevant to the story using LLM only
-    def check_narrative_relevance(self, subject: str, relation: str, obj: str) -> bool:
-        # Build story context from recent sentences
-        story_context = getattr(self, "_story_context", "")
-        if not story_context and hasattr(self, "_prev_sentences"):
-            # Use last few sentences for context
-            story_context = (
-                " ".join(self._prev_sentences[-3:]) if self._prev_sentences else ""
-            )
+    def check_narrative_relevance(self, active_triplets, prev_sentences):
+        if len(active_triplets) <= 3:
+            return active_triplets
 
-        # Call LLM for narrative relevance check
+        # Format triplets for the prompt
+        triplet_strings = [f"({s}, {r}, {o})" for s, r, o in active_triplets]
+
+        # Get story context from last 3 sent
+        story_context = " ".join(prev_sentences[-3:]) if prev_sentences else ""
+
         result = self.llm.check_narrative_relevance(
-            subject=subject,
-            relation=relation,
-            obj=obj,
             story_context=story_context,
             current_sentence=self._current_sentence_text,
+            active_triplets="\n".join(triplet_strings),
             persona=self.persona,
         )
 
-        if not result.get("relevant", False):
-            logging.info(
-                f"NARRATIVE: Rejected ({subject},{relation},{obj}): {result.get('reason', '')}"
-            )
-            return False
+        if not result or "to_remove" not in result:
+            return active_triplets
 
-        return True
+        # Build connectivity map before removing
+        node_connections = {}
+        for s, r, o in active_triplets:
+            node_connections[s] = node_connections.get(s, 0) + 1
+            node_connections[o] = node_connections.get(o, 0) + 1
+
+        # Only remove edges that won't isolate nodes
+        to_keep = []
+        removal_set = set(result["to_remove"])
+
+        for triplet in active_triplets:
+            triplet_str = f"({triplet[0]}, {triplet[1]}, {triplet[2]})"
+            if triplet_str in removal_set:
+                s, r, o = triplet
+                # Check if removing would isolate a node
+                if node_connections.get(s, 0) <= 1 or node_connections.get(o, 0) <= 1:
+                    to_keep.append(triplet)
+                    logging.info(f"Keeping connectivity-critical edge: {triplet}")
+                else:
+                    logging.info(f"Pruning low-importance edge: {triplet}")
+            else:
+                to_keep.append(triplet)
+
+        return to_keep
 
     # Take the raw list of triples returned by the LLM, process them and add edges to graph
     def add_edges_from_llm(
@@ -785,6 +830,7 @@ class SentenceGraphBuilder:
         graph_active_nodes,
         sentence_lemma_keys,
         explicit_nodes_current_sentence,
+        prev_sentences,
     ) -> list:
 
         added_edges = []
@@ -813,13 +859,6 @@ class SentenceGraphBuilder:
                 )
                 continue
 
-            # After LLM validation, before creating edge
-            if not self.check_narrative_relevance(subj, rel, obj):
-                logging.info(
-                    f"LLM DEBUG: triple not narratively relevant ({subj},{rel},{obj})"
-                )
-                continue
-
             corrected = validation.get("corrected_triple")
             if (
                 corrected
@@ -837,15 +876,7 @@ class SentenceGraphBuilder:
             )
             return added_edges
 
-        # step 3: filter for narrative relevance
-        relevant_triples = []
-        for subj, rel, obj in validated_triples:
-            if self.check_narrative_relevance(subj, rel, obj):
-                relevant_triples.append((subj, rel, obj))
-            else:
-                logging.info(f"NARRATIVE: Filtered out ({subj},{rel},{obj})")
-
-        # step 4: prioritize hub ordering
+        # step 3: prioritize hub ordering
         explicit_node_texts = [
             n.get_text_representer() for n in current_sentence_text_based_nodes
         ]
@@ -853,7 +884,7 @@ class SentenceGraphBuilder:
             validated_triples, explicit_node_texts
         )
 
-        # step 5: process each triple
+        # step 4: process each triple
         for subj, rel, obj in prioritized_triples:
             logging.info(f"LLM DEBUG: processing triple ({subj}, {rel}, {obj})")
 
@@ -918,6 +949,35 @@ class SentenceGraphBuilder:
                 logging.warning(
                     f"FS_DEBUG: edge NOT added: {source_node} --{edge_label}--> {dest_node}"
                 )
+
+        # check for narrative flow and remove irrelevant edges
+        if added_edges and len(added_edges) > 3:
+            all_active = []
+            for edge in self.graph.edges:
+                if edge.active:
+                    all_active.append(
+                        (
+                            edge.source_node.get_text_representer(),
+                            edge.label,
+                            edge.dest_node.get_text_representer(),
+                        )
+                    )
+
+            if all_active:
+                pruned = self.check_narrative_relevance(all_active, prev_sentences)
+                # Deactivate edges that were pruned
+                pruned_set = set(pruned)
+                for edge in self.graph.edges:
+                    if edge.active:
+                        triplet = (
+                            edge.source_node.get_text_representer(),
+                            edge.label,
+                            edge.dest_node.get_text_representer(),
+                        )
+                        if triplet not in pruned_set:
+                            edge.active = False
+                            edge.visibility_score = 0
+                            logging.info(f"Pruned edge: {triplet}")
 
         return added_edges
 

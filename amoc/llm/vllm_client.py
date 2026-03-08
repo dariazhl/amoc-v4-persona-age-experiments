@@ -19,7 +19,7 @@ from amoc.prompts.amoc_prompts import (
     REPLACE_PRONOUNS_PROMPT,
     HUB_EDGE_LABEL_WITH_EXPLANATION_PROMPT,
     FORCED_CONNECTIVITY_EDGE_PROMPT,
-    VALIDATE_TRIPLE_PROMPT,
+    VALIDATE_TRIPLET_PROMPT,
     NARRATIVE_RELEVANCE_PROMPT,
 )
 
@@ -279,7 +279,7 @@ class VLLMClient:
         }
 
     # Ask LLM to validate if a triple makes sense given the sentence
-    def validate_triple(
+    def validate_triplet(
         self,
         sentence: str,
         subject: str,
@@ -287,7 +287,7 @@ class VLLMClient:
         object: str,
         persona: str,
     ) -> Dict[str, any]:
-        prompt = VALIDATE_TRIPLE_PROMPT.format(
+        prompt = VALIDATE_TRIPLET_PROMPT.format(
             sentence=sentence,
             subject=subject,
             relation=relation,
@@ -311,33 +311,14 @@ class VLLMClient:
         }
 
     # Check if a triple is narratively relevant to the story using LLM only
+    # trouble - ADD PERSONA?
     def check_narrative_relevance(
-        self,
-        subject: str,
-        relation: str,
-        obj: str,
-        story_context: str,
-        current_sentence: str,
-        persona: str = "",
-    ) -> Dict[str, any]:
+        self, story_context, current_sentence, active_triplets, persona
+    ):
         prompt = NARRATIVE_RELEVANCE_PROMPT.format(
             story_context=story_context,
             current_sentence=current_sentence,
-            subject=subject,
-            relation=relation,
-            object=obj,
+            active_triplets=active_triplets,
         )
-
         response = self.call_vllm(prompt, persona)
-        result = parse_for_dict(response)
-
-        if not isinstance(result, dict):
-            logging.warning(f"Narrative relevance returned invalid format: {response}")
-            # default = false
-            return {"relevant": False, "reason": "LLM returned invalid response"}
-
-        return {
-            "relevant": result.get("relevant", False),
-            "reason": result.get("reason", ""),
-            "suggested_replacement": result.get("suggested_replacement", None),
-        }
+        return parse_for_dict(response)

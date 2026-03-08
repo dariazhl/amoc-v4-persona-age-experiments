@@ -72,7 +72,7 @@ class Graph:
                 node_type,
                 node_source,
                 0,
-                origin_sentence=origin_sentence,
+                origin_sentence=origin_sentence if mark_explicit else None,
                 provenance=provenance or NodeProvenance.STORY_TEXT,
             )
             self.nodes.add(node)
