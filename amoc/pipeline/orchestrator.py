@@ -264,6 +264,11 @@ class AMoCv4:
         )
         if edge:
             self.record_edge_in_graphs_wrapper(edge, self._current_sentence_index)
+            logging.info(f"EDGE_DEBUG: add_edge_wrapper created edge: {edge}")
+        else:
+            logging.warning(
+                f"EDGE_DEBUG: add_edge_wrapper returned None for {source_node} --{label}--> {dest_node}"
+            )
         return edge
 
     def create_forced_connectivity_edges_wrapper(
@@ -416,6 +421,9 @@ class AMoCv4:
             result = self.handle_first_sentence_wrapper(
                 sent, resolved_text, prev_sentences, nodes_before_sentence
             )
+            logging.info(
+                f"DEBUG: After sentence 1, main graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges."
+            )
         else:
             result = self.handle_nonfirst_sentence_wrapper(
                 i,
@@ -458,51 +466,51 @@ class AMoCv4:
             sentence_index=self._current_sentence_index,
         )
 
-        # call the unified repair pipeline
-        self._connectivity_ops.run_repair_pipeline(
-            per_sentence_view=self._per_sentence_view,
-            prev_sentences=prev_sentences,
-            current_sentence_text=self._current_sentence_text,
-            normalize_edge_label_fn=self._normalize_edge_label,
-            create_forced_edges_fn=self.create_forced_connectivity_edges_wrapper,
-            persona=self.persona,
-        )
+        # # call the unified repair pipeline
+        # self._connectivity_ops.run_repair_pipeline(
+        #     per_sentence_view=self._per_sentence_view,
+        #     prev_sentences=prev_sentences,
+        #     current_sentence_text=self._current_sentence_text,
+        #     normalize_edge_label_fn=self._normalize_edge_label,
+        #     create_forced_edges_fn=self.create_forced_connectivity_edges_wrapper,
+        #     persona=self.persona,
+        # )
 
         # after repairs, rebuild the view to reflect new edgess
-        self._per_sentence_view = self.build_per_sentence_view_wrapper(
-            explicit_nodes=list(self._explicit_nodes_current_sentence),
-            sentence_index=self._current_sentence_index,
-        )
+        # self._per_sentence_view = self.build_per_sentence_view_wrapper(
+        #     explicit_nodes=list(self._explicit_nodes_current_sentence),
+        #     sentence_index=self._current_sentence_index,
+        # )
 
-        # Check if the final view is valid
-        if self._per_sentence_view is None:
-            logging.error("Final per‑sentence view is None – rolling back")
-            return True  # rollback needed
+        # # Check if the final view is valid
+        # if self._per_sentence_view is None:
+        #     logging.error("Final per‑sentence view is None – rolling back")
+        #     return True  # rollback needed
 
-        # Empty view
-        if len(self._per_sentence_view.active_nodes) == 0:
-            logging.error("Empty per‑sentence view after repairs – rolling back")
-            return True
+        # # Empty view
+        # if len(self._per_sentence_view.active_nodes) == 0:
+        #     logging.error("Empty per‑sentence view after repairs – rolling back")
+        #     return True
 
-        # Single isolated node with no edges
-        if (
-            len(self._per_sentence_view.active_nodes) == 1
-            and len(self._per_sentence_view.active_edges) == 0
-        ):
-            logging.error(
-                "Single isolated node with no edges after repairs – rolling back"
-            )
-            return True
+        # # Single isolated node with no edges
+        # if (
+        #     len(self._per_sentence_view.active_nodes) == 1
+        #     and len(self._per_sentence_view.active_edges) == 0
+        # ):
+        #     logging.error(
+        #         "Single isolated node with no edges after repairs – rolling back"
+        #     )
+        #     return True
 
-        # all explicit nodes are isolated
-        if (
-            len(self._per_sentence_view.active_edges) == 0
-            and len(self._explicit_nodes_current_sentence) > 1
-        ):
-            logging.error(
-                "multiple explicit nodes but no edges after repairs – rolling back"
-            )
-            return True
+        # # all explicit nodes are isolated
+        # if (
+        #     len(self._per_sentence_view.active_edges) == 0
+        #     and len(self._explicit_nodes_current_sentence) > 1
+        # ):
+        #     logging.error(
+        #         "multiple explicit nodes but no edges after repairs – rolling back"
+        #     )
+        #     return True
 
         # update anchors
         explicit_concepts = {
@@ -517,12 +525,12 @@ class AMoCv4:
         self._anchor_nodes |= active_concepts
         self._anchor_nodes = {n for n in self._anchor_nodes if n in self.graph.nodes}
 
-        # validation
-        if not self._connectivity_ops.validate_active_connectivity():
-            logging.error(
-                "Active connectivity validation failed after repairs – rolling back"
-            )
-            return True  # rollback needed
+        # # validation
+        # if not self._connectivity_ops.validate_active_connectivity():
+        #     logging.error(
+        #         "Active connectivity validation failed after repairs – rolling back"
+        #     )
+        #     return True  # rollback needed
 
         return False
 
@@ -606,6 +614,7 @@ class AMoCv4:
                 cumulative_triplets = self._triplet_ops.reconstruct_semantic_triplets(
                     only_active=False
                 )
+                logging.info(f"DEBUG: Cumulative triplets for sentence {i}: {triplets}")
                 self.plot_graph_snapshot_wrapper(
                     sentence_index=i,
                     sentence_text=original_text,

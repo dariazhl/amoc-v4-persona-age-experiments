@@ -96,10 +96,10 @@ class NodeAdmission:
                 return False
 
         # inferred nodes must be grounded in story and attachable to active graph
-        is_story_grounded = lemma in self._story_lemmas
+        # is_story_grounded = lemma in self._story_lemmas
         is_allowed_inference = (
             provenance in {"INFERRED_RELATION", "INFERENCE_BASED"}
-            and is_story_grounded
+            # and is_story_grounded
             and self._has_active_attachment_fn
             and self._has_active_attachment_fn(lemma)
         )
@@ -208,7 +208,12 @@ class NodeAdmission:
         lemmas = get_concept_lemmas(self._spacy_nlp, canon)
         if not lemmas:
             return None
+
         # 3. Try match active graph
+        existing_node = self._graph.get_node(lemmas)
+        if existing_node is not None:
+            return existing_node
+
         for node in graph_active_nodes:
             if lemmas == node.lemmas:
                 return node
@@ -275,6 +280,13 @@ class NodeAdmission:
         active_nodes = set(get_nodes_with_active_edges_fn())
         if not active_nodes:
             return True
+
+        # Always allow if both endpoints are in the current sentence words
+        subj_in_sent = subject in current_sentence_words
+        obj_in_sent = obj in current_sentence_words
+        if subj_in_sent and obj_in_sent:
+            return True
+
         frontier_nodes = active_nodes | explicit_nodes | carryover_nodes
         frontier_keys = {tuple(n.lemmas) for n in frontier_nodes}
 

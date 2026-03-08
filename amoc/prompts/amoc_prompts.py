@@ -242,8 +242,6 @@ Always base every edge strictly on information that is stated or clearly implied
 I want you to tell me the relationships (edges) between the nodes given the text. The text is:
 {text}
 
-HUB CONNECTIVITY: Ensure that the resulting graph is well-connected. Choose one central concept (the one most frequently related to other concepts) as the hub, and ensure that all other explicit nodes have at least one relationship path to this hub. Prioritize direct connections to the hub where semantically justified.
-
 List them as a Python list and do not provide additional explanation."""
 
 INFER_OBJECTS_AND_PROPERTIES_PROMPT = """I want to build a knowledge graph using the provided text. The graph should consist of two types of nodes: concept nodes and property nodes. Concepts nodes represent objects or persons from the story and are generally represented by nouns in the text. Property nodes describe the concepts nodes and are generally represented by adjectives in the text. An edge connects a concept to another concept or a concept to a property, and it is described by a relationship between the connected nodes.
@@ -440,13 +438,20 @@ STRICT RULES:
 - If the sentence does NOT explicitly state this relationship, it is INVALID.
 - If the triple reverses subject and object, it is INVALID.
 - If the triple uses a word not in the sentence (e.g., "knows about" when sentence says "wrote about"), it is INVALID.
+
+**GENERIC WORD RULES:**
+- Vague, generic words like "thing", "something", "certain", "some", "any", "other" should NOT appear as subject or object nodes unless they are essential, specific concepts in the context.
+- If a generic word appears in the sentence (e.g., "most of the things"), do NOT extract it as a separate node. Instead, extract the specific concepts it refers to (e.g., if "things" refers to "writings" or "stories", use those instead).
+- Words like "certain" are adjectives that modify nouns - they should be attached as properties to the noun they modify, not extracted as standalone objects.
+- Example: In "wrote most of the things", "things" is too vague - if the context suggests it means "writings" or "stories", use those specific terms instead. If no specific meaning is clear, reject triples containing "thing".
 - Abstract concepts like "thing" should NOT be the subject of actions unless the sentence explicitly makes them the subject (e.g., "the thing fell").
 - In the sentence "A man wrote about the king", "thing" is the object, not the subject - so "thing writes about king" is INVALID.
+- If the object is a generic word like "thing" and the relation is a generic relation like "is", "has", "involves", the triple is INVALID.
 
 Respond with a JSON object containing:
 1. "valid": true or false
 2. "reason": a brief explanation of your decision (1 sentence)
-3. "corrected_triple": if you think the triple is almost correct but needs adjustment (e.g., wrong direction), provide the corrected (subject, relation, object) as a list. Otherwise, null.
+3. "corrected_triple": if you think the triple is almost correct but needs adjustment (e.g., wrong direction, or replacing a generic word with a more specific one from context), provide the corrected (subject, relation, object) as a list. Otherwise, null.
 
 Example response format:
 {{"valid": true, "reason": "The sentence states that the man wrote about the king.", "corrected_triple": null}}
@@ -454,6 +459,56 @@ Example response format:
 OR if reversed:
 {{"valid": false, "reason": "The sentence says the man wrote about the king, not the other way around.", "corrected_triple": ["man", "wrote about", "king"]}}
 
+OR if generic word:
+{{"valid": false, "reason": "The object 'thing' is too vague and does not add meaningful context.", "corrected_triple": null}}
+
 OR if completely wrong:
 {{"valid": false, "reason": "The sentence does not mention anything about 'thing' knowing about anything.", "corrected_triple": null}}
+"""
+
+NARRATIVE_RELEVANCE_PROMPT = """You are evaluating whether a relationship in a knowledge graph is reasonably relevant to the narrative of a story.
+
+Story so far:
+{story_context}
+
+Current sentence:
+{current_sentence}
+
+Candidate triple:
+({subject}, {relation}, {object})
+
+A relationship can be considered narratively relevant if it:
+- Captures an action, event, or interaction in the story
+- Reveals something meaningful about a character, object, or situation
+- Helps explain relationships between entities
+- Provides context that helps the reader understand the situation
+- Contributes in some way to understanding what is happening in the story
+
+Some relationships may still be acceptable even if they are not central to the plot, as long as they meaningfully describe the story context.
+
+A relationship is likely NOT narratively relevant if it:
+- States a very generic or universal fact unrelated to the story
+- Uses vague placeholder entities ("thing", "something", "certain") in a way that adds little meaning
+- Describes background knowledge that does not relate to the current narrative
+- Creates a connection that does not help explain the story or its context
+
+Examples of less relevant triples:
+- (year, is_given_in, good) — just states when payment occurred, not why it matters
+- (certain, describes, good) — "certain" is a determiner, not a story-relevant property
+- (tribe, pays, good) — this one might be relevant IF the payment is important to the plot
+- (year, is_unit_of, time)
+- (king, is, man)
+
+Examples of narratively relevant triples:
+- (conquered tribes, pay tribute to, king)
+- (Charlemagne, protects, kingdom)
+- (fierce Asiatic tribes, threaten, kingdom)
+- (sons, learn to ride from, father)
+
+Respond with a JSON object:
+{{
+    "relevant": true/false,
+    "reason": "Brief explanation of why this relationship is or is not useful for understanding the story",
+    "suggested_replacement": "If the triple could be slightly rephrased to better reflect the narrative, suggest an improved (subject, relation, object). Otherwise null."
+}}
 """

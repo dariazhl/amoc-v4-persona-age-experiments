@@ -143,14 +143,24 @@ class EdgeAdmission:
         # Reject self-loops bc S-V-O triplets require distinct subject and object
         if source_node == dest_node:
             return None
-        # check attachment constraint: at least one of the two nodes must be in the attachable set (explicit + carryover nodes)
-        attachable = (
-            self._get_attachable_nodes() if self._get_attachable_nodes else set()
-        )
 
-        if not bypass_attachment_constraint:
-            if source_node not in attachable and dest_node not in attachable:
-                return None
+        # If both nodes are explicit in the current sentence, always allow
+        explicit_nodes = self._get_explicit_nodes()
+        if source_node in explicit_nodes and dest_node in explicit_nodes:
+            # Skip attachment constraint entirely
+            pass
+        else:
+            # check attachment constraint
+            attachable = (
+                self._get_attachable_nodes() if self._get_attachable_nodes else set()
+            )
+            if not bypass_attachment_constraint:
+                if source_node not in attachable and dest_node not in attachable:
+                    logging.warning(
+                        f"EDGE_ADMISSION: attachability failed: {source_node.get_text_representer()} not in attachable, "
+                        f"{dest_node.get_text_representer()} not in attachable. Attachable: {[n.get_text_representer() for n in attachable]}"
+                    )
+                    return None
 
         dest_text = dest_node.get_text_representer()
         if dest_text and dest_text.strip().lower() == label.strip().lower():

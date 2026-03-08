@@ -216,8 +216,9 @@ class RelationshipGraphBuilder:
                 ):
                     continue
                 if not self._admit_node_fn(
-                    lemma=subj,
-                    node_type=subj_type,
+                    subj,
+                    subj_type,
+                    "INFERRED_RELATION",  # provenance string expected by admit_node
                 ):
                     continue
 
@@ -227,6 +228,7 @@ class RelationshipGraphBuilder:
                     subj_type,
                     NodeSource.INFERENCE_BASED,
                     provenance=NodeProvenance.INFERRED_FROM_STORY,
+                    mark_explicit=False,
                 )
 
             if dest_node is None:
@@ -238,6 +240,13 @@ class RelationshipGraphBuilder:
                 if not self._is_node_allowed_fn(
                     obj,
                     bypass=bypass,
+                ):
+                    continue
+
+                if not self._admit_node_fn(
+                    obj,
+                    obj_type,
+                    "INFERRED_RELATION",  # same provenance string
                 ):
                     continue
 
@@ -351,6 +360,7 @@ class RelationshipGraphBuilder:
                     subj_type,
                     NodeSource.INFERENCE_BASED,
                     provenance=NodeProvenance.INFERRED_FROM_STORY,
+                    mark_explicit=False,
                 )
 
             if dest_node is None:

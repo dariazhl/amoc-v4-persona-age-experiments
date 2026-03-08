@@ -221,7 +221,7 @@ def _draw_triplet_overlay(
     ax,
     triplets: List[Tuple[str, str, str]],
     active_nodes: Optional[set] = None,
-    max_triplets: int = 12,
+    max_triplets: int = 20,
     font_size: int = 8,
 ) -> None:
     if not triplets:

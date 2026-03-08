@@ -505,7 +505,6 @@ class GraphPlotter:
                 )
                 for edge in snapshot_edges
             }
-
         self.plot_graph_snapshot_full(
             sentence_index=sentence_idx,
             sentence_text=original_text,
@@ -532,7 +531,9 @@ class GraphPlotter:
             )
             for edge in snapshot_edges
         }
-
+        logging.info(
+            f"DEBUG: Plotting with {len(reconstruct_semantic_triplets_fn(only_active=True))} triplets, mode={"sentence_cumulative"}"
+        )
         self.plot_graph_snapshot_full(
             sentence_index=sentence_idx,
             sentence_text=original_text,

@@ -22,26 +22,25 @@ class TextNormalizer:
 
     def normalize_edge_label(self, label: str) -> str:
         if not label or not isinstance(label, str):
-            return label
-
+            return ""
         cleaned = label.strip()
         if not cleaned:
-            return cleaned
-
-        result = canonicalize_edge_label(self._spacy_nlp, cleaned)
-        if not result:
-            return result
-        return result
+            return ""
+        # Basic cleanup: remove "(edge)" if present, lowercase, replace spaces with underscores
+        cleaned = re.sub(r"\s*\(edge\)\s*", "", cleaned)
+        cleaned = cleaned.lower().replace(" ", "_")
+        # Remove any non‑alphanumeric characters except underscore
+        cleaned = re.sub(r"[^\w]", "", cleaned)
+        return cleaned
 
     # verbs cannot become nodes
     def is_valid_relation_label(self, label: str) -> bool:
         label = (label or "").strip()
         if not label:
             return False
-
-        if not self.is_verb_relation(label):
+        # Reject if label consists only of punctuation or numbers
+        if not re.search(r"[a-zA-Z]", label):
             return False
-
         return True
 
     def is_verb_relation(self, label: str) -> bool:
@@ -101,7 +100,8 @@ class TextNormalizer:
             pos = tok.pos_
             if is_subject and pos not in {"NOUN", "PROPN", "PRON"}:
                 continue
-            if not is_subject and pos not in {"NOUN", "PROPN", "PRON"}:
+            # allow adjectives such that inferred nodes can pop up ie. knight - is - brave
+            if not is_subject and pos not in {"NOUN", "PROPN", "PRON", "ADJ"}:
                 continue
 
             lemma = (tok.lemma_ or "").strip().lower()

@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Optional, List, Set, Dict
 from collections import deque
+from amoc.config.constants import DEFAULT_ACTIVATION_SCORE
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
@@ -59,8 +60,16 @@ class Decay:
                 node.active = True
                 continue
 
-            if node.activation_score > 0:
-                node.activation_score -= 1
+            # nodes such as "man"
+            last_mention = (
+                max(node.explicit_sentences) if node.explicit_sentences else -1
+            )
+            if self._current_sentence_index - last_mention > DEFAULT_ACTIVATION_SCORE:
+                # Not mentioned recently, decay faster
+                node.activation_score -= 2
+            else:
+                if node.activation_score > 0:
+                    node.activation_score -= 1
 
             if node.activation_score <= 0:
                 node.active = False

@@ -155,7 +155,9 @@ class TripletValidator:
         return {"valid": True, "subj": subj, "obj": obj, "rel": rel}
 
     # use llm to validate semantic plausibility of a triple
-    def validate_with_llm(self, subj: str, rel: str, obj: str, sentence: str) -> Dict:
+    def validate_with_llm(
+        self, subj: str, rel: str, obj: str, sentence: str, story_context: str = ""
+    ) -> Dict:
         llm_validation = self.client.validate_triple(
             sentence=sentence,
             subject=subj,

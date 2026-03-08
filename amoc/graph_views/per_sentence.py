@@ -133,7 +133,8 @@ class PerSentenceGraphBuilder:
                 queue.append(neighbor)
 
         # Carry-over = reachable nodes excluding explicit
-        self._carryover_nodes = set(distances.keys()) - self._explicit_nodes
+        reachable_nodes = set(distances.keys()) - self._explicit_nodes
+        self._carryover_nodes = {node for node in reachable_nodes if node.ever_explicit}
         return self
 
     def get_active_nodes(self) -> Set[Node]:

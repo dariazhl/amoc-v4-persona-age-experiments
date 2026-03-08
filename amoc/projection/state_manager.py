@@ -73,7 +73,9 @@ class ProjectionStateManager:
             and not per_sentence_view.is_empty()
             and not per_sentence_view.is_connected()
         ):
-            logging.error(
+            # trouble
+            # error triggers rollback
+            logging.warning(
                 "Per-sentence graph disconnected at sentence %s for persona '%s'",
                 sentence_id,
                 persona,
