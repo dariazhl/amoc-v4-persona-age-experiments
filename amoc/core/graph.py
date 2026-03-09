@@ -9,6 +9,9 @@ from typing import List, Set, Optional, Tuple, Callable
 import networkx as nx
 
 
+BANNED_LEMMAS = {"thing", "things", "man"}
+
+
 class Graph:
     def __init__(self) -> None:
         self.nodes: Set[Node] = set()
@@ -44,6 +47,9 @@ class Graph:
     ):
         lemmas = [lemma.lower() for lemma in lemmas]
         primary_lemma = lemmas[0] if lemmas else ""
+
+        if primary_lemma in BANNED_LEMMAS:
+            return None
 
         existing_node = self.get_node(lemmas)
         is_new_node = existing_node is None

@@ -206,7 +206,7 @@ class VLLMClient:
         return extract_list_from_string(response)
 
     def resolve_pronouns(self, text, persona):
-        prompt = REPLACE_PRONOUNS_PROMPT + text
+        prompt = REPLACE_PRONOUNS_PROMPT.format(text=text)
         return self.call_vllm(prompt, persona)
 
     def get_edge_label(

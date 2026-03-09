@@ -187,7 +187,35 @@ Provide them in the following format (a list of numbers):
 [1, 2, 3, ...]
 """
 
-REPLACE_PRONOUNS_PROMPT = 'Replace the pronouns "he, she, they" with the persons / nouns from the text that they are referring to. Sometimes there is no such reference and you should leave them as they are. Do not come up with imaginary names for the pronouns, they must be in the text. The text is:\n'
+REPLACE_PRONOUNS_PROMPT = """You are resolving pronouns in a story. Your task is to replace pronouns with the specific nouns they refer to.
+
+**CRITICAL: Pronouns often refer to nouns mentioned in PREVIOUS SENTENCES.** You MUST look at the entire text to find the correct referent.
+
+Rules:
+- Replace pronouns (he, she, they, him, her, them, his, her, their) with the specific nouns they refer to
+- Look for referents in ALL previous sentences, not just the current one
+- If a pronoun refers to a name mentioned earlier (e.g., "Charlemagne"), replace it with that name
+- If the referent is unclear, leave the pronoun as is
+- Do NOT invent names or nouns that aren't in the text
+- Preserve the exact sentence structure and boundaries
+- Keep the same number of sentences
+
+Input: "Charlemagne was a great king. He ruled wisely."
+Output: "Charlemagne was a great king. Charlemagne ruled wisely."
+
+Input: "The knights trained daily. They became skilled warriors."
+Output: "The knights trained daily. The knights became skilled warriors."
+
+Input: "Mary loved reading. Her favorite books were mysteries."
+Output: "Mary loved reading. Mary's favorite books were mysteries."
+
+Input: "The dragon breathed fire. It terrified the villagers."
+Output: "The dragon breathed fire. The dragon terrified the villagers."
+
+Now process this text:
+{text}
+
+Return ONLY the resolved text with pronouns replaced, nothing else."""
 
 NEW_RELATIONSHIPS_PROMPT = """I want to build a knowledge graph using the provided text. The graph should consist of two types of nodes: concept nodes and property nodes. Concepts nodes represent objects or persons from the story and are generally represented by nouns in the text. Property nodes describe the concepts nodes and are generally represented by adjectives in the text. An edge connects a concept to another concept or a concept to a property, and it is described by a relationship between the connected nodes.
 

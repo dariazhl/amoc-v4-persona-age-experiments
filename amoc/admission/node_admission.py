@@ -49,16 +49,11 @@ class NodeAdmission:
         provenance: str = "STORY_EXPLICIT",
         sent: Optional["Span"] = None,
     ) -> bool:
-        GARBAGE_NODES = {"thing", "things"}
         lemma = (lemma or "").lower().strip()
         if not lemma:
             return False
 
         if not self._graph._provenance_ops.passes_length_policy(lemma):
-            return False
-
-        if lemma in GARBAGE_NODES:
-            # logging.info(f"Rejecting garbage node: {lemma}")
             return False
 
         # reject nodes from internal provenance

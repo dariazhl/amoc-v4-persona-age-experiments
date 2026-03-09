@@ -215,9 +215,8 @@ class SentenceRuntime:
         get_nodes_with_active_edges_fn: callable,
     ) -> Set["Node"]:
         if self._per_sentence_view is not None:
-            return (
-                set(self._per_sentence_view.explicit_nodes)
-                | set(self._per_sentence_view.carryover_nodes)
+            return set(self._per_sentence_view.explicit_nodes) | set(
+                self._per_sentence_view.carryover_nodes
             )
 
         return self._explicit_nodes_current_sentence | get_nodes_with_active_edges_fn()
