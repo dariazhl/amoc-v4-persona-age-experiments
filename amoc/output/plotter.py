@@ -364,6 +364,20 @@ class GraphPlotter:
             if self._enforce_cumulative_connectivity_fn:
                 self._enforce_cumulative_connectivity_fn()
 
+            # Get active subgraph
+            active_nodes_for_filter, active_edges_for_filter = (
+                self._graph.get_active_subgraph_wrapper()
+            )
+            active_node_names = {
+                n.get_text_representer() for n in active_nodes_for_filter
+            }
+
+            logging.info(f"PLOT_DEBUG: Active nodes: {active_node_names}")
+            logging.info(f"PLOT_DEBUG: Total triplets before filter: {len(triplets)}")
+            logging.info(
+                f"PLOT_DEBUG: Sample triplets: {triplets[:3] if triplets else 'None'}"
+            )
+
             # SAFE FILTERING: Only plot triplets where both endpoints are active
             triplets_for_plot = [
                 (s, r, o)

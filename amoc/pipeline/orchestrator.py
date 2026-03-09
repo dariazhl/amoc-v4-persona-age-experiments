@@ -657,16 +657,28 @@ class AMoCv4:
         graphs_output_dir: Optional[str],
         highlight_nodes: Optional[Iterable[str]],
     ) -> None:
-        # get all nodes
+        # Get ALL nodes by using only_active=False for triplets
         all_triplets = self._triplet_ops.reconstruct_semantic_triplets(
             only_active=False
         )
-        # get only active edges for plotting
+        logging.info(f"PAPER_DEBUG: all_triplets count = {len(all_triplets)}")
+        if all_triplets:
+            logging.info(f"PAPER_DEBUG: first few all_triplets: {all_triplets[:3]}")
+
+        # Get ONLY ACTIVE edges for plotting
         active_triplets = self._triplet_ops.reconstruct_semantic_triplets(
             only_active=True
         )
-        active_nodes, _ = self.graph.get_active_subgraph_wrapper()
+        logging.info(f"PAPER_DEBUG: active_triplets count = {len(active_triplets)}")
+        if active_triplets:
+            logging.info(
+                f"PAPER_DEBUG: first few active_triplets: {active_triplets[:3]}"
+            )
+
+        active_nodes, active_edges = self.graph.get_active_subgraph_wrapper()
         active_node_names = {n.get_text_representer() for n in active_nodes}
+        logging.info(f"PAPER_DEBUG: active_node_names = {active_node_names}")
+
         inferred_node_names = {
             n.get_text_representer()
             for n in self.graph.nodes
