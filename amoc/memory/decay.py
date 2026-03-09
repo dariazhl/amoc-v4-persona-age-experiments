@@ -26,7 +26,6 @@ class Decay:
         self._edge_visibility = edge_visibility
         self._nr_relevant_edges = nr_relevant_edges
         self._strict_reactivate = strict_reactivate
-        self._anchor_nodes: Set["Node"] = set()
         self._current_sentence_index = None
         self._record_edge_fn = None
 
@@ -35,7 +34,6 @@ class Decay:
         anchor_nodes: Set["Node"],
         record_edge_fn: callable = None,
     ):
-        self._anchor_nodes = anchor_nodes
         self._record_edge_fn = record_edge_fn
 
     def set_decay_sentence_context(self, idx: int):

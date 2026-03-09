@@ -123,8 +123,6 @@ class GraphPlotter:
 
         # Get node categories
         explicit_names = {n.get_text_representer() for n in explicit_nodes}
-        anchor_names = {n.get_text_representer() for n in anchor_nodes}
-
         # Compute newly activated nodes
         current_active = set(active_node_names)
         newly_activated = current_active - {
@@ -137,7 +135,7 @@ class GraphPlotter:
             title=f"Sentence {sentence_idx}: {sentence_text[:60]}...",
             output_path=output_path,
             explicit_nodes=explicit_names,
-            anchor_nodes=anchor_names,
+            anchor_nodes=set(),
             newly_activated=newly_activated,
             prev_positions=self._viz_positions,
             layout_depth=self._layout_depth,
@@ -199,7 +197,6 @@ class GraphPlotter:
 
         # Get node categories
         explicit_names = {n.get_text_representer() for n in explicit_nodes}
-        anchor_names = {n.get_text_representer() for n in anchor_nodes}
         carryover_names = {n.get_text_representer() for n in carryover_nodes}
 
         # Newly activated
@@ -217,7 +214,7 @@ class GraphPlotter:
             title=f"S{sentence_idx}: {sentence_text[:50]}...",
             output_path=output_path,
             explicit_nodes=explicit_names,
-            anchor_nodes=anchor_names,
+            anchor_nodes=set(),
             carryover_nodes=carryover_names,
             newly_activated=newly_activated,
             deactivated=deactivated_names,

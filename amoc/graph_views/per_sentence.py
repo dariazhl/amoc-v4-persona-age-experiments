@@ -27,7 +27,7 @@ class PerSentenceGraph:
         self.carryover_nodes = carryover_nodes
         self.active_nodes = active_nodes
         self.active_edges = active_edges
-        self.anchor_nodes = anchor_nodes
+        self.anchor_nodes = frozenset()
 
         adjacency = {n: set() for n in self.active_nodes}
         for edge in self.active_edges:
@@ -92,7 +92,7 @@ class PerSentenceGraphBuilder:
     ):
         self.cumulative_graph = cumulative_graph
         self.max_distance = max_distance
-        self.anchor_nodes = frozenset(anchor_nodes)
+        self.anchor_nodes = frozenset()
         self.repair_callback = repair_callback
 
         self._explicit_nodes: Set[Node] = set()
@@ -150,7 +150,7 @@ class PerSentenceGraphBuilder:
         return self._explicit_nodes | self._carryover_nodes
 
     def get_attachable_nodes(self) -> Set[Node]:
-        return self._explicit_nodes | self._carryover_nodes | set(self.anchor_nodes)
+        return self._explicit_nodes | self._carryover_nodes
 
     def can_add_edge(self, source: Node, dest: Node) -> bool:
         attachable = self.get_attachable_nodes()
@@ -189,7 +189,7 @@ class PerSentenceGraphBuilder:
             carryover_nodes=frozenset(carryover_nodes),
             active_nodes=frozenset(view_nodes),
             active_edges=frozenset(view_edges),
-            anchor_nodes=self.anchor_nodes,
+            anchor_nodes=frozenset(),
         )
 
 

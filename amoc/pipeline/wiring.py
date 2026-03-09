@@ -83,7 +83,7 @@ def wire_core_dependencies(core) -> None:
         edge_visibility=core.edge_visibility,
     )
     core._sentence_ops.set_runtime_state_refs(
-        anchor_nodes=core._anchor_nodes,
+        anchor_nodes=set(),
         explicit_nodes=core._explicit_nodes_current_sentence,
         triplet_intro=core._triplet_intro,
     )
@@ -141,7 +141,7 @@ def wire_core_dependencies(core) -> None:
         strict_reactivate=core.strict_reactivate_function,
     )
     core._activation_ops.set_decay_state_refs(
-        anchor_nodes=core._anchor_nodes,
+        anchor_nodes=set(),
         record_edge_fn=lambda e, i: core._edge_ops.record_edge_in_graphs(
             edge=e,
             sentence_idx=i,

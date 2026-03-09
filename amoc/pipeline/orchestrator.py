@@ -76,7 +76,6 @@ class AMoCv4:
         self._cumulative_deactivated_nodes_for_plot = set()
         self._viz_positions = {}
         self._recently_deactivated_nodes_for_inference = set()
-        self._anchor_nodes = set()
         self._explicit_nodes_current_sentence = set()
         self._carryover_nodes_current_sentence = set()
         self.strict_reactivate_function = strict_reactivate_function
@@ -195,7 +194,7 @@ class AMoCv4:
                 carryover_nodes=frozenset(),
                 active_nodes=frozenset(explicit_nodes),
                 active_edges=frozenset(),
-                anchor_nodes=frozenset(self._anchor_nodes),
+                anchor_nodes=frozenset(),
             )
 
         self._per_sentence_view = view
@@ -346,7 +345,7 @@ class AMoCv4:
 
     def snapshot_sentence_state_wrapper(self) -> tuple:
         return self._sentence_ops.snapshot_sentence_state(
-            anchor_nodes=self._anchor_nodes,
+            anchor_nodes=set(),
             triplet_intro=self._triplet_intro,
             per_sentence_view=self._per_sentence_view,
             recently_deactivated=self._recently_deactivated_nodes_for_inference,
@@ -372,11 +371,9 @@ class AMoCv4:
             prev_sentences=prev_sentences,
             nodes_before_sentence=nodes_before_sentence,
         )
-        nodes_before, should_skip, explicit_nodes, anchor_nodes = result
+        nodes_before, should_skip, explicit_nodes, _unused = result
         self._explicit_nodes_current_sentence.clear()
         self._explicit_nodes_current_sentence.update(explicit_nodes)
-        self._anchor_nodes.clear()
-        self._anchor_nodes.update(anchor_nodes)
         return (nodes_before, should_skip)
 
     def handle_nonfirst_sentence_wrapper(
@@ -398,7 +395,7 @@ class AMoCv4:
             current_sentence_index=self._current_sentence_index,
             current_sentence_text=resolved_text,
             explicit_nodes_current_sentence=self._explicit_nodes_current_sentence,
-            anchor_nodes=self._anchor_nodes,
+            anchor_nodes=set(),
             triplet_intro=self._triplet_intro,
         )
 
@@ -440,7 +437,6 @@ class AMoCv4:
                     explicit_nodes=self._explicit_nodes_current_sentence,
                     carryover_nodes=self._carryover_nodes_current_sentence,
                     apply_global_edge_decay_fn=lambda: self._activation_ops.apply_global_edge_decay(),
-                    decay_node_activation_fn=lambda: self._activation_ops.decay_node_activation(),
                 )
 
         return result
@@ -512,19 +508,6 @@ class AMoCv4:
         #     )
         #     return True
 
-        # update anchors
-        explicit_concepts = {
-            n
-            for n in self._explicit_nodes_current_sentence
-            if n.node_type == NodeType.CONCEPT
-        }
-        active_concepts = {
-            n for n in self._get_active_edge_nodes() if n.node_type == NodeType.CONCEPT
-        }
-        self._anchor_nodes |= explicit_concepts
-        self._anchor_nodes |= active_concepts
-        self._anchor_nodes = {n for n in self._anchor_nodes if n in self.graph.nodes}
-
         # # validation
         # if not self._connectivity_ops.validate_active_connectivity():
         #     logging.error(
@@ -567,7 +550,6 @@ class AMoCv4:
         highlight_nodes: Optional[Iterable[str]],
         largest_component_only: bool,
         previous_graph_state,
-        previous_anchor_nodes,
         previous_triplet_intro,
         previous_per_sentence_view,
         previous_recently_deactivated,
@@ -578,8 +560,6 @@ class AMoCv4:
         # Restore state first
         self.graph = previous_graph_state
         self.rebind_ops_graph_refs()
-        self._anchor_nodes.clear()
-        self._anchor_nodes.update(previous_anchor_nodes)
         self._triplet_intro.clear()
         self._triplet_intro.update(previous_triplet_intro)
         self._recently_deactivated_nodes_for_inference = previous_recently_deactivated
@@ -714,7 +694,6 @@ class AMoCv4:
 
             (
                 _previous_graph_state,
-                _previous_anchor_nodes,
                 _previous_triplet_intro,
                 _previous_per_sentence_view,
                 _previous_recently_deactivated,
@@ -737,7 +716,6 @@ class AMoCv4:
             )
 
             # CONNECTIVITY
-            self._connectivity_ops.set_anchor_nodes(self._anchor_nodes)
             rollback_needed = self.stabilize_connectivity_wrapper(prev_sentences)
 
             if rollback_needed:
@@ -749,7 +727,6 @@ class AMoCv4:
                     highlight_nodes=highlight_nodes,
                     largest_component_only=largest_component_only,
                     previous_graph_state=_previous_graph_state,
-                    previous_anchor_nodes=_previous_anchor_nodes,
                     previous_triplet_intro=_previous_triplet_intro,
                     previous_per_sentence_view=_previous_per_sentence_view,
                     previous_recently_deactivated=_previous_recently_deactivated,

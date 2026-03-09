@@ -53,7 +53,7 @@ class SentenceGraphBuilder:
         self._infer_new_relationships_step_0_fn = None
         self._add_inferred_relationships_to_graph_step_0_fn = None
         self._explicit_nodes_ref = None
-        self._anchor_nodes_ref = None
+        self._anchor_nodes_ref = lambda: set()
         self._triplet_intro_ref = None
         self._carryover_nodes_ref = None
         self.persona = None
@@ -125,7 +125,7 @@ class SentenceGraphBuilder:
         persona: str,
     ):
         self._explicit_nodes_ref = explicit_nodes_ref
-        self._anchor_nodes_ref = anchor_nodes_ref
+        self._anchor_nodes_ref = lambda: set()
         self._triplet_intro_ref = triplet_intro_ref
         self._carryover_nodes_ref = carryover_nodes_ref
         self.persona = persona
@@ -168,7 +168,7 @@ class SentenceGraphBuilder:
         )
         self.set_builder_state_refs(
             explicit_nodes_ref=core._get_explicit_nodes,
-            anchor_nodes_ref=core._anchor_nodes,
+            anchor_nodes_ref=lambda: set(),
             triplet_intro_ref=core._triplet_intro,
             carryover_nodes_ref=core._get_carryover_nodes,
             persona=core.persona,
@@ -380,18 +380,6 @@ class SentenceGraphBuilder:
         # explicit nodes
         explicit_nodes_current_sentence = set(explicit_nodes_current_sentence)
         # define anchor nodes = explicit nodes for the first sent
-        anchor_nodes = {
-            n
-            for n in explicit_nodes_current_sentence
-            if n.node_type == NodeType.CONCEPT
-        } | {
-            n
-            for n in self.graph.nodes
-            if n.node_type == NodeType.CONCEPT and any(e.active for e in n.edges)
-        }
-        logging.info(
-            f"FS_DEBUG: Anchor nodes: {[n.get_text_representer() for n in anchor_nodes]}"
-        )
         # inferred nodes
         inferred_concept_relationships, inferred_property_relationships = (
             self._infer_new_relationships_step_0_fn(sent)
@@ -414,7 +402,7 @@ class SentenceGraphBuilder:
             nodes_before_sentence,
             False,
             explicit_nodes_current_sentence,
-            anchor_nodes,
+            set(),
         )
 
     def is_relation_valid(
@@ -472,7 +460,7 @@ class SentenceGraphBuilder:
         added_edges = []
         # snapshot graph state before processing sent
         _graph_snapshot = copy.deepcopy(self.graph)
-        _anchor_snapshot = copy.deepcopy(anchor_nodes)
+        _anchor_snapshot = set()
         _triplet_intro_snapshot = copy.deepcopy(triplet_intro)
         # update sent context
         current_sentence = sent
@@ -622,20 +610,6 @@ class SentenceGraphBuilder:
             added_edges,
         )
         self._propagate_activation_from_edges_fn()
-        # recompute anchors
-        new_anchors = {
-            n
-            for n in explicit_nodes_current_sentence
-            if n.node_type == NodeType.CONCEPT
-        } | {
-            n
-            for n in self.get_nodes_with_active_edges_fn()
-            if n.node_type == NodeType.CONCEPT
-        }
-
-        anchor_nodes.clear()
-        anchor_nodes.update(new_anchors)
-
         # deactivate nodes that are not connected to the active graph and are not explicit
         self._restrict_active_nodes_fn(list(explicit_nodes_current_sentence))
         # ISSUE: have seen plots where the first sentence is empty
@@ -651,7 +625,7 @@ class SentenceGraphBuilder:
             _graph_snapshot,
             _anchor_snapshot,
             _triplet_intro_snapshot,
-            anchor_nodes,
+            set(),
             triplet_intro,
             nodes_before_sentence,
         )
@@ -1084,8 +1058,6 @@ class SentenceGraphBuilder:
         explicit_nodes: set,
         carryover_nodes: set,
         apply_global_edge_decay_fn: callable,
-        decay_node_activation_fn: callable,
     ) -> None:
         apply_global_edge_decay_fn()
         self.graph.stabilize_cumulative_graph_wrapper(set(explicit_nodes))
-        # decay_node_activation_fn()

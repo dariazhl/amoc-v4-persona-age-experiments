@@ -30,15 +30,11 @@ class ConnectivityStabilizer:
         self._llm = llm_extractor
         self._story_text: str = ""
         self._current_sentence_text: str = ""
-        self._anchor_nodes: set = set()
         self._persona = ""
 
     def set_context(self, story_text: str, current_sentence_text: str):
         self._story_text = story_text
         self._current_sentence_text = current_sentence_text
-
-    def set_anchor_nodes(self, anchor_nodes: set) -> None:
-        self._anchor_nodes = anchor_nodes
 
     def is_active_connected_wrapper(self) -> bool:
         required_nodes = self._get_explicit_nodes() | self._get_carryover_nodes()
@@ -128,37 +124,14 @@ class ConnectivityStabilizer:
         largest_component = set(components[0])
 
         active_edge_pool = [e for e in self._graph.edges if e.active]
-
-        active_nodes = self.get_nodes_with_active_edges()
-        # find anchor candidates
-        anchor_candidates = [
-            n
-            for n in largest_component
-            if n in self._anchor_nodes and any(e.active for e in n.edges)
-        ]
-
-        if anchor_candidates:
-
-            def anchor_score(n):
-                active_degree = sum(1 for e in n.edges if e.active)
-                return (
-                    n.activation_score,
-                    active_degree,
-                    len(n.edges),
-                    n.get_text_representer(),  # deterministic
-                )
-
-            backbone_node = max(anchor_candidates, key=anchor_score)
-        else:
-            backbone_node = max(
-                largest_component,
-                key=lambda n: (
-                    n.activation_score,
-                    sum(1 for e in n.edges if e.active),
-                    len(n.edges),
-                    n.get_text_representer(),
-                ),
-            )
+        backbone_node = max(
+            largest_component,
+            key=lambda n: (
+                sum(1 for e in n.edges if e.active),
+                len(n.edges),
+                n.get_text_representer(),
+            ),
+        )
 
         for comp in sorted(components[1:], key=len):
             comp_set = set(comp)

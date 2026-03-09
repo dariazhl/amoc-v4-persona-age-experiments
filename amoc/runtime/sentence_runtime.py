@@ -29,7 +29,6 @@ class SentenceRuntime:
         self._max_distance = max_distance_from_active_nodes
         self._edge_visibility = edge_visibility
 
-        self._anchor_nodes: Set["Node"] = set()
         self._explicit_nodes_current_sentence: Set["Node"] = set()
         self._per_sentence_view: Optional["PerSentenceGraph"] = None
         self._triplet_intro = {}
@@ -42,7 +41,6 @@ class SentenceRuntime:
         explicit_nodes: Set["Node"],
         triplet_intro: dict,
     ):
-        self._anchor_nodes = anchor_nodes
         self._explicit_nodes_current_sentence = explicit_nodes
         self._triplet_intro = triplet_intro
 
@@ -61,7 +59,6 @@ class SentenceRuntime:
     ) -> Tuple:
         return (
             copy.deepcopy(self._graph),
-            set(anchor_nodes),
             copy.deepcopy(triplet_intro),
             copy.deepcopy(per_sentence_view),
             copy.deepcopy(recently_deactivated),
@@ -206,7 +203,7 @@ class SentenceRuntime:
             cumulative_graph=self._graph,
             explicit_nodes=admitted_nodes,
             max_distance=self._max_distance,
-            anchor_nodes=self._anchor_nodes,
+            anchor_nodes=set(),
             sentence_index=sentence_index,
             repair_callback=None,
         )
@@ -221,7 +218,6 @@ class SentenceRuntime:
             return (
                 set(self._per_sentence_view.explicit_nodes)
                 | set(self._per_sentence_view.carryover_nodes)
-                | set(self._per_sentence_view.anchor_nodes)
             )
 
         return self._explicit_nodes_current_sentence | get_nodes_with_active_edges_fn()
