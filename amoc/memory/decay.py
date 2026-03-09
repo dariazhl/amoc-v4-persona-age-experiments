@@ -1,6 +1,5 @@
 from typing import TYPE_CHECKING, Optional, List, Set, Dict
 from collections import deque
-from amoc.config.constants import DEFAULT_ACTIVATION_SCORE
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
@@ -49,38 +48,6 @@ class Decay:
                 if edge.visibility_score <= 0:
                     edge.visibility_score = 0
                     edge.active = False
-
-    # local decay = fade nodes that are not connected to any active edge and are not explicit in the current sentence
-    def decay_node_activation(self) -> None:
-        explicit_nodes = self._get_explicit_nodes()
-        for node in self._graph.nodes:
-            if node in explicit_nodes:
-                node.active = True
-                continue
-
-            # nodes such as "man"
-            last_mention = (
-                max(node.explicit_sentences) if node.explicit_sentences else -1
-            )
-            if self._current_sentence_index - last_mention > DEFAULT_ACTIVATION_SCORE:
-                # Not mentioned recently, decay faster
-                node.activation_score -= 2
-            else:
-                if node.activation_score > 0:
-                    node.activation_score -= 1
-
-            if node.activation_score <= 0:
-                node.active = False
-                continue
-
-            if not self.has_active_edge(node):
-                node.active = False
-
-    def has_active_edge(self, node: "Node") -> bool:
-        return any(
-            e.active and (e.source_node == node or e.dest_node == node)
-            for e in self._graph.edges
-        )
 
     def reactivate_relevant_edges(
         self,
@@ -219,16 +186,8 @@ class Decay:
             else:
                 edge.reduce_visibility()
 
-    # propagate activation from active edges to connected nodes
-    # if edge is active, the endpoints become active
     def propagate_activation_from_edges(self) -> None:
-        # clean state - deactivates nodes with no edges to prevent zombies
-        for node in self._graph.nodes:
-            node.active = False
-        for edge in self._graph.edges:
-            if edge.visibility_score > 0:
-                edge.source_node.active = True
-                edge.dest_node.active = True
+        pass
 
     def convert_to_landscape_score(self, raw_score: float) -> float:
         val = 5.0 - float(raw_score)
@@ -301,12 +260,8 @@ class Decay:
             dst_tok = node_token_fn(edge.dest_node)
             if not src_tok or not dst_tok:
                 continue
-            src_raw = node_raw_score.get(
-                edge.source_node, edge.source_node.activation_score
-            )
-            dst_raw = node_raw_score.get(
-                edge.dest_node, edge.dest_node.activation_score
-            )
+            src_raw = node_raw_score.get(edge.source_node, max_distance + 1)
+            dst_raw = node_raw_score.get(edge.dest_node, max_distance + 1)
             src_act = self.convert_to_landscape_score(src_raw)
             dst_act = self.convert_to_landscape_score(dst_raw)
             verb_act = max(src_act, dst_act) - 0.5
@@ -344,10 +299,7 @@ class Decay:
         return distances
 
     def restrict_active_nodes(self, explicit_nodes: List["Node"]) -> None:
-        explicit_set = set(explicit_nodes)
-        for node in self._graph.nodes:
-            has_active_edge = self.has_active_edge(node)
-            node.active = has_active_edge
+        pass
 
     def has_active_attachment(self, lemma: str) -> bool:
         active_nodes = {n for n in self._graph.nodes if n.active}

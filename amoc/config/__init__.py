@@ -35,6 +35,5 @@ __all__ = [
     "BLUE_NODES",
     "MAX_REACTIVATION_COUNT",
     "MAX_EDGES_PER_NODE",
-    "DEFAULT_ACTIVATION_SCORE",
     "DECAY_STEP",
 ]

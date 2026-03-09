@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 from difflib import SequenceMatcher
 from amoc.core.node import NodeType
-from amoc.config.constants import DEFAULT_ACTIVATION_SCORE, DECAY_STEP
+from amoc.config.constants import DECAY_STEP
 
 
 try:
@@ -48,7 +48,6 @@ class Edge:
         inferred: bool = False,
         active: bool = True,
         created_at_sentence: Optional[int] = None,
-        activation_score: Optional[int] = None,
         relation_class=None,
         justification=None,
     ) -> None:
@@ -61,11 +60,6 @@ class Edge:
         self.persona_influenced: bool = persona_influenced
         self.inferred: bool = inferred
 
-        self.activation_score: int = (
-            activation_score
-            if activation_score is not None
-            else DEFAULT_ACTIVATION_SCORE
-        )
         self.origin_sentence: Optional[int] = created_at_sentence
         self.created_at_sentence: Optional[int] = created_at_sentence
 
@@ -86,9 +80,6 @@ class Edge:
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = True
         self.activation_role = "reactivated"
-
-        if reset_score:
-            self.activation_score = max(self.activation_score, 1)
         if new_visibility is not None:
             self.visibility_score = new_visibility
 
@@ -97,8 +88,6 @@ class Edge:
         self.asserted_this_sentence = True
         self.reactivated_this_sentence = False
         self.activation_role = "current_sentence"
-        if reset_score:
-            self.activation_score = DEFAULT_ACTIVATION_SCORE
 
     def reset_for_sentence_start(self) -> None:
         self.asserted_this_sentence = False
@@ -153,7 +142,7 @@ class Edge:
                 status = "active"
         else:
             status = "inactive"
-        return f"{self.source_node.get_text_representer()} --{self.label} ({status}, act={self.activation_score})--> {self.dest_node.get_text_representer()} (vis={self.visibility_score})"
+        return f"{self.source_node.get_text_representer()} --{self.label} ({status})--> {self.dest_node.get_text_representer()} (vis={self.visibility_score})"
 
     def __repr__(self) -> str:
         return self.__str__()

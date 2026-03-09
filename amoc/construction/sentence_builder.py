@@ -369,10 +369,6 @@ class SentenceGraphBuilder:
             if n.node_type in {NodeType.CONCEPT, NodeType.PROPERTY}
             and any(lemma in sentence_lemma_set for lemma in n.lemmas)
         }
-        # activate nodes
-        for node in explicit_nodes_current_sentence:
-            node.activation_score = self.ACTIVATION_MAX_DISTANCE
-            node.active = True
         # add nodes to graph
         for node in explicit_nodes_current_sentence:
             if node not in self.graph.nodes:
@@ -493,11 +489,6 @@ class SentenceGraphBuilder:
             current_sentence_text_based_nodes,
             current_sentence_text_based_words,
         )
-        # activate explicit nodes
-        for node in explicit_nodes_current_sentence:
-            node.activation_score = self.ACTIVATION_MAX_DISTANCE
-            node.active = True
-
         current_all_text = resolved_text
         # retrieve active subgraph within distance from explicit nodes
         graph_active_nodes = self.graph.get_active_nodes_wrapper(

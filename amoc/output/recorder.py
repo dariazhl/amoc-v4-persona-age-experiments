@@ -80,9 +80,9 @@ class TripletRecorder:
                 edge.dest_node.get_text_representer(),
                 edge.label,
             )
-            scores[key] = edge.activation_score
+            scores[key] = edge.visibility_score
             # Also add 2-tuple key for compatibility
-            scores[(key[0], key[1])] = edge.activation_score
+            scores[(key[0], key[1])] = edge.visibility_score
         return scores
 
     # returns a list of all triplets currently in the graph

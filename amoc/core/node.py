@@ -54,8 +54,9 @@ class Node:
             self.explicit_sentences.add(self.origin_sentence)
             self.ever_explicit = True
 
-        self.activation_score: int = 0
-        self.active: bool = False
+    @property
+    def active(self) -> bool:
+        return any(e.active for e in self.edges)
 
     def __eq__(self, other: "Node") -> bool:
         return self.lemmas == other.lemmas

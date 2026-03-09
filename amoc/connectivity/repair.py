@@ -136,8 +136,6 @@ class ConnectivityRepair:
                         if edge and not edge.active:
                             edge.active = True
                             edge.visibility_score = max(edge.visibility_score, 1)
-                            edge.source_node.active = True
-                            edge.dest_node.active = True
                             reactivated.add(edge)
                 focus_comp.update(comp)
 
@@ -215,9 +213,7 @@ class ConnectivityRepair:
                 degree_map[e.source_node] = degree_map.get(e.source_node, 0) + 1
                 degree_map[e.dest_node] = degree_map.get(e.dest_node, 0) + 1
 
-        for node in list(carryover_nodes):
-            if degree_map.get(node, 0) == 0:
-                node.active = False
+        # Nodes with no active edges are automatically inactive via property
 
         G = self.build_active_graph()
         sub = G.subgraph(carryover_nodes)
@@ -240,8 +236,6 @@ class ConnectivityRepair:
 
                     e.active = True
                     e.visibility_score = max(e.visibility_score, 1)
-                    e.source_node.active = True
-                    e.dest_node.active = True
 
                     G = self.build_active_graph()
                     sub = G.subgraph(carryover_nodes)
