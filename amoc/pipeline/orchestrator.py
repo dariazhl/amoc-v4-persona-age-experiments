@@ -650,6 +650,47 @@ class AMoCv4:
         self._viz_positions = self._plot_ops.get_viz_positions()
         self._previous_active_triplets = self._plot_ops._previous_active_triplets
 
+    def plot_paper_graph_style_wrapper(
+        self,
+        sentence_idx: int,
+        original_text: str,
+        graphs_output_dir: Optional[str],
+        highlight_nodes: Optional[Iterable[str]],
+    ) -> None:
+        # get all nodes
+        all_triplets = self._triplet_ops.reconstruct_semantic_triplets(
+            only_active=False
+        )
+        # get only active edges for plotting
+        active_triplets = self._triplet_ops.reconstruct_semantic_triplets(
+            only_active=True
+        )
+        active_nodes, _ = self.graph.get_active_subgraph_wrapper()
+        active_node_names = {n.get_text_representer() for n in active_nodes}
+        inferred_node_names = {
+            n.get_text_representer()
+            for n in self.graph.nodes
+            if n.node_source == NodeSource.INFERENCE_BASED
+        }
+        explicit_node_names = [
+            n.get_text_representer()
+            for n in self._explicit_nodes_current_sentence
+            if n.get_text_representer()
+        ]
+        # plot
+        self._plot_ops.plot_paper_graph_style(
+            sentence_index=sentence_idx,
+            sentence_text=original_text,
+            output_dir=graphs_output_dir,
+            highlight_nodes=highlight_nodes,
+            all_triplets=all_triplets,
+            active_triplets=active_triplets,
+            active_node_names=active_node_names,
+            inferred_node_names=inferred_node_names,
+            explicit_node_names=explicit_node_names,
+        )
+        self._viz_positions = self._plot_ops.get_viz_positions()
+
     def analyze(
         self,
         replace_pronouns: bool = True,
@@ -764,6 +805,12 @@ class AMoCv4:
                     inactive_nodes_for_plot,
                     salient_nodes_for_plot,
                     largest_component_only,
+                )
+                self.plot_paper_graph_style_wrapper(
+                    i,
+                    original_text,
+                    graphs_output_dir,
+                    highlight_nodes,
                 )
             self.capture_sentence_triplets_wrapper(original_text)
 

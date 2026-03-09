@@ -547,3 +547,83 @@ class GraphPlotter:
             active_triplets_for_overlay=active_triplets,
             property_nodes=property_nodes_for_plot,
         )
+
+    # plot paper-like plot that shows truly cumulative view, not just working memory
+    def plot_paper_graph_style(
+        self,
+        sentence_index: int,
+        sentence_text: str,
+        output_dir: Optional[str],
+        highlight_nodes: Optional[Iterable[str]],
+        all_triplets: List[Tuple[str, str, str]],
+        active_triplets: List[Tuple[str, str, str]],
+        active_node_names: set,
+        inferred_node_names: set,
+        explicit_node_names: List[str],
+    ) -> Optional[str]:
+        if not all_triplets:
+            return None
+
+        paper_dir = os.path.join(output_dir, "amoc_paper") if output_dir else None
+        if paper_dir:
+            os.makedirs(paper_dir, exist_ok=True)
+
+        # Get all nodes from all_triplets (for node display)
+        all_nodes: set = set()
+        for s, _, o in all_triplets:
+            all_nodes.add(s)
+            all_nodes.add(o)
+        inactive_nodes = sorted(all_nodes - active_node_names)
+        carryover_nodes = sorted(active_node_names - set(explicit_node_names))
+
+        # ever_explicit = all text-derived nodes that were ever marked explicit
+        ever_explicit = sorted(
+            {
+                n.get_text_representer()
+                for n in self._graph.nodes
+                if n.ever_explicit and n.get_text_representer()
+            }
+        )
+
+        # Assign positions for any new nodes
+        for node_text in all_nodes:
+            if node_text not in self._viz_positions:
+                idx = len(self._viz_positions)
+                angle = 2 * math.pi * idx / max(1, len(all_nodes))
+                radius = 1 + 0.5 * idx
+                self._viz_positions[node_text] = (
+                    radius * math.cos(angle),
+                    radius * math.sin(angle),
+                )
+
+        age_val = self._persona_age if self._persona_age is not None else -1
+
+        try:
+            saved_path = plot_amoc_triplets(
+                triplets=active_triplets,
+                persona=self._persona,
+                model_name=self._model_name,
+                age=age_val,
+                blue_nodes=list(highlight_nodes) if highlight_nodes else None,
+                output_dir=paper_dir,
+                step_tag=f"sent{sentence_index + 1}_paper",
+                sentence_text=sentence_text,
+                explicit_nodes=explicit_node_names,
+                ever_explicit_nodes=ever_explicit,
+                inferred_nodes=sorted(inferred_node_names),
+                salient_nodes=carryover_nodes,
+                inactive_nodes=inactive_nodes,
+                positions=self._viz_positions,
+                layout_from_active_only=True,
+                show_triplet_overlay=False,
+                layout_depth=self._layout_depth,
+            )
+            logging.info(
+                "[Paper Plot] Saved sentence %d paper cumulative graph to %s",
+                sentence_index + 1,
+                saved_path,
+            )
+            return saved_path
+        except Exception:
+            logging.error("Failed to plot paper cumulative graph", exc_info=True)
+            return None
