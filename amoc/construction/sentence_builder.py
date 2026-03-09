@@ -1088,4 +1088,4 @@ class SentenceGraphBuilder:
     ) -> None:
         apply_global_edge_decay_fn()
         self.graph.stabilize_cumulative_graph_wrapper(set(explicit_nodes))
-        decay_node_activation_fn()
+        # decay_node_activation_fn()

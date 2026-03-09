@@ -49,11 +49,16 @@ class NodeAdmission:
         provenance: str = "STORY_EXPLICIT",
         sent: Optional["Span"] = None,
     ) -> bool:
+        GARBAGE_NODES = {"thing", "things"}
         lemma = (lemma or "").lower().strip()
         if not lemma:
             return False
 
         if not self._graph._provenance_ops.passes_length_policy(lemma):
+            return False
+
+        if lemma in GARBAGE_NODES:
+            # logging.info(f"Rejecting garbage node: {lemma}")
             return False
 
         # reject nodes from internal provenance
@@ -227,7 +232,7 @@ class NodeAdmission:
         if not self.admit_node(
             lemma=lemmas[0],
             node_type=inferred_type,
-            provenance=NodeProvenance.STORY_TEXT,
+            provenance="INFERRED_RELATION",
         ):
             return None
 
@@ -236,6 +241,8 @@ class NodeAdmission:
             canon,
             inferred_type,
             node_source,
+            provenance=NodeProvenance.INFERRED_FROM_STORY,
+            mark_explicit=False,
         )
 
     def find_node_by_text(

@@ -108,6 +108,7 @@ class PerSentenceGraphBuilder:
             self._carryover_nodes = set()
             return self
 
+        # BFS to find all reachable nodes within distance
         distances = {n: 0 for n in self._explicit_nodes}
         queue = deque(self._explicit_nodes)
 
@@ -119,9 +120,9 @@ class PerSentenceGraphBuilder:
                 continue
 
             for edge in node.edges:
-                # Only traverse edges that are active AND have positive visibility
                 if not (edge.active and edge.visibility_score > 0):
                     continue
+
                 neighbor = (
                     edge.dest_node if edge.source_node == node else edge.source_node
                 )
@@ -132,9 +133,17 @@ class PerSentenceGraphBuilder:
                 distances[neighbor] = current_dist + 1
                 queue.append(neighbor)
 
-        # Carry-over = reachable nodes excluding explicit
-        self._carryover_nodes = set(distances.keys()) - self._explicit_nodes
-        logging.info(f"CARRYOVER_DEBUG: {self._carryover_nodes}")
+        # All reachable nodes - current explicit nodes
+        reachable_nodes = set(distances.keys()) - self._explicit_nodes
+
+        # Carryover = all reachable nodes explicit + inferred
+        self._carryover_nodes = reachable_nodes
+
+        for node in reachable_nodes:
+            logging.info(
+                f"CARRYOVER: {node.get_text_representer()} (explicit={node.ever_explicit})"
+            )
+
         return self
 
     def get_active_nodes(self) -> Set[Node]:

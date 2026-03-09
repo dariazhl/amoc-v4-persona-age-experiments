@@ -224,17 +224,13 @@ class Decay:
     # propagate activation from active edges to connected nodes
     # if edge is active, the endpoints become active
     def propagate_activation_from_edges(self) -> None:
+        # clean state - deactivates nodes with no edges to prevent zombies
+        for node in self._graph.nodes:
+            node.active = False
         for edge in self._graph.edges:
-            if not edge.active:
-                continue
-            edge.source_node.activation_score = max(
-                edge.source_node.activation_score, edge.activation_score
-            )
-            edge.dest_node.activation_score = max(
-                edge.dest_node.activation_score, edge.activation_score
-            )
-            edge.source_node.active = True
-            edge.dest_node.active = True
+            if edge.visibility_score > 0:
+                edge.source_node.active = True
+                edge.dest_node.active = True
 
     def convert_to_landscape_score(self, raw_score: float) -> float:
         val = 5.0 - float(raw_score)
