@@ -19,6 +19,8 @@ from amoc.utils.io import (
     infer_regime_from_filename,
 )
 from amoc.viz.graph_plots import plot_amoc_triplets
+from amoc.viz.plotter import GraphPlotter
+from amoc.viz.reverse_plotter import ReverseGraphPlotter
 
 VLLM_CLIENT_CACHE: Dict[str, VLLMClient] = {}
 
@@ -124,7 +126,9 @@ def process_persona_csv(
     edge_visibility: Optional[int] = None,
     story_text: Optional[str] = None,
     force_node: bool = False,
-    checkpoint: bool = False,
+    checkpoint: bool = False,  # deprecated, used to save progress in analysis run
+    generate_reverse_plots: bool = False,
+    reverse_plot_mode: str = "cumulative",
 ) -> None:
     short_filename = os.path.basename(filename)
     print(f"Processing: {short_filename}")
@@ -226,6 +230,26 @@ def process_persona_csv(
         start_model_time = time.time()
         total_rows = len(df)
 
+        # Initialize reverse plotter
+        plotter = None
+        if plot_after_each_sentence or generate_reverse_plots:
+            plotter = GraphPlotter(
+                graph_ref=engine.graph,
+                output_dir=graphs_output_dir or os.path.join(output_dir, "graphs"),
+                model_name=model_name,
+                persona="",
+                persona_age=None,
+            )
+            if generate_reverse_plots:
+                plotter.enable_state_collection(True)
+
+            plotter.set_callbacks(
+                get_explicit_nodes_fn=lambda: engine.graph.get_explicit_nodes(),
+                get_edge_activation_scores_fn=lambda: engine.graph.get_edge_activation_scores(),
+                graph_edges_to_triplets_fn=engine.graph.graph_edges_to_triplets,
+                enforce_cumulative_connectivity_fn=lambda: None,
+            )
+
         try:
             for idx, (row_idx, row) in enumerate(df.iterrows(), start=1):
                 if checkpoint and row_idx in processed_indices:
@@ -252,6 +276,11 @@ def process_persona_csv(
                         matrix_dir_base=str(output_dir),
                         force_node=force_node,
                         checkpoint=False,
+                        plotter=(
+                            plotter
+                            if plot_after_each_sentence or generate_reverse_plots
+                            else None
+                        ),
                     )
 
                     records = []
@@ -557,6 +586,79 @@ def process_persona_csv(
                         ckpt["failures"] = failures
                         save_checkpoint(ckpt_path, ckpt)
         finally:
+            # trouble - is this the right place for the reverse plots?
+            # reverse plots
+            if generate_reverse_plots and plotter:
+                try:
+                    all_states = plotter.get_graph_states()
+
+                    if len(all_states) >= 2:
+                        logging.info(
+                            f"Generating reverse PNGs from {len(all_states)} states..."
+                        )
+
+                        reverse_plotter = ReverseGraphPlotter(
+                            output_dir=graphs_output_dir or output_dir
+                        )
+
+                        final_positions = plotter.get_viz_positions()
+
+                        base_kwargs = {
+                            "persona": persona_text,
+                            "model_name": model_name,
+                            "age": age_refined_int,
+                            "blue_nodes": highlight_nodes,
+                            "avoid_edge_overlap": True,
+                            "layout_depth": 3,
+                            "show_triplet_overlay": True,
+                        }
+
+                        if reverse_plot_mode == "both":
+                            for mode in ["active", "cumulative"]:
+                                filtered_states = [
+                                    s
+                                    for s in all_states
+                                    if mode in s.get("step_tag", "")
+                                ]
+
+                                if len(filtered_states) >= 2:
+                                    png_paths = reverse_plotter.plot_reverse_sequence(
+                                        filtered_states,
+                                        base_kwargs,
+                                        final_positions,
+                                        mode=mode,
+                                    )
+                                    logging.info(
+                                        f"Generated {len(png_paths)} reverse PNGs for {mode} mode"
+                                    )
+                        else:
+                            filtered_states = [
+                                s
+                                for s in all_states
+                                if reverse_plot_mode in s.get("step_tag", "")
+                            ]
+
+                            if len(filtered_states) >= 2:
+                                png_paths = reverse_plotter.plot_reverse_sequence(
+                                    filtered_states,
+                                    base_kwargs,
+                                    final_positions,
+                                    mode=reverse_plot_mode,
+                                )
+                                logging.info(f"Generated {len(png_paths)} reverse PNGs")
+
+                        reverse_dir = os.path.join(
+                            graphs_output_dir or output_dir, "reverse_plots"
+                        )
+                        logging.info(f"Reverse PNGs saved in: {reverse_dir}")
+
+                    plotter.clear_graph_states()
+
+                except Exception as e:
+                    logging.error(
+                        f"Failed to generate reverse PNGs: {e}", exc_info=True
+                    )
+
             if checkpoint:
                 ckpt["elapsed_seconds"] = time.time() - start_model_time
                 ckpt["failures"] = failures

@@ -250,6 +250,8 @@ def main(argv: List[str]) -> None:
                 story_text=story_text,
                 force_node=True,
                 checkpoint=args.checkpoint,
+                generate_reverse_plots=True,
+                reverse_plot_mode="cumulative",
             )
     finally:
         elapsed = time.time() - total_start

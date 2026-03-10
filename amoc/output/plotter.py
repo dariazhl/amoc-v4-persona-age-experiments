@@ -1,4 +1,14 @@
-from typing import TYPE_CHECKING, Optional, List, Tuple, Set, Dict, Iterable, Callable
+from typing import (
+    TYPE_CHECKING,
+    Optional,
+    List,
+    Tuple,
+    Set,
+    Dict,
+    Iterable,
+    Callable,
+    Any,
+)
 import os
 import logging
 import math
@@ -47,6 +57,8 @@ class GraphPlotter:
         self._story_lemmas: Set[str] = set()
         self._persona_only_lemmas: Set[str] = set()
         self._previous_active_triplets: List[Tuple[str, str, str]] = []
+        self._graph_states: List[Dict[str, Any]] = []
+        self._collect_states: bool = False
 
     def set_callbacks(
         self,
@@ -155,6 +167,56 @@ class GraphPlotter:
         name = re.sub(r"[\\/:*?\"<>|]", "_", name)
         name = re.sub(r"\s+", "_", name)
         return name or "unknown"
+
+    def enable_state_collection(self, enable: bool = True):
+        self._collect_states = enable
+
+    def get_graph_states(self) -> List[Dict[str, Any]]:
+        return self._graph_states
+
+    def clear_graph_states(self):
+        self._graph_states = []
+
+    def _capture_state(
+        self,
+        sentence_idx: int,
+        sentence_text: str,
+        mode: str,
+        triplets: List[Tuple[str, str, str]],
+        explicit_nodes: Optional[List[str]] = None,
+        inactive_nodes: Optional[List[str]] = None,
+        salient_nodes: Optional[List[str]] = None,
+        inferred_nodes: Optional[List[str]] = None,
+        active_edges: Optional[set] = None,
+    ):
+        if not self._collect_states:
+            return
+
+        all_triplets = (
+            self._graph_edges_to_triplets_fn(only_active=False)
+            if self._graph_edges_to_triplets_fn
+            else []
+        )
+
+        state = {
+            "triplets": all_triplets if mode == "cumulative" else triplets,
+            "persona": self._persona,
+            "model_name": self._model_name,
+            "age": self._persona_age if self._persona_age is not None else -1,
+            "step_tag": f"sent{sentence_idx+1}_{mode}",
+            "sentence_text": sentence_text,
+            "explicit_nodes": explicit_nodes or [],
+            "inactive_nodes": inactive_nodes or [],
+            "salient_nodes": salient_nodes or [],
+            "inferred_nodes": inferred_nodes or [],
+            "active_edges": active_edges or set(),
+            "layout_from_active_only": False,
+            "show_triplet_overlay": True,
+            "avoid_edge_overlap": True,
+            "layout_depth": self._layout_depth,
+        }
+
+        self._graph_states.append(state)
 
     def plot_sentence(
         self,
@@ -508,7 +570,7 @@ class GraphPlotter:
                 f"active_triplets_from_view={len(active_triplets)}"
             )
 
-        # PROJECTION CONTINUITY + EXPLICIT FALLBACK
+        # PROJECTION CONTINUITY +  FALLBACK
         if not active_triplets and explicit_nodes_for_plot:
             active_triplets = []
 
@@ -543,6 +605,23 @@ class GraphPlotter:
                 )
                 for edge in snapshot_edges
             }
+
+        self._capture_state(
+            sentence_idx=sentence_idx,
+            sentence_text=original_text,
+            mode="active",
+            triplets=active_triplets,
+            explicit_nodes=explicit_nodes_for_plot,
+            inactive_nodes=inactive_nodes_for_plot,
+            salient_nodes=salient_nodes_for_plot,
+            inferred_nodes=[
+                n.get_text_representer()
+                for n in self._graph.nodes
+                if n.node_source == NodeSource.INFERENCE_BASED
+            ],
+            active_edges=active_edge_pairs,
+        )
+
         self.plot_graph_snapshot_full(
             sentence_index=sentence_idx,
             sentence_text=original_text,
@@ -581,9 +660,23 @@ class GraphPlotter:
         active_node_names = set(explicit_nodes_for_plot) | set(salient_nodes_for_plot)
         inactive_nodes_recalc = sorted(all_graph_nodes - active_node_names)
 
-        logging.info(
-            f"DEBUG: Plotting with {len(reconstruct_semantic_triplets_fn(only_active=True))} triplets, mode={"sentence_cumulative"}"
+        # Use inactive_nodes_recalc
+        self._capture_state(
+            sentence_idx=sentence_idx,
+            sentence_text=original_text,
+            mode="cumulative",
+            triplets=reconstruct_semantic_triplets_fn(only_active=True),
+            explicit_nodes=explicit_nodes_for_plot,
+            inactive_nodes=inactive_nodes_recalc,
+            salient_nodes=salient_nodes_for_plot,
+            inferred_nodes=[
+                n.get_text_representer()
+                for n in self._graph.nodes
+                if n.node_source == NodeSource.INFERENCE_BASED
+            ],
+            active_edges=cumulative_active_pairs,
         )
+
         self.plot_graph_snapshot_full(
             sentence_index=sentence_idx,
             sentence_text=original_text,

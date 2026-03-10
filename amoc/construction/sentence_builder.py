@@ -851,7 +851,7 @@ class SentenceGraphBuilder:
 
         # step 4: process each triple
         for subj, rel, obj in prioritized_triples:
-            logging.info(f"LLM DEBUG: processing triple ({subj}, {rel}, {obj})")
+            # logging.info(f"LLM DEBUG: processing triple ({subj}, {rel}, {obj})")
 
             # Use raw strings directly – node lookup will handle them
             subj_final, obj_final = subj, obj
@@ -909,7 +909,7 @@ class SentenceGraphBuilder:
 
             if edge:
                 added_edges.append(edge)
-                logging.info(f"LLM DEBUG: edge added: {edge}")
+                # logging.info(f"LLM DEBUG: edge added: {edge}")
             else:
                 logging.warning(
                     f"FS_DEBUG: edge NOT added: {source_node} --{edge_label}--> {dest_node}"
