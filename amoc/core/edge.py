@@ -93,7 +93,9 @@ class Edge:
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = False
         self.activation_role = None
-        self.active = False
+        # Keep active state based on visibility — no nuclear reset
+        if self.visibility_score <= 0:
+            self.active = False
 
     def reduce_visibility(self) -> None:
         if self.visibility_score > 0:

@@ -22,6 +22,11 @@ class Graph:
         self._current_sentence_idx: int = 0
         self._current_sentence_lemmas: Optional[Set[str]] = None
 
+        # Alias registry: maps a lemma to the canonical lemma list it should
+        # resolve to, e.g. {"king": ["charlemagne"]}. Populated during
+        # coreference / appositive detection.
+        self._node_aliases: dict[str, List[str]] = {}
+
         self._activation_ops = NodeActivationEngine(self)
         self._stability_ops = ConnectivityRepair(self)
         self._provenance_ops = NodeValidation(self)
@@ -101,7 +106,19 @@ class Graph:
         for node in self.nodes:
             if node.lemmas == lemmas:
                 return node
+        # Check alias registry: if the primary lemma is an alias, look up
+        # the canonical node instead.
+        primary = lemmas[0] if lemmas else ""
+        canonical = self._node_aliases.get(primary)
+        if canonical is not None:
+            for node in self.nodes:
+                if node.lemmas == canonical:
+                    return node
         return None
+
+    def register_alias(self, alias_lemma: str, canonical_lemmas: List[str]) -> None:
+        """Register that alias_lemma should resolve to the node with canonical_lemmas."""
+        self._node_aliases[alias_lemma.lower()] = [l.lower() for l in canonical_lemmas]
 
     def add_edge(
         self,

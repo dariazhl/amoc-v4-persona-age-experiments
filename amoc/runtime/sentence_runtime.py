@@ -123,25 +123,38 @@ class SentenceRuntime:
         story_lemma_set = {t.lemma_.lower() for t in doc if t.is_alpha}
         resolved_sentences: List[Tuple["Span", str, str]] = []
 
-        for orig_sent in doc.sents:
-            resolved_text = orig_sent.text
-            if replace_pronouns and resolve_pronouns_fn:
-                candidate = resolve_pronouns_fn(orig_sent.text)
-                if isinstance(candidate, str) and candidate.strip():
-                    resolved_text = self.clean_resolved_sentence(
-                        orig_sent.text, candidate
-                    )
-            if resolved_text and resolved_text.strip().startswith("{"):
-                logging.error(
-                    "LLM JSON contamination detected — reverting to original sentence."
+        # Resolve pronouns on the full story text so cross-sentence
+        # references (e.g. "He" → "Charlemagne") are captured.
+        resolved_story_text = story_text
+        if replace_pronouns and resolve_pronouns_fn:
+            candidate = resolve_pronouns_fn(story_text)
+            if isinstance(candidate, str) and candidate.strip():
+                resolved_story_text = self.clean_resolved_sentence(
+                    story_text, candidate
                 )
-                resolved_text = orig_sent.text
-            resolved_doc = self._spacy_nlp(resolved_text)
-            if not resolved_doc:
-                resolved_text = orig_sent.text
-                resolved_doc = self._spacy_nlp(resolved_text)
+            if resolved_story_text.strip().startswith("{"):
+                logging.error(
+                    "LLM JSON contamination detected — reverting to original text."
+                )
+                resolved_story_text = story_text
 
-            resolved_span = resolved_doc[0 : len(resolved_doc)]
+        # Split both original and resolved into sentences, then pair by index.
+        resolved_doc = self._spacy_nlp(resolved_story_text)
+        orig_sents = list(doc.sents)
+        resolved_sents = list(resolved_doc.sents)
+
+        for idx, orig_sent in enumerate(orig_sents):
+            if idx < len(resolved_sents):
+                resolved_text = resolved_sents[idx].text
+            else:
+                resolved_text = orig_sent.text
+
+            res_doc = self._spacy_nlp(resolved_text)
+            if not res_doc:
+                resolved_text = orig_sent.text
+                res_doc = self._spacy_nlp(resolved_text)
+
+            resolved_span = res_doc[0 : len(res_doc)]
             if resolved_text.lower().startswith(("user", "assistant", "system")):
                 continue
             resolved_sentences.append((resolved_span, resolved_text, orig_sent.text))

@@ -26,11 +26,37 @@ class TextNormalizer:
         cleaned = label.strip()
         if not cleaned:
             return ""
+
         # Basic cleanup: remove "(edge)" if present, lowercase, replace spaces with underscores
         cleaned = re.sub(r"\s*\(edge\)\s*", "", cleaned)
         cleaned = cleaned.lower().replace(" ", "_")
         # Remove any non‑alphanumeric characters except underscore
         cleaned = re.sub(r"[^\w]", "", cleaned)
+
+        # Normalization mapping for common variants
+        normalization_map = {
+            "is_type_of": "is",
+            "is_kind_of": "is",
+            "is_sort_of": "is",
+            "is_variant_of": "is",
+            "is_form_of": "is",
+            "is_example_of": "is",
+            "is_instance_of": "is",
+            "is_subtype_of": "is",
+            "is_a": "is",
+            "is_an": "is",
+            "has_type": "has",
+            "has_kind": "has",
+            "possesses": "has",
+            "owns": "has",
+        }
+
+        # Apply mapping if exact match found
+        if cleaned in normalization_map:
+            original = cleaned
+            cleaned = normalization_map[cleaned]
+            # logging.info(f"Normalized edge label: '{original}' -> '{cleaned}'")
+
         return cleaned
 
     # verbs cannot become nodes

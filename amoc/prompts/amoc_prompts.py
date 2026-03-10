@@ -498,18 +498,20 @@ Current sentence:
 Here are the active relationships in the reader's memory:
 {active_triplets}
 
-For each relationship, assign a **importance score** from 1-5:
-5 = Essential for understanding the plot or characters
-4 = Helpful context that adds meaningful detail
-3 = Somewhat relevant but not crucial
-2 = Minor detail that doesn't affect understanding
-1 = Generic, vague, or redundant
+For each relationship, assign a relevance score from 1-5 using these definitions:
+
+1 = COMPLETELY IRRELEVANT - Has no connection to current narrative, could be removed
+2 = MINOR DETAIL - Tangentially related, can decay naturally
+3 = SOMEWHAT RELEVANT - Provides context but not central
+4 = IMPORTANT - Adds meaningful context to current events
+5 = ESSENTIAL - Critical for understanding the current narrative
 
 IMPORTANT GUIDELINES:
 - Relationships involving main characters (Charlemagne, his family, kingdoms, etc.) should generally score 4-5
 - Generic relations like "relates to", "is associated with" should score lower (1-2) unless they carry specific meaning
 - Vague placeholders ("thing", "certain", "good") used as subjects or objects lower the score
 - A relationship that connects an isolated node to the main graph is valuable even if the relation itself is generic
+- Inferred relationships that bridge concepts should be preserved
 - **Do NOT** suggest removing a relationship if it's the only connection between a node and the rest of the graph
 
 Return a JSON object mapping each triple to its score:

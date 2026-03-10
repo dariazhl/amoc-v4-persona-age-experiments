@@ -582,7 +582,7 @@ class GraphPlotter:
         if paper_dir:
             os.makedirs(paper_dir, exist_ok=True)
 
-        # Get all nodes from all_triplets (for node display)
+        # Derive node sets
         all_nodes: set = set()
         for s, _, o in all_triplets:
             all_nodes.add(s)
@@ -590,7 +590,6 @@ class GraphPlotter:
         inactive_nodes = sorted(all_nodes - active_node_names)
         carryover_nodes = sorted(active_node_names - set(explicit_node_names))
 
-        # ever_explicit = all text-derived nodes that were ever marked explicit
         ever_explicit = sorted(
             {
                 n.get_text_representer()
@@ -612,9 +611,21 @@ class GraphPlotter:
 
         age_val = self._persona_age if self._persona_age is not None else -1
 
+        # Build active_edges set so the renderer can distinguish active vs faded
+        active_edge_set = set()
+        for s, r, o in active_triplets:
+            active_edge_set.add((s, o))
+
+        # Edge scores for opacity/width variation (visibility_score per edge)
+        edge_scores = (
+            self._get_edge_activation_scores_fn()
+            if self._get_edge_activation_scores_fn
+            else {}
+        )
+
         try:
             saved_path = plot_amoc_triplets(
-                triplets=active_triplets,
+                triplets=all_triplets,
                 persona=self._persona,
                 model_name=self._model_name,
                 age=age_val,
@@ -628,6 +639,8 @@ class GraphPlotter:
                 salient_nodes=carryover_nodes,
                 inactive_nodes=inactive_nodes,
                 positions=self._viz_positions,
+                active_edges=active_edge_set,
+                edge_activation_scores=edge_scores,
                 layout_from_active_only=True,
                 show_triplet_overlay=False,
                 layout_depth=self._layout_depth,

@@ -49,6 +49,182 @@ class Decay:
                     edge.visibility_score = 0
                     edge.active = False
 
+    def apply_semantic_edge_decay(self) -> None:
+        # Get all active edges that are candidates for decay
+        decay_candidates = []
+        candidate_strings = []
+        edge_to_triplet = {}
+
+        for edge in self._graph.edges:
+            if edge.created_at_sentence == self._current_sentence_index:
+                continue
+            if edge.asserted_this_sentence or edge.reactivated_this_sentence:
+                continue
+
+            # Format for LLM
+            triplet = f"({edge.source_node.get_text_representer()}, {edge.label}, {edge.dest_node.get_text_representer()})"
+            candidate_strings.append(triplet)
+            decay_candidates.append(edge)
+            edge_to_triplet[edge] = triplet
+
+        if not decay_candidates:
+            return
+
+        # Build story context (last few sentences)
+        story_context = self._get_story_context()
+
+        # Get current sentence text
+        current_sentence = self._current_sentence_text
+
+        # Call LLM to evaluate narrative relevance
+        result = self._llm.check_narrative_relevance(
+            story_context=story_context,
+            current_sentence=current_sentence,
+            active_triplets="\n".join(candidate_strings),
+            persona=self._persona,
+        )
+
+        if not result or "scores" not in result:
+            # Fallback to simple decay
+            self._apply_fallback_decay(decay_candidates)
+            return
+
+        # Get both scores and to_remove list from LLM response
+        scores = result.get("scores", {})
+        to_remove_set = set(result.get("to_remove", []))
+        reasoning = result.get("reasoning", "")
+
+        logging.info(f"SEMANTIC_DECAY: LLM reasoning: {reasoning}")
+
+        # First pass: build connectivity map to check critical edges
+        connectivity_map = self._build_connectivity_map()
+
+        for edge in decay_candidates:
+            triplet_str = edge_to_triplet[edge]
+            score = scores.get(triplet_str, 2)  # Default to middle score
+
+            # Check if LLM explicitly marked for removal
+            if triplet_str in to_remove_set or score == 1:
+                # Score 1 or in to_remove: Remove if it won't break connectivity
+                if self._can_remove_edge(edge, connectivity_map):
+                    edge.active = False
+                    edge.visibility_score = 0
+                    logging.info(
+                        f"SEMANTIC_DECAY: Removed irrelevant edge {triplet_str}"
+                    )
+                else:
+                    # Keep but decay normally (connectivity critical)
+                    edge.reduce_visibility()
+                    logging.info(
+                        f"SEMANTIC_DECAY: Kept connectivity-critical edge {triplet_str} (would break graph)"
+                    )
+
+            elif score == 2:
+                # Score 2: Normal decay
+                edge.reduce_visibility()
+                if edge.visibility_score <= 0:
+                    edge.visibility_score = 0
+                    edge.active = False
+                logging.info(f"SEMANTIC_DECAY: Decayed edge {triplet_str} (score=2)")
+
+            elif score >= 3:
+                # Score 3-5: Reactivate to full visibility
+                # Reset to max visibility (paper behavior)
+                edge.visibility_score = self._edge_visibility
+                edge.mark_as_reactivated(reset_score=False)
+                logging.info(
+                    f"SEMANTIC_DECAY: Reactivated edge {triplet_str} to full visibility (score={score})"
+                )
+
+                # Additional boost for highly relevant inferred edges
+                has_inferred = (
+                    edge.source_node.node_source == NodeSource.INFERENCE_BASED
+                    or edge.dest_node.node_source == NodeSource.INFERENCE_BASED
+                )
+
+                if has_inferred and score >= 4:
+                    boost_amount = self._calculate_inference_boost(edge)
+                    edge.visibility_score = min(edge.visibility_score + boost_amount, 5)
+                    logging.info(
+                        f"SEMANTIC_DECAY: Boosted inferred edge {triplet_str} (score={score}, boost={boost_amount})"
+                    )
+
+            else:
+                # Fallback for any other values
+                edge.reduce_visibility()
+                logging.info(
+                    f"SEMANTIC_DECAY: Fallback decay for edge {triplet_str} (unexpected score={score})"
+                )
+
+    def _build_connectivity_map(self) -> Dict["Node", Set["Node"]]:
+        connectivity = {}
+        for edge in self._graph.edges:
+            if edge.active:
+                connectivity.setdefault(edge.source_node, set()).add(edge.dest_node)
+                connectivity.setdefault(edge.dest_node, set()).add(edge.source_node)
+        return connectivity
+
+    def _can_remove_edge(self, edge, connectivity_map) -> bool:
+        source = edge.source_node
+        dest = edge.dest_node
+
+        # If either node has multiple connections, safe to remove
+        if (
+            len(connectivity_map.get(source, set())) > 1
+            and len(connectivity_map.get(dest, set())) > 1
+        ):
+            return True
+
+        # If this is the only connection for either node, check if there's an alternative path
+        if (
+            len(connectivity_map.get(source, set())) == 1
+            or len(connectivity_map.get(dest, set())) == 1
+        ):
+
+            # Temporarily remove edge and check if still connected
+            # This is a simplified check - you might want to use BFS
+            source_has_other = len(connectivity_map.get(source, set()) - {dest}) > 0
+            dest_has_other = len(connectivity_map.get(dest, set()) - {source}) > 0
+
+            return source_has_other and dest_has_other
+
+        return False
+
+    def _calculate_inference_boost(self, edge) -> int:
+        boost = 1  # Base boost
+
+        source_inferred = edge.source_node.node_source == NodeSource.INFERENCE_BASED
+        dest_inferred = edge.dest_node.node_source == NodeSource.INFERENCE_BASED
+
+        if source_inferred and dest_inferred:
+            # Both ends inferred - multi-hop chain
+            boost += 1
+
+        # Check if this edge connects an inferred node to a hub
+        hub_nodes = self._identify_hub_nodes()
+        if (source_inferred and edge.dest_node in hub_nodes) or (
+            dest_inferred and edge.source_node in hub_nodes
+        ):
+            boost += 1
+
+        return boost
+
+    def _identify_hub_nodes(self) -> Set:
+        hubs = set()
+        for node in self._graph.nodes:
+            if node.node_source == NodeSource.TEXT_BASED:
+                degree = len([e for e in node.edges if e.active])
+                if degree >= 3:  # Threshold for hub
+                    hubs.add(node)
+        return hubs
+
+    def _apply_fallback_decay(self, edges):
+        for edge in edges:
+            edge.reduce_visibility()
+            if edge.visibility_score <= 0:
+                edge.visibility_score = 0
+                edge.active = False
+
     def reactivate_relevant_edges(
         self,
         active_nodes: List["Node"],
@@ -119,8 +295,7 @@ class Decay:
                     edge.is_asserted() or edge.is_reactivated()
                 ):
                     self._record_edge_fn(edge, self._current_sentence_index)
-            else:
-                edge.reduce_visibility()
+            # No decay here — apply_global_edge_decay handles it
 
     def get_fallback_edges(
         self,
@@ -183,8 +358,7 @@ class Decay:
                     edge.is_asserted() or edge.is_reactivated()
                 ):
                     self._record_edge_fn(edge, self._current_sentence_index)
-            else:
-                edge.reduce_visibility()
+            # No decay here — apply_global_edge_decay handles it
 
     def propagate_activation_from_edges(self) -> None:
         pass

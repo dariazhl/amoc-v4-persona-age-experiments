@@ -110,9 +110,10 @@ def canonicalize_edge_label(nlp, label: str) -> str:
         aux_lemmas = {aux.lemma_.lower() for aux in auxiliaries}
         if aux_lemmas & COPULA_VERBS:
             return ""
-
+    # add ADV and PREP to verb ie. rode => rode through
     if main_verb:
-        base = verb_to_present_tense(main_verb.lemma_.lower())
+        # base = verb_to_present_tense(main_verb.lemma_.lower())
+        base = main_verb.lemma_.lower()
         parts = [base] + preps
         result = "_".join(parts)
         result_doc = nlp(result.replace("_", " "))
