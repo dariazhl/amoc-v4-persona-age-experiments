@@ -1,3 +1,4 @@
+import logging
 from typing import TYPE_CHECKING, Set, Dict, List, Tuple, Optional
 from collections import deque
 from amoc.core.node import NodeType, NodeSource
@@ -47,8 +48,16 @@ class NodeActivationEngine:
         return active_nodes, active_edges
 
     def deactivate_all_edges(self):
+        active_before = sum(1 for e in self._graph.edges if e.active)
         for edge in self._graph.edges:
             edge.reset_for_sentence_start()
+        active_after = sum(1 for e in self._graph.edges if e.active)
+        logging.info(
+            f"RESET_DEBUG: deactivate_all_edges | "
+            f"active before: {active_before} | "
+            f"active after: {active_after} | "
+            f"total edges: {len(self._graph.edges)}"
+        )
 
     # Old code: reactivate edges connected to explicit nodes
     # Expand to neighbors within distance, prioritizing closer ones, up to a max count

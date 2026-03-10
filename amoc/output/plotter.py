@@ -244,6 +244,10 @@ class GraphPlotter:
         property_nodes: Optional[List[str]] = None,
     ) -> None:
 
+        logging.info(
+            f"INACTIVE_TRACK: In plot_graph_snapshot_full, mode={mode}, inactive_nodes={inactive_nodes}"
+        )
+
         sentence_text_lower = (sentence_text or "").lower().strip()
         for pattern in self.PROMPT_CONTAMINATION_PATTERNS:
             if sentence_text_lower.startswith(pattern):
@@ -378,12 +382,16 @@ class GraphPlotter:
                 f"PLOT_DEBUG: Sample triplets: {triplets[:3] if triplets else 'None'}"
             )
 
-            # SAFE FILTERING: Only plot triplets where both endpoints are active
-            triplets_for_plot = [
-                (s, r, o)
-                for (s, r, o) in triplets
-                if s in active_node_names and o in active_node_names
-            ]
+            # SAFE FILTERING: Only filter to active nodes for active plots
+            # Cumulative plots show ALL edges (active + inactive)
+            if mode == "sentence_cumulative":
+                triplets_for_plot = triplets
+            else:
+                triplets_for_plot = [
+                    (s, r, o)
+                    for (s, r, o) in triplets
+                    if s in active_node_names and o in active_node_names
+                ]
 
             # Get edge activation scores
             edge_activation_scores = (
@@ -455,6 +463,9 @@ class GraphPlotter:
         explicit_nodes_current_sentence: Set["Node"],
         reconstruct_semantic_triplets_fn: callable,
     ) -> None:
+        logging.info(
+            f"INACTIVE_TRACK: At plot_sentence_views start, inactive={inactive_nodes_for_plot}"
+        )
         # Active view - use per-sentence view
         if per_sentence_view is not None:
             active_nodes = set(per_sentence_view.explicit_nodes) | set(
@@ -480,6 +491,21 @@ class GraphPlotter:
             ]
         else:
             active_triplets = reconstruct_semantic_triplets_fn(only_active=True)
+
+        # Compare per_sentence_view edges with graph state for divergence detection
+        if per_sentence_view is not None:
+            graph_active_count = sum(1 for e in self._graph.edges if e.active)
+            view_edge_count = len(per_sentence_view.active_edges)
+            if view_edge_count > 0 and graph_active_count == 0:
+                logging.error(
+                    f"DIVERGENCE_BUG: per_sentence_view has {view_edge_count} active edges "
+                    f"but graph has 0 active edges! Graph ID: {id(self._graph)}"
+                )
+            logging.info(
+                f"VIEW_VS_GRAPH: view_active_edges={view_edge_count} | "
+                f"graph_active_edges={graph_active_count} | "
+                f"active_triplets_from_view={len(active_triplets)}"
+            )
 
         # PROJECTION CONTINUITY + EXPLICIT FALLBACK
         if not active_triplets and explicit_nodes_for_plot:
@@ -533,7 +559,7 @@ class GraphPlotter:
             property_nodes=property_nodes_for_plot,
         )
 
-        # Plot cumulative view — include ALL edges (active + inactive)
+        # Plot cumulative view — ACTIVE edges only, ALL nodes
         snapshot_edges = [e for e in self._graph.edges if e.active]
         cumulative_active_pairs = {
             (
@@ -563,27 +589,31 @@ class GraphPlotter:
         )
 
     # Paper-style plot: Figures 3, 5, 6, 7
+    # Paper-style plot: Figures 2-6 (cumulative view with inactive nodes)
     def plot_paper_graph_style(
         self,
         sentence_index: int,
         sentence_text: str,
         output_dir: Optional[str],
         highlight_nodes: Optional[Iterable[str]],
-        active_triplets: List[Tuple[str, str, str]],  # Only active triplets
+        all_triplets: List[Tuple[str, str, str]],  # ALL triplets (active + inactive)
+        active_triplets: List[
+            Tuple[str, str, str]
+        ],  # Active triplets for edge highlighting
         active_node_names: set,
         inferred_node_names: set,
         explicit_node_names: List[str],
     ) -> Optional[str]:
-        if not active_triplets:
+        if not all_triplets:  # Need at least some triplets to show
             return None
 
         paper_dir = os.path.join(output_dir, "amoc_paper") if output_dir else None
         if paper_dir:
             os.makedirs(paper_dir, exist_ok=True)
 
-        # Derive node sets from active_triplets only
+        # Get ALL nodes from all_triplets (includes inactive nodes)
         all_nodes: set = set()
-        for s, _, o in active_triplets:
+        for s, _, o in all_triplets:
             if s:
                 all_nodes.add(s)
             if o:
@@ -601,7 +631,7 @@ class GraphPlotter:
             }
         )
 
-        # Assign positions for any new nodes
+        # Assign positions for any new nodes (using all_nodes)
         for node_text in all_nodes:
             if node_text not in self._viz_positions:
                 idx = len(self._viz_positions)
@@ -629,7 +659,7 @@ class GraphPlotter:
 
         try:
             saved_path = plot_amoc_triplets(
-                triplets=active_triplets,
+                triplets=all_triplets,  # Show ALL triplets (active + inactive edges)
                 persona=self._persona,
                 model_name=self._model_name,
                 age=age_val,
@@ -641,11 +671,11 @@ class GraphPlotter:
                 ever_explicit_nodes=ever_explicit,
                 inferred_nodes=sorted(inferred_node_names),
                 salient_nodes=carryover_nodes,
-                inactive_nodes=[],  # No inactive nodes shown in paper plots
+                inactive_nodes=sorted(all_nodes - active_node_names),
                 positions=self._viz_positions,
-                active_edges=active_edge_set,
+                active_edges=active_edge_set,  # Highlight active edges
                 edge_activation_scores=edge_scores,
-                layout_from_active_only=True,
+                layout_from_active_only=False,  # Layout based on all nodes
                 show_triplet_overlay=False,
                 layout_depth=self._layout_depth,
             )

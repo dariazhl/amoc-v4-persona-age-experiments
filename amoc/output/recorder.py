@@ -93,13 +93,7 @@ class TripletRecorder:
         restrict_nodes: Optional[Set["Node"]] = None,
     ) -> List[Tuple[str, str, str]]:
         triplets = []
-        logging.info(
-            f"TRIPLET_DEBUG: only_active={only_active}, total edges={len(self._graph.edges)}"
-        )
         for edge in self._graph.edges:
-            logging.info(
-                f"TRIPLET_DEBUG: Edge: active={edge.active}, vis={edge.visibility_score}, label='{edge.label}'"
-            )
             if only_active and not edge.active:
                 continue
             # Skip empty labels
@@ -114,7 +108,6 @@ class TripletRecorder:
                     edge.source_node not in restrict_nodes
                     or edge.dest_node not in restrict_nodes
                 ):
-                    logging.info(f"TRIPLET_DEBUG: Edge skipped: node restriction")
                     continue
 
             triplets.append(

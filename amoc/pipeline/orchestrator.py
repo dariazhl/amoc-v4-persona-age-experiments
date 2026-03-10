@@ -557,6 +557,14 @@ class AMoCv4:
     ) -> None:
         logging.error("Sentence invalid — reverting to previous state.")
 
+        logging.warning(
+            f"ROLLBACK_OCCURRED: At sentence {i+1} | "
+            f"Before rollback: {len(self.graph.nodes)} nodes | "
+            f"Restoring to: {len(previous_graph_state.nodes)} nodes | "
+            f"Old graph ID: {id(self.graph)} | "
+            f"New graph ID: {id(previous_graph_state)}"
+        )
+
         # Restore state first
         self.graph = previous_graph_state
         self.rebind_ops_graph_refs()
@@ -657,7 +665,10 @@ class AMoCv4:
         graphs_output_dir: Optional[str],
         highlight_nodes: Optional[Iterable[str]],
     ) -> None:
-        # Paper plot shows only working memory (active edges/nodes)
+        # Paper plot: all edges for layout, active edges highlighted
+        all_triplets = self._triplet_ops.reconstruct_semantic_triplets(
+            only_active=False
+        )
         active_triplets = self._triplet_ops.reconstruct_semantic_triplets(
             only_active=True
         )
@@ -683,6 +694,7 @@ class AMoCv4:
             sentence_text=original_text,
             output_dir=graphs_output_dir,
             highlight_nodes=highlight_nodes,
+            all_triplets=all_triplets,
             active_triplets=active_triplets,
             active_node_names=active_node_names,
             inferred_node_names=inferred_node_names,
@@ -727,6 +739,13 @@ class AMoCv4:
             self.active_graph.reset()
             self._current_sentence_index = sentence_counter
 
+            logging.info(
+                f"NODE_TRACKER: Before sentence {sentence_counter} | "
+                f"Total nodes: {len(self.graph.nodes)} | "
+                f"Total edges: {len(self.graph.edges)} | "
+                f"Graph ID: {id(self.graph)}"
+            )
+
             self._sentence_ops.configure_graph_for_sentence(
                 self._current_sentence_index,
                 self._sentence_ops.extract_sentence_lemmas(original_text),
@@ -747,6 +766,13 @@ class AMoCv4:
             )
             if should_skip_sentence:
                 continue
+
+            logging.info(
+                f"NODE_TRACKER: After processing sentence {sentence_counter} | "
+                f"Total nodes: {len(self.graph.nodes)} | "
+                f"Active edges: {sum(1 for e in self.graph.edges if e.active)} | "
+                f"Graph ID: {id(self.graph)}"
+            )
 
             sentence_id = i + 1
             newly_inferred_nodes = (
@@ -795,7 +821,10 @@ class AMoCv4:
                 sentence_id, i, newly_inferred_nodes, self._per_sentence_view
             )
 
+            logging.info(f"INACTIVE_TRACK: After update_post_projection, inactive={inactive_nodes_for_plot}")
+
             if plot_after_each_sentence:
+                logging.info(f"INACTIVE_TRACK: Before plot wrapper, inactive={inactive_nodes_for_plot}")
                 self.plot_sentence_views_wrapper(
                     i,
                     original_text,

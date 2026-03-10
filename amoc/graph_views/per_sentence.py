@@ -137,11 +137,17 @@ class PerSentenceGraphBuilder:
         reachable_nodes = set(distances.keys()) - self._explicit_nodes
 
         # Carryover = all reachable nodes explicit + inferred
-        self._carryover_nodes = reachable_nodes
+        self._carryover_nodes = {
+            node
+            for node in reachable_nodes
+            if any(e.active and e.visibility_score > 0 for e in node.edges)
+        }
 
-        for node in reachable_nodes:
+        # Log nodes that were reachable but excluded aka. "deed"
+        excluded = reachable_nodes - self._carryover_nodes
+        for node in excluded:
             logging.info(
-                f"CARRYOVER: {node.get_text_representer()} (explicit={node.ever_explicit})"
+                f"CARRYOVER_EXCLUDED: {node.get_text_representer()} reachable but has no active edges"
             )
 
         return self

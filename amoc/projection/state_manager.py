@@ -30,6 +30,7 @@ class ProjectionStateManager:
         self.record_activation_matrix_wrapper_fn = record_sentence_activation_fn
 
     def reset_state(self):
+        logging.warning("STATE_RESET: _cumulative_deactivated_nodes_for_plot cleared")
         self._prev_active_nodes_for_plot = set()
         self._cumulative_deactivated_nodes_for_plot = set()
         self._recently_deactivated_nodes_for_inference = set()
@@ -123,6 +124,22 @@ class ProjectionStateManager:
 
             active_nodes = set(explicit_nodes_for_plot) | set(salient_nodes_for_plot)
             inactive_nodes_for_plot = sorted(all_nodes - active_nodes)
+
+            logging.info(
+                f"INACTIVE_DEBUG: sentence {sentence_id} | "
+                f"all_nodes={len(all_nodes)} | "
+                f"active_nodes={len(active_nodes)} | "
+                f"inactive={len(inactive_nodes_for_plot)} | "
+                f"graph.nodes={len(self.graph.nodes)} | "
+                f"explicit={len(list(per_sentence_view.explicit_nodes))} | "
+                f"carryover={len(list(per_sentence_view.carryover_nodes))}"
+            )
+            if len(inactive_nodes_for_plot) == 0 and len(all_nodes) > len(active_nodes):
+                logging.warning(
+                    f"INACTIVE_DEBUG: EMPTY inactive list! "
+                    f"all_nodes={sorted(all_nodes)} | "
+                    f"active_nodes={sorted(active_nodes)}"
+                )
 
         else:
             explicit_nodes_for_plot = []
