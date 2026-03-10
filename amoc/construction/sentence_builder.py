@@ -741,50 +741,50 @@ class SentenceGraphBuilder:
         return None
 
     # Check if a triple is narratively relevant to the story using LLM only
-    def check_narrative_relevance(self, active_triplets, prev_sentences):
-        if len(active_triplets) <= 3:
-            return active_triplets
+    # def check_narrative_relevance(self, active_triplets, prev_sentences):
+    #     if len(active_triplets) <= 3:
+    #         return active_triplets
 
-        # Format triplets for the prompt
-        triplet_strings = [f"({s}, {r}, {o})" for s, r, o in active_triplets]
+    #     # Format triplets for the prompt
+    #     triplet_strings = [f"({s}, {r}, {o})" for s, r, o in active_triplets]
 
-        # Get story context from last 3 sent
-        story_context = " ".join(prev_sentences[-3:]) if prev_sentences else ""
+    #     # Get story context from last 3 sent
+    #     story_context = " ".join(prev_sentences[-3:]) if prev_sentences else ""
 
-        result = self.llm.check_narrative_relevance(
-            story_context=story_context,
-            current_sentence=self._current_sentence_text,
-            active_triplets="\n".join(triplet_strings),
-            persona=self.persona,
-        )
+    #     result = self.llm.check_narrative_relevance(
+    #         story_context=story_context,
+    #         current_sentence=self._current_sentence_text,
+    #         active_triplets="\n".join(triplet_strings),
+    #         persona=self.persona,
+    #     )
 
-        if not result or "to_remove" not in result:
-            return active_triplets
+    #     if not result or "to_remove" not in result:
+    #         return active_triplets
 
-        # Build connectivity map before removing
-        node_connections = {}
-        for s, r, o in active_triplets:
-            node_connections[s] = node_connections.get(s, 0) + 1
-            node_connections[o] = node_connections.get(o, 0) + 1
+    #     # Build connectivity map before removing
+    #     node_connections = {}
+    #     for s, r, o in active_triplets:
+    #         node_connections[s] = node_connections.get(s, 0) + 1
+    #         node_connections[o] = node_connections.get(o, 0) + 1
 
-        # Only remove edges that won't isolate nodes
-        to_keep = []
-        removal_set = set(result["to_remove"])
+    #     # Only remove edges that won't isolate nodes
+    #     to_keep = []
+    #     removal_set = set(result["to_remove"])
 
-        for triplet in active_triplets:
-            triplet_str = f"({triplet[0]}, {triplet[1]}, {triplet[2]})"
-            if triplet_str in removal_set:
-                s, r, o = triplet
-                # Check if removing would isolate a node
-                if node_connections.get(s, 0) <= 1 or node_connections.get(o, 0) <= 1:
-                    to_keep.append(triplet)
-                    # logging.info(f"Keeping connectivity-critical edge: {triplet}")
-                # else:
-                #     logging.info(f"Pruning low-importance edge: {triplet}")
-            else:
-                to_keep.append(triplet)
+    #     for triplet in active_triplets:
+    #         triplet_str = f"({triplet[0]}, {triplet[1]}, {triplet[2]})"
+    #         if triplet_str in removal_set:
+    #             s, r, o = triplet
+    #             # Check if removing would isolate a node
+    #             if node_connections.get(s, 0) <= 1 or node_connections.get(o, 0) <= 1:
+    #                 to_keep.append(triplet)
+    #                 # logging.info(f"Keeping connectivity-critical edge: {triplet}")
+    #             # else:
+    #             #     logging.info(f"Pruning low-importance edge: {triplet}")
+    #         else:
+    #             to_keep.append(triplet)
 
-        return to_keep
+    #     return to_keep
 
     # Take the raw list of triples returned by the LLM, process them and add edges to graph
     def add_edges_from_llm(
@@ -1048,7 +1048,7 @@ class SentenceGraphBuilder:
         self,
         explicit_nodes: set,
         carryover_nodes: set,
-        apply_global_edge_decay_fn: callable,
+        apply_edge_decay_fn: callable,
     ) -> None:
-        apply_global_edge_decay_fn()
+        apply_edge_decay_fn()
         self.graph.stabilize_cumulative_graph_wrapper(set(explicit_nodes))

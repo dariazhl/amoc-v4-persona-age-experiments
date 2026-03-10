@@ -135,6 +135,7 @@ def wire_core_dependencies(core) -> None:
         graph_ref=core.graph,
         llm_extractor=core.client,
         get_explicit_nodes=core._get_explicit_nodes,
+        get_story_context=lambda: getattr(core._sentence_processing_ops, "_story_context", ""),
         max_distance=core.max_distance_from_active_nodes,
         edge_visibility=core.edge_visibility,
         nr_relevant_edges=core.nr_relevant_edges,
@@ -151,6 +152,7 @@ def wire_core_dependencies(core) -> None:
             cumulative_graph_builder=core.cumulative_graph_builder,
             active_graph_builder=core.active_graph_builder,
         ),
+        persona=core.persona,
     )
     core._output_ops = OutputFinalizer(
         graph_ref=core.graph,

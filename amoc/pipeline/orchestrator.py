@@ -431,7 +431,7 @@ class AMoCv4:
                 self._sentence_processing_ops.run_post_processing(
                     explicit_nodes=self._explicit_nodes_current_sentence,
                     carryover_nodes=self._carryover_nodes_current_sentence,
-                    apply_global_edge_decay_fn=lambda: self._activation_ops.apply_global_edge_decay(),
+                    apply_edge_decay_fn=lambda: self._activation_ops.apply_semantic_edge_decay(),
                 )
 
         return result
@@ -885,7 +885,9 @@ class AMoCv4:
         prev_sentences_text: str,
         newly_added_edges: List[Edge],
     ) -> None:
-        self._activation_ops.set_decay_sentence_context(self._current_sentence_index)
+        self._activation_ops.set_decay_sentence_context(
+            idx=self._current_sentence_index, text=self._current_sentence_text
+        )
         self._activation_ops.reactivate_relevant_edges(
             active_nodes=active_nodes,
             prev_sentences_text=prev_sentences_text,

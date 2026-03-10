@@ -481,6 +481,7 @@ Input: (man, wrote, thing)
 Output: {{"valid": true, "reason": "The sentence says 'man wrote most of the things'", "corrected_triple": null}}
 """
 
+# Simplified with 1-3 scale
 NARRATIVE_RELEVANCE_PROMPT = """You are helping to maintain a clean knowledge graph of a story. Your task is to identify which relationships are **least important** and could be removed without harming the reader's understanding.
 
 Story so far:
@@ -492,32 +493,27 @@ Current sentence:
 Here are the active relationships in the reader's memory:
 {active_triplets}
 
-For each relationship, assign a relevance score from 1-5 using these definitions:
+For each relationship, assign a relevance score from 1-3 using these definitions:
 
-1 = COMPLETELY IRRELEVANT - Has no connection to current narrative, could be removed
-2 = MINOR DETAIL - Tangentially related, can decay naturally
-3 = SOMEWHAT RELEVANT - Provides context but not central
-4 = IMPORTANT - Adds meaningful context to current events
-5 = ESSENTIAL - Critical for understanding the current narrative
+1 = LOW RELEVANCE - Not important to current narrative, safe to remove if not structurally critical
+2 = MEDIUM RELEVANCE - Provides useful context but not essential
+3 = HIGH RELEVANCE - Important for understanding current events
 
 IMPORTANT GUIDELINES:
-- Relationships involving main characters (Charlemagne, his family, kingdoms, etc.) should generally score 4-5
-- Generic relations like "relates to", "is associated with" should score lower (1-2) unless they carry specific meaning
-- Vague placeholders ("thing", "certain", "good") used as subjects or objects lower the score
-- A relationship that connects an isolated node to the main graph is valuable even if the relation itself is generic
-- Inferred relationships that bridge concepts should be preserved
+- Relationships involving main characters (Charlemagne, his family, kingdoms, etc.) should generally score 3
+- Generic relations like "relates to", "is associated with" should score 1-2 unless they carry specific meaning
+- Vague placeholders ("thing", "certain", "good") as subjects or objects lower the score (generally 1)
 - **Do NOT** suggest removing a relationship if it's the only connection between a node and the rest of the graph
 
-Return a JSON object mapping each triple to its score:
+Return a JSON object with this exact structure:
 {{
     "scores": {{
-        "(subject1, relation1, object1)": 4,
-        "(subject2, relation2, object2)": 2,
+        "(subject1, relation1, object1)": 3,
+        "(subject2, relation2, object2)": 1,
         ...
     }},
-    "to_remove": ["(subject1, relation1, object1)", ...],
     "reasoning": "Brief explanation of pruning strategy"
 }}
 
-Only include in "to_remove" relationships that score 1-2 AND are not the sole connection for any node.
+The scores will be used to determine which edges decay (score 1) and which are reinforced (score 3).
 """

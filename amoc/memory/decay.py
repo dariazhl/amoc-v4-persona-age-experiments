@@ -4,7 +4,8 @@ from collections import deque
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
-    from amoc.core.node import Node, NodeSource
+    from amoc.core.node import Node
+    from amoc.core.node import NodeSource
     from amoc.core.edge import Edge
 
 
@@ -14,6 +15,7 @@ class Decay:
         graph_ref: "Graph",
         llm_extractor,
         get_explicit_nodes: callable,
+        get_story_context: callable,  # Added for semantic decay
         max_distance: int,
         edge_visibility: int,
         nr_relevant_edges: int,
@@ -22,24 +24,31 @@ class Decay:
         self._graph = graph_ref
         self._llm = llm_extractor
         self._get_explicit_nodes = get_explicit_nodes
+        self._get_story_context = get_story_context  # Store for semantic decay
         self._max_distance = max_distance
         self._edge_visibility = edge_visibility
         self._nr_relevant_edges = nr_relevant_edges
         self._strict_reactivate = strict_reactivate
         self._current_sentence_index = None
-        self._record_edge_fn = None
         self._current_sentence_text = None
         self._persona = None
+        self._record_edge_fn = None
 
     def set_decay_state_refs(
         self,
         anchor_nodes: Set["Node"],
         record_edge_fn: callable = None,
+        persona: str = None,  # Added persona parameter
     ):
         self._record_edge_fn = record_edge_fn
+        self._persona = persona  # Store persona for LLM calls
 
-    def set_decay_sentence_context(self, idx: int):
+    def set_decay_sentence_context(
+        self, idx: int, text: str = None
+    ):  # Added text parameter
         self._current_sentence_index = idx
+        if text:
+            self._current_sentence_text = text
 
     # global decay = fade edges that are never reinforced in cumulative graph
     def apply_global_edge_decay(self) -> None:
@@ -74,83 +83,98 @@ class Decay:
             return
 
         # Build story context (last few sentences)
-        story_context = self._get_story_context()
+        story_context = self._get_story_context() if self._get_story_context else ""
 
         # Get current sentence text
         current_sentence = self._current_sentence_text
 
+        if not current_sentence:
+            logging.warning("SEMANTIC_DECAY: No current sentence text, skipping")
+            self._apply_fallback_decay(decay_candidates)
+            return
+
         # Call LLM to evaluate narrative relevance
-        result = self._llm.check_narrative_relevance(
-            story_context=story_context,
-            current_sentence=current_sentence,
-            active_triplets="\n".join(candidate_strings),
-            persona=self._persona,
-        )
+        try:
+            result = self._llm.check_narrative_relevance(
+                story_context=story_context,
+                current_sentence=current_sentence,
+                active_triplets="\n".join(candidate_strings),
+                persona=self._persona,
+            )
+        except Exception as e:
+            logging.error(f"SEMANTIC_DECAY: LLM call failed: {e}")
+            self._apply_fallback_decay(decay_candidates)
+            return
 
         if not result or "scores" not in result:
             # Fallback to simple decay
             self._apply_fallback_decay(decay_candidates)
             return
 
-        # Get both scores and to_remove list from LLM response
+        # Get scores from LLM response
         scores = result.get("scores", {})
-        to_remove_set = set(result.get("to_remove", []))
         reasoning = result.get("reasoning", "")
 
-        logging.info(f"SEMANTIC_DECAY: LLM reasoning: {reasoning}")
+        if reasoning:
+            logging.info(f"SEMANTIC_DECAY: LLM reasoning: {reasoning}")
 
-        # First pass: build connectivity map to check critical edges
-        connectivity_map = self._build_connectivity_map()
+        # Build connectivity map to check critical edges
+        connectivity_map = self.build_connectivity_map()
+
+        # Track stats for logging
+        stats = {"reinforce": 0, "maintain": 0, "decay": 0, "protected": 0}
 
         for edge in decay_candidates:
             triplet_str = edge_to_triplet[edge]
-            score = scores.get(triplet_str, 2)  # Default to middle score
+            score = scores.get(triplet_str, 2)  # Default to maintain (2)
 
-            # Check if LLM explicitly marked for removal
-            if triplet_str in to_remove_set or score == 1:
-                # Score 1 or in to_remove: Remove if it won't break connectivity
-                if self._can_remove_edge(edge, connectivity_map):
-                    edge.active = False
-                    edge.visibility_score = 0
-                    logging.info(
-                        f"SEMANTIC_DECAY: Removed irrelevant edge {triplet_str}"
-                    )
-                else:
+            # Ensure score is within 1-3 range
+            try:
+                score = int(score)
+                if score < 1:
+                    score = 1
+                elif score > 3:
+                    score = 3
+            except:
+                score = 2
+
+            # Check if this edge is critical for connectivity
+            is_critical = not self.can_remove_edge(edge, connectivity_map)
+
+            if score == 1:  # LOW RELEVANCE - should decay
+                if is_critical:
                     # Keep but decay normally (connectivity critical)
                     edge.reduce_visibility()
+                    stats["protected"] += 1
                     logging.info(
                         f"SEMANTIC_DECAY: Kept connectivity-critical edge {triplet_str} (would break graph)"
                     )
+                else:
+                    # Safe to decay fully
+                    edge.reduce_visibility()
+                    if edge.visibility_score <= 0:
+                        edge.visibility_score = 0
+                        edge.active = False
+                    stats["decay"] += 1
+                    logging.info(
+                        f"SEMANTIC_DECAY: Decayed edge {triplet_str} (score=1)"
+                    )
 
-            elif score == 2:
-                # Score 2: Normal decay
-                edge.reduce_visibility()
-                if edge.visibility_score <= 0:
-                    edge.visibility_score = 0
-                    edge.active = False
-                logging.info(f"SEMANTIC_DECAY: Decayed edge {triplet_str} (score=2)")
+            elif score == 2:  # MEDIUM RELEVANCE - maintain
+                # Slight decay or maintain based on current visibility
+                if edge.visibility_score > self._edge_visibility:
+                    edge.reduce_visibility()
+                stats["maintain"] += 1
+                logging.info(f"SEMANTIC_DECAY: Maintained edge {triplet_str} (score=2)")
 
-            elif score >= 3:
-                # Score 3-5: Reactivate to full visibility
-                # Reset to max visibility (paper behavior)
+            elif score == 3:  # HIGH RELEVANCE - reinforce
+                # Reactivate to full visibility
                 edge.visibility_score = self._edge_visibility
                 edge.mark_as_reactivated(reset_score=False)
+                stats["reinforce"] += 1
                 logging.info(
-                    f"SEMANTIC_DECAY: Reactivated edge {triplet_str} to full visibility (score={score})"
+                    f"SEMANTIC_DECAY: Reactivated edge {triplet_str} to full visibility (score=3)"
                 )
-
-                # Additional boost for highly relevant inferred edges
-                has_inferred = (
-                    edge.source_node.node_source == NodeSource.INFERENCE_BASED
-                    or edge.dest_node.node_source == NodeSource.INFERENCE_BASED
-                )
-
-                if has_inferred and score >= 4:
-                    boost_amount = self._calculate_inference_boost(edge)
-                    edge.visibility_score = min(edge.visibility_score + boost_amount, 5)
-                    logging.info(
-                        f"SEMANTIC_DECAY: Boosted inferred edge {triplet_str} (score={score}, boost={boost_amount})"
-                    )
 
             else:
                 # Fallback for any other values
@@ -159,7 +183,13 @@ class Decay:
                     f"SEMANTIC_DECAY: Fallback decay for edge {triplet_str} (unexpected score={score})"
                 )
 
-    def _build_connectivity_map(self) -> Dict["Node", Set["Node"]]:
+        logging.info(
+            f"SEMANTIC_DECAY: Stats - Reinforce: {stats['reinforce']}, "
+            f"Maintain: {stats['maintain']}, Decay: {stats['decay']}, "
+            f"Protected: {stats['protected']}"
+        )
+
+    def build_connectivity_map(self) -> Dict["Node", Set["Node"]]:
         connectivity = {}
         for edge in self._graph.edges:
             if edge.active:
@@ -167,7 +197,7 @@ class Decay:
                 connectivity.setdefault(edge.dest_node, set()).add(edge.source_node)
         return connectivity
 
-    def _can_remove_edge(self, edge, connectivity_map) -> bool:
+    def can_remove_edge(self, edge, connectivity_map) -> bool:
         source = edge.source_node
         dest = edge.dest_node
 
@@ -193,33 +223,13 @@ class Decay:
 
         return False
 
-    def _calculate_inference_boost(self, edge) -> int:
-        boost = 1  # Base boost
+    def calculate_inference_boost(self, edge) -> int:
+        # deprecated
+        return 0
 
-        source_inferred = edge.source_node.node_source == NodeSource.INFERENCE_BASED
-        dest_inferred = edge.dest_node.node_source == NodeSource.INFERENCE_BASED
-
-        if source_inferred and dest_inferred:
-            # Both ends inferred - multi-hop chain
-            boost += 1
-
-        # Check if this edge connects an inferred node to a hub
-        hub_nodes = self._identify_hub_nodes()
-        if (source_inferred and edge.dest_node in hub_nodes) or (
-            dest_inferred and edge.source_node in hub_nodes
-        ):
-            boost += 1
-
-        return boost
-
-    def _identify_hub_nodes(self) -> Set:
-        hubs = set()
-        for node in self._graph.nodes:
-            if node.node_source == NodeSource.TEXT_BASED:
-                degree = len([e for e in node.edges if e.active])
-                if degree >= 3:  # Threshold for hub
-                    hubs.add(node)
-        return hubs
+    def identify_hub_nodes(self) -> Set:
+        # deprecated
+        return set()
 
     def _apply_fallback_decay(self, edges):
         for edge in edges:
@@ -476,7 +486,3 @@ class Decay:
         active_nodes |= self._get_explicit_nodes()
         return any(lemma in n.lemmas for n in active_nodes)
 
-    def _get_story_context(self, window: int = 3) -> str:
-        if hasattr(self, "_sentence_history"):
-            return " ".join(self._sentence_history[-window:])
-        return ""
