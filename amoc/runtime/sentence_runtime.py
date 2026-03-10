@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Optional, List, Set, Tuple
+from typing import TYPE_CHECKING, Optional, List, Set, Tuple, Dict
 import copy
 import logging
 import re
@@ -117,49 +117,62 @@ class SentenceRuntime:
         self,
         story_text: str,
         replace_pronouns: bool,
-        resolve_pronouns_fn: callable = None,
+        resolve_pronouns_wrapper_fn: callable = None,
     ) -> Tuple[List[Tuple["Span", str, str]], Set[str]]:
         doc = self._spacy_nlp(story_text)
         story_lemma_set = {t.lemma_.lower() for t in doc if t.is_alpha}
         resolved_sentences: List[Tuple["Span", str, str]] = []
 
-        # Resolve pronouns on the full story text so cross-sentence
-        # references (e.g. "He" → "Charlemagne") are captured.
-        resolved_story_text = story_text
-        if replace_pronouns and resolve_pronouns_fn:
-            candidate = resolve_pronouns_fn(story_text)
-            if isinstance(candidate, str) and candidate.strip():
-                resolved_story_text = self.clean_resolved_sentence(
-                    story_text, candidate
-                )
-            if resolved_story_text.strip().startswith("{"):
-                logging.error(
-                    "LLM JSON contamination detected — reverting to original text."
-                )
-                resolved_story_text = story_text
+        # Build context from previous sentences
+        context_sentences = []
 
-        # Split both original and resolved into sentences, then pair by index.
-        resolved_doc = self._spacy_nlp(resolved_story_text)
-        orig_sents = list(doc.sents)
-        resolved_sents = list(resolved_doc.sents)
+        for orig_sent in doc.sents:
+            resolved_text = orig_sent.text
 
-        for idx, orig_sent in enumerate(orig_sents):
-            if idx < len(resolved_sents):
-                resolved_text = resolved_sents[idx].text
-            else:
+            if replace_pronouns and resolve_pronouns_wrapper_fn and context_sentences:
+                context = " ".join(context_sentences[-5:])  # Last 5 sentences
+
+                # Get pronoun mapping
+                mapping = resolve_pronouns_wrapper_fn(context, orig_sent.text)
+
+                if mapping and isinstance(mapping, dict):
+                    resolved_text = self.apply_pronoun_mapping(orig_sent.text, mapping)
+                    logging.info(f"Pronoun mapping: {mapping} -> '{resolved_text}'")
+
+            # Validate no contamination
+            if resolved_text.strip().startswith("{"):
+                logging.error("JSON contamination detected — reverting to original.")
                 resolved_text = orig_sent.text
 
-            res_doc = self._spacy_nlp(resolved_text)
-            if not res_doc:
+            # Parse resolved text
+            resolved_doc = self._spacy_nlp(resolved_text)
+            if not resolved_doc:
                 resolved_text = orig_sent.text
-                res_doc = self._spacy_nlp(resolved_text)
+                resolved_doc = self._spacy_nlp(resolved_text)
 
-            resolved_span = res_doc[0 : len(res_doc)]
-            if resolved_text.lower().startswith(("user", "assistant", "system")):
-                continue
+            resolved_span = resolved_doc[0 : len(resolved_doc)]
+
+            # Store original for context (not resolved)
+            context_sentences.append(orig_sent.text)
             resolved_sentences.append((resolved_span, resolved_text, orig_sent.text))
 
         return resolved_sentences, story_lemma_set
+
+    # Apply pronoun mapping to a sentence
+    def apply_pronoun_mapping(self, sentence: str, mapping: Dict[str, str]) -> str:
+        doc = self._spacy_nlp(sentence)
+        tokens = []
+
+        for token in doc:
+            if token.pos_ == "PRON" and token.text in mapping:
+                # Replace pronoun with its referent
+                tokens.append(mapping[token.text])
+                logging.debug(f"Replaced '{token.text}' with '{mapping[token.text]}'")
+            else:
+                tokens.append(token.text)
+
+        # Reconstruct sentence
+        return " ".join(tokens)
 
     # Active graph requires a reset of the sentence state
     # Method deactivates all edges, clears explicit nodes, keeps track of carryovers

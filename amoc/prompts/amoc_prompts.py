@@ -187,35 +187,29 @@ Provide them in the following format (a list of numbers):
 [1, 2, 3, ...]
 """
 
-REPLACE_PRONOUNS_PROMPT = """You are resolving pronouns in a story. Your task is to replace pronouns with the specific nouns they refer to.
+PRONOUN_RESOLUTION_PROMPT = """You are resolving pronouns in a story. Given the story context and a sentence, identify which pronouns refer to which entities.
 
-**CRITICAL: Pronouns often refer to nouns mentioned in PREVIOUS SENTENCES.** You MUST look at the entire text to find the correct referent.
+Story context:
+{context}
+
+Sentence:
+{sentence}
+
+Return a JSON object mapping each pronoun to the entity it refers to.
 
 Rules:
-- Replace pronouns (he, she, they, him, her, them, his, her, their) with the specific nouns they refer to
-- Look for referents in ALL previous sentences, not just the current one
-- If a pronoun refers to a name mentioned earlier (e.g., "Charlemagne"), replace it with that name
-- If the referent is unclear, leave the pronoun as is
-- Do NOT invent names or nouns that aren't in the text
-- Preserve the exact sentence structure and boundaries
-- Keep the same number of sentences
+- Only include pronouns that clearly resolve (he, she, they, him, her, them, his, her, their)
+- Use the exact entity name as it appears in the context
+- Do not invent entities not in the context
+- If a pronoun is ambiguous or unclear, do not include it
+- Return ONLY the JSON object, no other text
 
-Input: "Charlemagne was a great king. He ruled wisely."
-Output: "Charlemagne was a great king. Charlemagne ruled wisely."
+Example:
+Input context: "Charlemagne was a great king. He ruled wisely."
+Input sentence: "He conquered many lands."
+Output: {{"He": "Charlemagne"}}
 
-Input: "The knights trained daily. They became skilled warriors."
-Output: "The knights trained daily. The knights became skilled warriors."
-
-Input: "Mary loved reading. Her favorite books were mysteries."
-Output: "Mary loved reading. Mary's favorite books were mysteries."
-
-Input: "The dragon breathed fire. It terrified the villagers."
-Output: "The dragon breathed fire. The dragon terrified the villagers."
-
-Now process this text:
-{text}
-
-Return ONLY the resolved text with pronouns replaced, nothing else."""
+Now process this."""
 
 NEW_RELATIONSHIPS_PROMPT = """I want to build a knowledge graph using the provided text. The graph should consist of two types of nodes: concept nodes and property nodes. Concepts nodes represent objects or persons from the story and are generally represented by nouns in the text. Property nodes describe the concepts nodes and are generally represented by adjectives in the text. An edge connects a concept to another concept or a concept to a property, and it is described by a relationship between the connected nodes.
 

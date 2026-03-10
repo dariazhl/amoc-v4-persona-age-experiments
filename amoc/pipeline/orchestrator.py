@@ -338,7 +338,7 @@ class AMoCv4:
         resolved_sentences, story_lemma_set = self._sentence_ops.resolve_sentences(
             story_text=self.story_text,
             replace_pronouns=replace_pronouns,
-            resolve_pronouns_fn=self._linguistic_ops.resolve_pronouns,
+            resolve_pronouns_wrapper_fn=self._linguistic_ops.resolve_pronouns_wrapper,
         )
         self._story_lemma_set = story_lemma_set
         return resolved_sentences
@@ -657,45 +657,32 @@ class AMoCv4:
         graphs_output_dir: Optional[str],
         highlight_nodes: Optional[Iterable[str]],
     ) -> None:
-        # Get ALL nodes by using only_active=False for triplets
-        all_triplets = self._triplet_ops.reconstruct_semantic_triplets(
-            only_active=False
-        )
-        logging.info(f"PAPER_DEBUG: all_triplets count = {len(all_triplets)}")
-        if all_triplets:
-            logging.info(f"PAPER_DEBUG: first few all_triplets: {all_triplets[:3]}")
-
-        # Get ONLY ACTIVE edges for plotting
+        # Paper plot shows only working memory (active edges/nodes)
         active_triplets = self._triplet_ops.reconstruct_semantic_triplets(
             only_active=True
         )
-        logging.info(f"PAPER_DEBUG: active_triplets count = {len(active_triplets)}")
-        if active_triplets:
-            logging.info(
-                f"PAPER_DEBUG: first few active_triplets: {active_triplets[:3]}"
-            )
 
-        active_nodes, active_edges = self.graph.get_active_subgraph_wrapper()
+        active_nodes, _ = self.graph.get_active_subgraph_wrapper()
         active_node_names = {n.get_text_representer() for n in active_nodes}
-        logging.info(f"PAPER_DEBUG: active_node_names = {active_node_names}")
 
+        # Only active inferred nodes
         inferred_node_names = {
             n.get_text_representer()
             for n in self.graph.nodes
-            if n.node_source == NodeSource.INFERENCE_BASED
+            if n.node_source == NodeSource.INFERENCE_BASED and n.active
         }
+        # Only active explicit nodes
         explicit_node_names = [
             n.get_text_representer()
             for n in self._explicit_nodes_current_sentence
             if n.get_text_representer()
         ]
-        # plot
+
         self._plot_ops.plot_paper_graph_style(
             sentence_index=sentence_idx,
             sentence_text=original_text,
             output_dir=graphs_output_dir,
             highlight_nodes=highlight_nodes,
-            all_triplets=all_triplets,
             active_triplets=active_triplets,
             active_node_names=active_node_names,
             inferred_node_names=inferred_node_names,

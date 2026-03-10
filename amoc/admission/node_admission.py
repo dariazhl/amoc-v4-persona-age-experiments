@@ -313,20 +313,6 @@ class NodeAdmission:
         text_based_words = []
 
         for sent in previous_sentences:
-            # Detect appositives to register aliases (e.g. "Charlemagne, the king")
-            for token in sent:
-                if token.dep_ == "appos":
-                    head = token.head
-                    # PROPN head + NOUN appositive → alias NOUN to PROPN
-                    if head.pos_ == "PROPN" and token.pos_ == "NOUN":
-                        self._graph.register_alias(
-                            token.lemma_.lower(), [head.lemma_.lower()]
-                        )
-                    elif head.pos_ == "NOUN" and token.pos_ == "PROPN":
-                        self._graph.register_alias(
-                            head.lemma_.lower(), [token.lemma_.lower()]
-                        )
-
             content_words = get_content_words_from_sent(self._spacy_nlp, sent)
             for word in content_words:
                 lemma = word.lemma_.lower().strip()

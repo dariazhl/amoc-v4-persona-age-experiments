@@ -16,7 +16,7 @@ from amoc.prompts.amoc_prompts import (
     INFER_OBJECTS_AND_PROPERTIES_FIRST_SENTENCE_PROMPT,
     GENERATE_NEW_INFERRED_RELATIONSHIPS_FIRST_SENTENCE_PROMPT,
     SELECT_RELEVANT_EDGES_PROMPT,
-    REPLACE_PRONOUNS_PROMPT,
+    PRONOUN_RESOLUTION_PROMPT,
     HUB_EDGE_LABEL_WITH_EXPLANATION_PROMPT,
     FORCED_CONNECTIVITY_EDGE_PROMPT,
     VALIDATE_TRIPLET_PROMPT,
@@ -205,9 +205,18 @@ class VLLMClient:
         response = self.call_vllm(prompt, persona)
         return extract_list_from_string(response)
 
-    def resolve_pronouns(self, text, persona):
-        prompt = REPLACE_PRONOUNS_PROMPT.format(text=text)
-        return self.call_vllm(prompt, persona)
+    # Old design: Ask LLM to re-write entire sentence
+    # Issue: risk of contamination with LLM garbage text
+    # New design: Identify pronouns and store them in a dict: {"He": "Charlemagne", "his": "Charlemagne"}
+    def resolve_pronouns(self, sentence, context, persona):
+        prompt = PRONOUN_RESOLUTION_PROMPT.format(context=context, sentence=sentence)
+        response = self.call_vllm(prompt, persona)
+        result = parse_for_dict(response)
+
+        if not isinstance(result, dict):
+            return {}
+
+        return result
 
     def get_edge_label(
         self, node_a: str, node_b: str, sentence_text: str, persona: str

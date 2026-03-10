@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Optional, List, Set, Callable
+import logging
+from typing import TYPE_CHECKING, Optional, List, Set, Callable, Dict
 from amoc.core.node import NodeType, NodeSource, NodeProvenance
 from amoc.utils.spacy_utils import (
     extract_adjectival_modifiers,
@@ -41,14 +42,16 @@ class LinguisticProcessing:
         self._current_sentence_index = sentence_index
         self._edge_visibility = edge_visibility
 
-    def resolve_pronouns(self, text: str) -> str:
-        resolved = self._llm.resolve_pronouns(text, self._persona)
-        if not isinstance(resolved, str) or not resolved.strip():
-            return text
-        low = resolved.lower()
-        if "does not mention any pronouns" in low or "no pronouns to replace" in low:
-            return text
-        return resolved
+    def resolve_pronouns_wrapper(self, context: str, sentence: str) -> Dict[str, str]:
+        result = self._llm.resolve_pronouns(
+            sentence=sentence, context=context, persona=self._persona
+        )
+
+        if not isinstance(result, dict):
+            logging.warning(f"Pronoun resolution returned non-dict: {result}")
+            return {}
+
+        return result
 
     def append_adjectival_hints(
         self,

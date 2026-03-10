@@ -533,7 +533,7 @@ class GraphPlotter:
             property_nodes=property_nodes_for_plot,
         )
 
-        # Plot cumulative view
+        # Plot cumulative view — include ALL edges (active + inactive)
         snapshot_edges = [e for e in self._graph.edges if e.active]
         cumulative_active_pairs = {
             (
@@ -562,34 +562,37 @@ class GraphPlotter:
             property_nodes=property_nodes_for_plot,
         )
 
-    # plot paper-like plot that shows truly cumulative view, not just working memory
+    # Paper-style plot: Figures 3, 5, 6, 7
     def plot_paper_graph_style(
         self,
         sentence_index: int,
         sentence_text: str,
         output_dir: Optional[str],
         highlight_nodes: Optional[Iterable[str]],
-        all_triplets: List[Tuple[str, str, str]],
-        active_triplets: List[Tuple[str, str, str]],
+        active_triplets: List[Tuple[str, str, str]],  # Only active triplets
         active_node_names: set,
         inferred_node_names: set,
         explicit_node_names: List[str],
     ) -> Optional[str]:
-        if not all_triplets:
+        if not active_triplets:
             return None
 
         paper_dir = os.path.join(output_dir, "amoc_paper") if output_dir else None
         if paper_dir:
             os.makedirs(paper_dir, exist_ok=True)
 
-        # Derive node sets
+        # Derive node sets from active_triplets only
         all_nodes: set = set()
-        for s, _, o in all_triplets:
-            all_nodes.add(s)
-            all_nodes.add(o)
-        inactive_nodes = sorted(all_nodes - active_node_names)
+        for s, _, o in active_triplets:
+            if s:
+                all_nodes.add(s)
+            if o:
+                all_nodes.add(o)
+
+        # Nodes that are active but not explicit in current sentence
         carryover_nodes = sorted(active_node_names - set(explicit_node_names))
 
+        # Nodes that have ever been explicit in the text
         ever_explicit = sorted(
             {
                 n.get_text_representer()
@@ -611,12 +614,13 @@ class GraphPlotter:
 
         age_val = self._persona_age if self._persona_age is not None else -1
 
-        # Build active_edges set so the renderer can distinguish active vs faded
+        # Build active_edges set for visual distinction
         active_edge_set = set()
         for s, r, o in active_triplets:
-            active_edge_set.add((s, o))
+            if s and o:
+                active_edge_set.add((s, o))
 
-        # Edge scores for opacity/width variation (visibility_score per edge)
+        # Edge scores for opacity/width variation
         edge_scores = (
             self._get_edge_activation_scores_fn()
             if self._get_edge_activation_scores_fn
@@ -625,7 +629,7 @@ class GraphPlotter:
 
         try:
             saved_path = plot_amoc_triplets(
-                triplets=all_triplets,
+                triplets=active_triplets,
                 persona=self._persona,
                 model_name=self._model_name,
                 age=age_val,
@@ -637,7 +641,7 @@ class GraphPlotter:
                 ever_explicit_nodes=ever_explicit,
                 inferred_nodes=sorted(inferred_node_names),
                 salient_nodes=carryover_nodes,
-                inactive_nodes=inactive_nodes,
+                inactive_nodes=[],  # No inactive nodes shown in paper plots
                 positions=self._viz_positions,
                 active_edges=active_edge_set,
                 edge_activation_scores=edge_scores,
@@ -646,11 +650,11 @@ class GraphPlotter:
                 layout_depth=self._layout_depth,
             )
             logging.info(
-                "[Paper Plot] Saved sentence %d paper cumulative graph to %s",
+                "[Paper Plot] Saved sentence %d paper graph (active subgraph) to %s",
                 sentence_index + 1,
                 saved_path,
             )
             return saved_path
         except Exception:
-            logging.error("Failed to plot paper cumulative graph", exc_info=True)
+            logging.error("Failed to plot paper graph", exc_info=True)
             return None
