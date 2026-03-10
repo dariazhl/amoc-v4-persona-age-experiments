@@ -1,11 +1,12 @@
 import logging
 from typing import TYPE_CHECKING, Optional, List, Set, Dict
 from collections import deque
+import networkx as nx
+from amoc.core.node import NodeSource
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
     from amoc.core.node import Node
-    from amoc.core.node import NodeSource
     from amoc.core.edge import Edge
 
 
@@ -191,6 +192,34 @@ class Decay:
             f"Protected: {stats['protected']}"
         )
 
+        self.reinforce_multi_hop_chains()
+        self.prune_inactive_edgeless_nodes()
+
+    def prune_inactive_edgeless_nodes(self) -> List["Node"]:
+        newly_dangling = []
+
+        for node in self._graph.nodes:
+            if not node.edges:
+                continue
+            # Node has edges but none are active
+            if not any(e.active for e in node.edges):
+                continue
+            # Check if all active edges have visibility <= 0
+            # (they'll become inactive on next reset but are still marked active)
+            active_edges = [e for e in node.edges if e.active]
+            if all(e.visibility_score <= 0 for e in active_edges):
+                for e in active_edges:
+                    e.active = False
+                newly_dangling.append(node)
+
+        if newly_dangling:
+            logging.info(
+                f"DANGLING_CLEANUP: Deactivated {len(newly_dangling)} dangling nodes: "
+                f"{[n.get_text_representer() for n in newly_dangling]}"
+            )
+
+        return newly_dangling
+
     def build_connectivity_map(self) -> Dict["Node", Set["Node"]]:
         connectivity = {}
         for edge in self._graph.edges:
@@ -239,6 +268,241 @@ class Decay:
             if edge.visibility_score <= 0:
                 edge.visibility_score = 0
                 edge.active = False
+
+    def reinforce_multi_hop_chains(self) -> None:
+        text_based_nodes = {
+            n for n in self._graph.nodes if n.node_source == NodeSource.TEXT_BASED
+        }
+        inferred_nodes = {
+            n for n in self._graph.nodes if n.node_source == NodeSource.INFERENCE_BASED
+        }
+
+        if not inferred_nodes:
+            return
+
+        reinforced_count = 0
+        chain_edges = set()
+
+        for inf_node in inferred_nodes:
+            if not inf_node.active:
+                continue
+
+            visited = {inf_node}
+            queue = deque([(inf_node, 0)])
+            found_path = False
+
+            while queue and not found_path:
+                current, dist = queue.popleft()
+
+                for edge in current.edges:
+                    if not edge.active:
+                        continue
+
+                    neighbor = (
+                        edge.dest_node
+                        if edge.source_node == current
+                        else edge.source_node
+                    )
+                    if neighbor in visited:
+                        continue
+
+                    if neighbor in text_based_nodes:
+                        chain_edges.add(edge)
+                        found_path = True
+                        break
+
+                    visited.add(neighbor)
+                    queue.append((neighbor, dist + 1))
+
+        for edge in chain_edges:
+            edge.visibility_score = min(edge.visibility_score + 2, 5)
+            if not edge.is_property_edge():
+                edge.mark_as_reactivated(reset_score=False)
+            reinforced_count += 1
+
+        if reinforced_count > 0:
+            logging.info(
+                f"MULTI_HOP: Reinforced {reinforced_count} edges in inference chains"
+            )
+
+    def enforce_node_limit(self, max_nodes: int = 30) -> None:
+        if len(self._graph.nodes) <= max_nodes:
+            return
+
+        # Build connectivity map for analysis
+        connectivity = self.build_connectivity_map()
+
+        # Track current sentence for recency calculation
+        current_sentence = getattr(self, "_current_sentence_idx", 0)
+
+        # Calculate node scores with improved metrics
+        node_scores = {}
+        critical_nodes = set()
+
+        # First pass: identify critical nodes (articulation points)
+        G = nx.Graph()
+        active_nodes = set()
+        for node in self._graph.nodes:
+            if node.active:
+                active_nodes.add(node)
+                G.add_node(node)
+
+        for edge in self._graph.edges:
+            if edge.active:
+                G.add_edge(edge.source_node, edge.dest_node)
+
+        # Find articulation points in the active graph
+        if len(active_nodes) > 1:
+            articulation_points = set(nx.articulation_points(G))
+            critical_nodes.update(articulation_points)
+
+        # Second pass: score all nodes
+        for node in self._graph.nodes:
+            # Skip if already critical
+            if node in critical_nodes:
+                node_scores[node] = float("inf")
+                continue
+
+            score = 0
+
+            # Active edge count (weighted)
+            active_edge_count = sum(1 for e in node.edges if e.active)
+            score += active_edge_count * 3
+
+            # Node source importance
+            if node.node_source == NodeSource.TEXT_BASED:
+                score += 10  # Text-based nodes are more important
+            elif node.node_source == NodeSource.INFERENCE_BASED:
+                score += 5  # Inferred nodes are somewhat important
+
+            # Node activity status
+            if node.active:
+                score += 8  # Active nodes are more important
+
+            # Recency - nodes that appeared recently are more important
+            if (
+                hasattr(node, "created_at_sentence")
+                and node.created_at_sentence is not None
+            ):
+                age = current_sentence - node.created_at_sentence
+                recency_score = max(0, 10 - min(age, 10))  # Scale 0-10, newer = higher
+                score += recency_score * 2
+
+            # Last active recency - nodes used recently are more important
+            if (
+                hasattr(node, "last_active_sentence")
+                and node.last_active_sentence is not None
+            ):
+                inactivity = current_sentence - node.last_active_sentence
+                if inactivity <= 2:  # Active in last 2 sentences
+                    score += 5
+                elif inactivity <= 5:  # Active in last 5 sentences
+                    score += 2
+
+            # Degree centrality in active graph
+            if node in G:
+                degree = G.degree(node)
+                if len(G) > 1:
+                    centrality = degree / (len(G) - 1)
+                    score += centrality * 5
+
+            node_scores[node] = score
+
+        # Sort nodes by score (lowest first)
+        sorted_nodes = sorted(
+            [n for n in node_scores if n not in critical_nodes],
+            key=lambda n: node_scores[n],
+        )
+
+        excess = len(self._graph.nodes) - max_nodes
+        candidates = sorted_nodes[:excess]
+
+        # Pre-check which removals would fragment the graph
+        safe_to_remove = []
+        would_fragment = []
+
+        # Create a copy of the graph for simulation
+        G_copy = G.copy()
+
+        for node in candidates:
+            if node not in G_copy:
+                safe_to_remove.append(node)
+                continue
+
+            # Check if removing this node would disconnect the graph
+            neighbors = list(G_copy.neighbors(node))
+
+            # Temporarily remove node and check connectivity
+            G_copy.remove_node(node)
+
+            # Check if any neighbors became isolated or if component count increased
+            fragments = False
+            for neighbor in neighbors:
+                if neighbor in G_copy and G_copy.degree(neighbor) == 0:
+                    fragments = True
+                    break
+
+            if not fragments and nx.is_connected(G_copy):
+                safe_to_remove.append(node)
+            else:
+                would_fragment.append(node)
+                # Restore node for next iteration
+                G_copy.add_node(node)
+                for neighbor in neighbors:
+                    if neighbor in G_copy.nodes():  # Neighbor might have been removed
+                        G_copy.add_edge(node, neighbor)
+
+        # Remove safe nodes first
+        removed = 0
+        for node in safe_to_remove[:excess]:
+            # Remove all edges connected to this node
+            for edge in list(node.edges):
+                edge.active = False
+            if hasattr(self._graph, "_inactive_nodes"):
+                self._graph._inactive_nodes.add(node)
+            removed += 1
+            if removed >= excess:
+                break
+
+        # If we still need to remove more, try the ones that might fragment but have lowest scores
+        if removed < excess:
+            additional_needed = excess - removed
+            for node in would_fragment[:additional_needed]:
+                # Log warning when removing potentially fragmenting nodes
+                logging.warning(
+                    f"NODE_LIMIT: Removing node '{node.actual_texts}' may fragment graph"
+                )
+
+                for edge in list(node.edges):
+                    self._graph.remove_edge(edge)
+                self._graph.nodes.discard(node)
+                removed += 1
+
+        # Final connectivity check
+        if removed > 0:
+            # Rebuild active graph to check final state
+            final_G = nx.Graph()
+            for node in self._graph.nodes:
+                if node.active:
+                    final_G.add_node(node)
+            for edge in self._graph.edges:
+                if edge.active:
+                    final_G.add_edge(edge.source_node, edge.dest_node)
+
+            components = list(nx.connected_components(final_G))
+
+            logging.info(
+                f"NODE_LIMIT: Removed {removed}/{excess} nodes. "
+                f"Graph now has {len(final_G)} active nodes in {len(components)} components."
+            )
+
+            # Log removed nodes for debugging
+            removed_names = [
+                n.actual_texts
+                for n in candidates[:removed]
+                if hasattr(n, "actual_texts")
+            ]
+            logging.debug(f"Removed nodes: {removed_names}")
 
     def reactivate_relevant_edges(
         self,

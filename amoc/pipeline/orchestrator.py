@@ -432,6 +432,7 @@ class AMoCv4:
                     explicit_nodes=self._explicit_nodes_current_sentence,
                     carryover_nodes=self._carryover_nodes_current_sentence,
                     apply_edge_decay_fn=lambda: self._activation_ops.apply_semantic_edge_decay(),
+                    enforce_node_limit_fn=lambda: self._activation_ops.enforce_node_limit(),
                 )
 
         return result
@@ -623,6 +624,104 @@ class AMoCv4:
             explicit_nodes=self._explicit_nodes_current_sentence,
             nodes_with_active_edges=self._get_active_edge_nodes(),
             sentence_triplets=self._sentence_triplets,
+        )
+
+    def capture_state_only_wrapper(
+        self,
+        i: int,
+        original_text: str,
+        inactive_nodes_for_plot: list,
+        salient_nodes_for_plot: list,
+    ):
+        """Capture graph state for reverse plots without generating per-sentence PNGs."""
+        if not self._plot_ops._collect_states:
+            return
+
+        explicit_nodes_for_plot = [
+            node.get_text_representer()
+            for node in self._explicit_nodes_current_sentence
+            if node.get_text_representer()
+        ]
+
+        inferred_nodes = [
+            n.get_text_representer()
+            for n in self.graph.nodes
+            if n.node_source == NodeSource.INFERENCE_BASED
+        ]
+
+        # Active view state
+        if self._per_sentence_view is not None:
+            active_edge_pairs = {
+                (
+                    e.source_node.get_text_representer(),
+                    e.dest_node.get_text_representer(),
+                )
+                for e in self._per_sentence_view.active_edges
+            }
+            active_triplets = [
+                (
+                    e.source_node.get_text_representer(),
+                    e.label,
+                    e.dest_node.get_text_representer(),
+                )
+                for e in self._per_sentence_view.active_edges
+            ]
+        else:
+            active_edge_pairs = {
+                (
+                    edge.source_node.get_text_representer(),
+                    edge.dest_node.get_text_representer(),
+                )
+                for edge in self.graph.edges
+                if edge.active
+            }
+            active_triplets = self._triplet_ops.reconstruct_semantic_triplets(
+                only_active=True
+            )
+
+        self._plot_ops._capture_state(
+            sentence_idx=i,
+            sentence_text=original_text,
+            mode="active",
+            triplets=active_triplets,
+            explicit_nodes=explicit_nodes_for_plot,
+            inactive_nodes=inactive_nodes_for_plot,
+            salient_nodes=salient_nodes_for_plot,
+            inferred_nodes=inferred_nodes,
+            active_edges=active_edge_pairs,
+        )
+
+        # Cumulative view state
+        cumulative_active_pairs = {
+            (
+                edge.source_node.get_text_representer(),
+                edge.dest_node.get_text_representer(),
+            )
+            for edge in self.graph.edges
+            if edge.active
+        }
+        cumulative_triplets = self._triplet_ops.reconstruct_semantic_triplets(
+            only_active=True
+        )
+
+        all_graph_nodes = {
+            n.get_text_representer()
+            for n in self.graph.nodes
+            if n.get_text_representer()
+        }
+        active_node_names = set(explicit_nodes_for_plot) | set(salient_nodes_for_plot)
+        inactive_nodes_recalc = sorted(all_graph_nodes - active_node_names)
+
+        self._plot_ops._capture_state(
+            sentence_idx=i,
+            sentence_text=original_text,
+            mode="cumulative",
+            triplets=cumulative_triplets,
+            explicit_nodes=explicit_nodes_for_plot,
+            inactive_nodes=inactive_nodes_recalc,
+            salient_nodes=salient_nodes_for_plot,
+            inferred_nodes=inferred_nodes,
+            active_edges=cumulative_active_pairs,
         )
 
     def plot_sentence_views_wrapper(
@@ -846,6 +945,13 @@ class AMoCv4:
                     original_text,
                     graphs_output_dir,
                     highlight_nodes,
+                )
+            elif self._plot_ops._collect_states:
+                self.capture_state_only_wrapper(
+                    i,
+                    original_text,
+                    inactive_nodes_for_plot,
+                    salient_nodes_for_plot,
                 )
             self.capture_sentence_triplets_wrapper(original_text)
 

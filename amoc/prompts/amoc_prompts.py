@@ -453,7 +453,10 @@ Given the sentence:
 Candidate triple: ({subject}, {relation}, {object})
 
 **CRITICAL RULES ABOUT GENERIC WORDS:**
-- Words like "thing", "something", "anything", "it", "this", "that" should NEVER be the SUBJECT of an action verb (writes, describes, knows, says, tells, etc.)
+- Words like "certain", "year", "thing", "something", "anything", "it", "this", "that" should NEVER be the SUBJECT of an action verb (writes, describes, knows, says, tells, etc.)
+- The subject is a generic term (e.g., "thing describes charlemagne" is invalid).
+- The subject is a temporal noun (e.g., "year", "month") performing an action.
+- The triplet contains semantic redundancy (e.g., "strategy is strategic")
 - Example: "thing describes charlemagne" is ALWAYS INVALID because "thing" cannot perform the action "describes"
 - Generic words can only be objects, never subjects
 - If the subject is a generic word, the triple is automatically INVALID
@@ -467,6 +470,7 @@ Candidate triple: ({subject}, {relation}, {object})
   - ✗ (thing, describes, charlemagne) is INVALID because "thing" is not the subject
   - ✗ (king, wrote about, man) is INVALID (wrong direction)
   - ✗ (man, knows, king) is INVALID ("knows" not in sentence)
+
 
 Respond with a JSON object containing:
 1. "valid": true or false
@@ -503,6 +507,8 @@ IMPORTANT GUIDELINES:
 - Relationships involving main characters (Charlemagne, his family, kingdoms, etc.) should generally score 3
 - Generic relations like "relates to", "is associated with" should score 1-2 unless they carry specific meaning
 - Vague placeholders ("thing", "certain", "good") as subjects or objects lower the score (generally 1)
+- **Inferred relationships that bridge concepts should be preserved and scored higher (2-3)**
+- **Multi-hop inference chains are valuable for comprehension - preserve edges that connect inferred concepts**
 - **Do NOT** suggest removing a relationship if it's the only connection between a node and the rest of the graph
 
 Return a JSON object with this exact structure:

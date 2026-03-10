@@ -112,11 +112,11 @@ class NodeAdmission:
         if lemma not in self._ever_admitted_nodes:
             self._ever_admitted_nodes.add(lemma)
             total = len(self._ever_admitted_nodes)
-            if total > 40:
+            if total > 30:
                 self._layout_depth = max(self._layout_depth, 6)
-            elif total > 25:
+            elif total > 20:
                 self._layout_depth = max(self._layout_depth, 5)
-            elif total > 12:
+            elif total > 10:
                 self._layout_depth = max(self._layout_depth, 4)
         else:
             self._ever_admitted_nodes.add(lemma)

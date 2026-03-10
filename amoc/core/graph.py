@@ -9,7 +9,31 @@ from typing import List, Set, Optional, Tuple, Callable
 import networkx as nx
 
 
-BANNED_LEMMAS = {"thing", "things", "man"}
+BANNED_LEMMAS = {
+    "thing",
+    "things",
+    "man",
+    "certain",
+    "year",
+    "something",
+    "anything",
+    "it",
+    "this",
+    "that",
+    "these",
+    "those",
+    "everything",
+    "nothing",
+    "someone",
+    "somebody",
+    "anyone",
+    "anybody",
+    "everyone",
+    "everybody",
+    "nobody",
+    "dress",
+    "dressed",
+}
 
 
 class Graph:
@@ -24,6 +48,7 @@ class Graph:
         self._activation_ops = NodeActivationEngine(self)
         self._stability_ops = ConnectivityRepair(self)
         self._provenance_ops = NodeValidation(self)
+        # self._spacy_nlp = spacy_nlp or spacy.load("en_core_web_sm")
 
     def set_current_sentence_lemmas(self, lemmas: Set[str]) -> None:
         self._current_sentence_lemmas = {l.lower() for l in lemmas}
@@ -44,6 +69,8 @@ class Graph:
         provenance: Optional[NodeProvenance] = None,
         mark_explicit: bool = True,
     ):
+        # if not self.is_valid_node_candidate(actual_text, node_source):
+        #     return None
         lemmas = [lemma.lower() for lemma in lemmas]
         primary_lemma = lemmas[0] if lemmas else ""
 
@@ -254,6 +281,20 @@ class Graph:
         return self._stability_ops.restore_connectivity(
             required_nodes, allow_reactivation, enforce_cumulative
         )
+
+    # prevent nodes such as "dress" from  "He dressed like a Frank" from entering the graph
+    # def is_valid_node_candidate(self, text: str, node_source: "NodeSource") -> bool:
+    #     if not text or not text.strip():
+    #         return False
+
+    #     if node_source in [NodeSource.TEXT_BASED, NodeSource.INFERENCE_BASED]:
+    #         doc = self._spacy_nlp(text)
+    #         if doc and len(doc) > 0:
+    #             # Check if it's a verb
+    #             if doc[0].pos_ in {"VERB", "AUX"}:
+    #                 return False
+
+    #     return True
 
     def sanity_check_provenance_wrapper(
         self,

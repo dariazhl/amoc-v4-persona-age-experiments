@@ -38,7 +38,7 @@ class PlotFiltering:
         max_edges_per_node: Optional[int] = None,
     ) -> List["Edge"]:
         if max_edges_per_node is None:
-            max_edges_per_node = self.MAX_EDGES_PER_NODE
+            max_edges_per_node = MAX_EDGES_PER_NODE
 
         incident_edges: Dict["Node", List["Edge"]] = {}
         for edge in edges:

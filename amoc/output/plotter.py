@@ -725,8 +725,24 @@ class GraphPlotter:
             if o:
                 all_nodes.add(o)
 
-        # Nodes that are active but not explicit in current sentence
-        carryover_nodes = sorted(active_node_names - set(explicit_node_names))
+        # Truly active = nodes that participate in active edges
+        nodes_with_active_edges = set()
+        for s, r, o in active_triplets:
+            if s:
+                nodes_with_active_edges.add(s)
+            if o:
+                nodes_with_active_edges.add(o)
+
+        # Nodes passed as active but with no active edges are dangling
+        dangling = active_node_names - nodes_with_active_edges
+        if dangling:
+            logging.info(
+                f"PAPER_PLOT: Moving {len(dangling)} dangling nodes to inactive "
+                f"(no active edges): {sorted(dangling)}"
+            )
+
+        # Carryover = truly active nodes minus explicit
+        carryover_nodes = sorted(nodes_with_active_edges - set(explicit_node_names))
 
         # Nodes that have ever been explicit in the text
         ever_explicit = sorted(
@@ -775,9 +791,9 @@ class GraphPlotter:
                 sentence_text=sentence_text,
                 explicit_nodes=explicit_node_names,
                 ever_explicit_nodes=ever_explicit,
-                inferred_nodes=sorted(inferred_node_names),
+                inferred_nodes=sorted(inferred_node_names & nodes_with_active_edges),
                 salient_nodes=carryover_nodes,
-                inactive_nodes=sorted(all_nodes - active_node_names),
+                inactive_nodes=sorted(all_nodes - nodes_with_active_edges),
                 positions=self._viz_positions,
                 active_edges=active_edge_set,  # Highlight active edges
                 edge_activation_scores=edge_scores,
