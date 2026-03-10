@@ -1,9 +1,10 @@
+import logging
 from typing import TYPE_CHECKING, Optional, List, Set, Dict
 from collections import deque
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
-    from amoc.core.node import Node
+    from amoc.core.node import Node, NodeSource
     from amoc.core.edge import Edge
 
 
@@ -16,7 +17,7 @@ class Decay:
         max_distance: int,
         edge_visibility: int,
         nr_relevant_edges: int,
-        strict_reactivate: bool = True,
+        strict_reactivate: bool = True,  # uses LLM to select which edges to reactivate
     ):
         self._graph = graph_ref
         self._llm = llm_extractor
@@ -27,6 +28,8 @@ class Decay:
         self._strict_reactivate = strict_reactivate
         self._current_sentence_index = None
         self._record_edge_fn = None
+        self._current_sentence_text = None
+        self._persona = None
 
     def set_decay_state_refs(
         self,
@@ -265,16 +268,7 @@ class Decay:
 
         active_node_set = set(active_nodes)
 
-        if not valid_indices:
-            selected = set()
-            for idx, edge in enumerate(edges, start=1):
-                if (
-                    edge in newly_added_edges
-                    or edge.source_node in active_node_set
-                    or edge.dest_node in active_node_set
-                ):
-                    selected.add(idx)
-        else:
+        if valid_indices:
             selected = set(valid_indices)
             for i in selected:
                 edge = edges[i - 1]
@@ -283,6 +277,9 @@ class Decay:
                     continue
                 if self._record_edge_fn:
                     self._record_edge_fn(edge, self._current_sentence_index)
+        else:
+            selected = set()  # Edge not selected by LLM
+            logging.info("No relevant edges identified by LLM for reactivation")
 
         for idx, edge in enumerate(edges, start=1):
             if idx in selected or edge in newly_added_edges:
@@ -295,7 +292,6 @@ class Decay:
                     edge.is_asserted() or edge.is_reactivated()
                 ):
                     self._record_edge_fn(edge, self._current_sentence_index)
-            # No decay here — apply_global_edge_decay handles it
 
     def get_fallback_edges(
         self,
@@ -479,3 +475,8 @@ class Decay:
         active_nodes = {n for n in self._graph.nodes if n.active}
         active_nodes |= self._get_explicit_nodes()
         return any(lemma in n.lemmas for n in active_nodes)
+
+    def _get_story_context(self, window: int = 3) -> str:
+        if hasattr(self, "_sentence_history"):
+            return " ".join(self._sentence_history[-window:])
+        return ""

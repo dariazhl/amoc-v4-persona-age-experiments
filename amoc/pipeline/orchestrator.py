@@ -263,11 +263,6 @@ class AMoCv4:
         )
         if edge:
             self.record_edge_in_graphs_wrapper(edge, self._current_sentence_index)
-            logging.info(f"EDGE_DEBUG: add_edge_wrapper created edge: {edge}")
-        else:
-            logging.warning(
-                f"EDGE_DEBUG: add_edge_wrapper returned None for {source_node} --{label}--> {dest_node}"
-            )
         return edge
 
     def create_forced_connectivity_edges_wrapper(
@@ -457,10 +452,9 @@ class AMoCv4:
 
     def stabilize_connectivity_wrapper(self, prev_sentences: list) -> bool:
         # build per-sentence view first
-        self._per_sentence_view = self.build_per_sentence_view_wrapper(
-            explicit_nodes=list(self._explicit_nodes_current_sentence),
-            sentence_index=self._current_sentence_index,
-        )
+        if self._per_sentence_view is None:
+            logging.error("No per-sentence view available for connectivity check")
+            return True
 
         # # call the unified repair pipeline
         # self._connectivity_ops.run_repair_pipeline(
@@ -767,6 +761,13 @@ class AMoCv4:
             if should_skip_sentence:
                 continue
 
+            # At this point, all graph modifications for this sentence are complete
+            # build the per-sentence view with the final graph state
+            self._per_sentence_view = self.build_per_sentence_view_wrapper(
+                explicit_nodes=list(self._explicit_nodes_current_sentence),
+                sentence_index=self._current_sentence_index,
+            )
+
             logging.info(
                 f"NODE_TRACKER: After processing sentence {sentence_counter} | "
                 f"Total nodes: {len(self.graph.nodes)} | "
@@ -800,9 +801,11 @@ class AMoCv4:
                 )
                 continue
 
-            # Build projection AFTER connectivity is guaranteed
-            self._per_sentence_view = self.build_projection_wrapper(sentence_id)
-
+            # #  build the per-sentence view with the final graph state
+            # self._per_sentence_view = self.build_per_sentence_view_wrapper(
+            #     explicit_nodes=list(self._explicit_nodes_current_sentence),
+            #     sentence_index=self._current_sentence_index,
+            # )
             # Update carryover nodes from projection
             if self._per_sentence_view is not None:
                 self._carryover_nodes_current_sentence.clear()
@@ -821,10 +824,14 @@ class AMoCv4:
                 sentence_id, i, newly_inferred_nodes, self._per_sentence_view
             )
 
-            logging.info(f"INACTIVE_TRACK: After update_post_projection, inactive={inactive_nodes_for_plot}")
+            logging.info(
+                f"INACTIVE_TRACK: After update_post_projection, inactive={inactive_nodes_for_plot}"
+            )
 
             if plot_after_each_sentence:
-                logging.info(f"INACTIVE_TRACK: Before plot wrapper, inactive={inactive_nodes_for_plot}")
+                logging.info(
+                    f"INACTIVE_TRACK: Before plot wrapper, inactive={inactive_nodes_for_plot}"
+                )
                 self.plot_sentence_views_wrapper(
                     i,
                     original_text,

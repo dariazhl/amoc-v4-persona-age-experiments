@@ -414,6 +414,7 @@ class GraphPlotter:
                 ),
                 sentence_text=sentence_text,
                 inactive_nodes=inactive_nodes,
+                inactive_nodes_for_title=inactive_nodes,
                 explicit_nodes=explicit_nodes_for_plot,
                 ever_explicit_nodes=ever_explicit_nodes_for_plot,
                 salient_nodes=salient_nodes,
@@ -571,12 +572,24 @@ class GraphPlotter:
         logging.info(
             f"DEBUG: Plotting with {len(reconstruct_semantic_triplets_fn(only_active=True))} triplets, mode={"sentence_cumulative"}"
         )
+        # recalculate inactive nodes right before plotting
+        all_graph_nodes = {
+            n.get_text_representer()
+            for n in self._graph.nodes
+            if n.get_text_representer()
+        }
+        active_node_names = set(explicit_nodes_for_plot) | set(salient_nodes_for_plot)
+        inactive_nodes_recalc = sorted(all_graph_nodes - active_node_names)
+
+        logging.info(
+            f"DEBUG: Plotting with {len(reconstruct_semantic_triplets_fn(only_active=True))} triplets, mode={"sentence_cumulative"}"
+        )
         self.plot_graph_snapshot_full(
             sentence_index=sentence_idx,
             sentence_text=original_text,
             output_dir=graphs_output_dir,
             highlight_nodes=highlight_nodes,
-            inactive_nodes=inactive_nodes_for_plot,
+            inactive_nodes=inactive_nodes_recalc,
             explicit_nodes=explicit_nodes_for_plot,
             salient_nodes=salient_nodes_for_plot,
             only_active=False,

@@ -22,6 +22,7 @@ class ProjectionStateManager:
         self._prev_active_nodes_for_plot: Set[Node] = set()
         self._cumulative_deactivated_nodes_for_plot: Set[Node] = set()
         self._recently_deactivated_nodes_for_inference: Set[Node] = set()
+        self._cumulative_inactive_nodes: Set[Node] = set()
 
     def set_callbacks(
         self,
@@ -64,10 +65,8 @@ class ProjectionStateManager:
                 explicit_nodes=list(explicit_nodes_current_sentence),
                 newly_inferred_nodes=newly_inferred_nodes,
             )
-        # find active nodes
-        current_active_nodes = set(per_sentence_view.explicit_nodes) | set(
-            per_sentence_view.carryover_nodes
-        )
+        # find active nodes - active nodes are the source of truth
+        current_active_nodes = {node for node in self.graph.nodes if node.active}
         # check for disconnection - it should not happen at this point, just checking
         if (
             per_sentence_view is not None
@@ -88,12 +87,20 @@ class ProjectionStateManager:
             appeared = current_active_nodes - self._prev_active_nodes_for_plot
             gone = self._prev_active_nodes_for_plot - current_active_nodes
 
-            self._cumulative_deactivated_nodes_for_plot.update(gone)
-            self._cumulative_deactivated_nodes_for_plot.difference_update(
-                current_active_nodes
-            )
+            # Add newly inactive nodes to cumulative set
+            self._cumulative_inactive_nodes.update(gone)
 
+            # Remove nodes that have become active again (reactivated)
+            reactivated = self._cumulative_inactive_nodes & current_active_nodes
+            if reactivated:
+                logging.info(
+                    f"REACTIVATED: Nodes {[n.get_text_representer() for n in reactivated]} are now active again"
+                )
+                self._cumulative_inactive_nodes.difference_update(reactivated)
+
+            # Keep the original deactivated nodes set for return
             recently_deactivated_nodes = set(gone)
+
         # prepare plotting lists for explicit, carryover, inactive nodes
         if per_sentence_view is not None:
             explicit_nodes_for_plot = sorted(
@@ -116,30 +123,22 @@ class ProjectionStateManager:
                 )
             )
 
-            all_nodes = {
-                n.get_text_representer()
-                for n in self.graph.nodes
-                if n.get_text_representer()
-            }
-
-            active_nodes = set(explicit_nodes_for_plot) | set(salient_nodes_for_plot)
-            inactive_nodes_for_plot = sorted(all_nodes - active_nodes)
+            # For inactive nodes, use the CUMULATIVE set
+            inactive_nodes_for_plot = sorted(
+                {
+                    n.get_text_representer()
+                    for n in self._cumulative_inactive_nodes
+                    if n.get_text_representer()
+                }
+            )
 
             logging.info(
                 f"INACTIVE_DEBUG: sentence {sentence_id} | "
-                f"all_nodes={len(all_nodes)} | "
-                f"active_nodes={len(active_nodes)} | "
-                f"inactive={len(inactive_nodes_for_plot)} | "
+                f"cumulative_inactive={len(inactive_nodes_for_plot)} | "
                 f"graph.nodes={len(self.graph.nodes)} | "
                 f"explicit={len(list(per_sentence_view.explicit_nodes))} | "
                 f"carryover={len(list(per_sentence_view.carryover_nodes))}"
             )
-            if len(inactive_nodes_for_plot) == 0 and len(all_nodes) > len(active_nodes):
-                logging.warning(
-                    f"INACTIVE_DEBUG: EMPTY inactive list! "
-                    f"all_nodes={sorted(all_nodes)} | "
-                    f"active_nodes={sorted(active_nodes)}"
-                )
 
         else:
             explicit_nodes_for_plot = []
