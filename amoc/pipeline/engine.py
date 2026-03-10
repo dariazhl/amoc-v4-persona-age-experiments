@@ -20,6 +20,7 @@ class AgeAwareAMoCEngine:
     def __init__(self, vllm_client: VLLMClient, spacy_nlp):
         self.vllm_client = vllm_client
         self.spacy_nlp = spacy_nlp
+        self.last_amoc: Optional["AMoCv4"] = None
 
     def build_analysis_text(self, persona_text: str, age_refined_int: int) -> str:
         # This is the text that both AMoC and the LLM see as "persona"
@@ -41,6 +42,7 @@ class AgeAwareAMoCEngine:
         matrix_dir_base: Optional[str] = None,
         force_node: bool = False,
         checkpoint: bool = False,
+        collect_plot_states: bool = False,
     ) -> List[Tuple[str, str, str]]:
 
         try:
@@ -70,6 +72,9 @@ class AgeAwareAMoCEngine:
             matrix_dir_base=matrix_dir_base,
             checkpoint=checkpoint,
         )
+        self.last_amoc = amoc
+        if collect_plot_states and hasattr(amoc, "_plot_ops"):
+            amoc._plot_ops.enable_state_collection(True)
         final_triplets, sentence_triplets, cumulative_triplets = amoc.analyze(
             replace_pronouns=replace_pronouns,
             plot_after_each_sentence=plot_after_each_sentence,

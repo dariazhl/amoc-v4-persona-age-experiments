@@ -143,7 +143,8 @@ class Decay:
 
             if score == 1:  # LOW RELEVANCE - should decay
                 if is_critical:
-                    # Keep but decay normally (connectivity critical)
+                    # Double decay
+                    edge.reduce_visibility()
                     edge.reduce_visibility()
                     stats["protected"] += 1
                     logging.info(
@@ -161,15 +162,16 @@ class Decay:
                     )
 
             elif score == 2:  # MEDIUM RELEVANCE - maintain
-                # Slight decay or maintain based on current visibility
-                if edge.visibility_score > self._edge_visibility:
-                    edge.reduce_visibility()
+                # Decay faster
+                edge.visibility_score = max(0, edge.visibility_score - 1)
                 stats["maintain"] += 1
                 logging.info(f"SEMANTIC_DECAY: Maintained edge {triplet_str} (score=2)")
 
             elif score == 3:  # HIGH RELEVANCE - reinforce
                 # Reactivate to full visibility
-                edge.visibility_score = self._edge_visibility
+                edge.visibility_score = min(
+                    edge.visibility_score + 1, self._edge_visibility
+                )
                 edge.mark_as_reactivated(reset_score=False)
                 stats["reinforce"] += 1
                 logging.info(
@@ -485,4 +487,3 @@ class Decay:
         active_nodes = {n for n in self._graph.nodes if n.active}
         active_nodes |= self._get_explicit_nodes()
         return any(lemma in n.lemmas for n in active_nodes)
-
