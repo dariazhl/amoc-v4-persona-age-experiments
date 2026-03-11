@@ -523,3 +523,45 @@ Return a JSON object with this exact structure:
 
 The scores will be used to determine which edges decay (score 1) and which are reinforced (score 3).
 """
+
+PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE = """You are helping to maintain a clean knowledge graph of a story. Your task is to identify which relationships are **essential** to keep and which are **irrelevant** and can be removed.
+
+Story so far:
+{story_context}
+
+Current sentence:
+{current_sentence}
+
+Here are the active relationships in the reader's memory:
+{active_triplets}
+
+For each relationship, decide if it is RELEVANT or IRRELEVANT to the current narrative.
+
+**KEEP (RELEVANT) if:**
+- Involves main characters, key objects, or central themes
+- Provides context needed to understand the current sentence
+- Is the only connection between a concept and the rest of the graph
+- Bridges important concepts (even if inferred)
+- Is part of a meaningful chain of events
+
+**REMOVE (IRRELEVANT) if:**
+- Relates to minor details or background information no longer relevant
+- Contains vague placeholders ("thing", "certain", "good") as subjects/objects
+- Is generic ("relates to", "is associated with") without specific meaning
+- Duplicates information already captured by other relationships
+- Describes events or states that have passed and are no longer needed
+
+**Critical Rule:** Never remove a relationship if it's the only connection between a node and the rest of the graph.
+
+Return a JSON object with this exact structure:
+{{
+    "to_keep": [
+        "(subject1, relation1, object1)",
+        "(subject2, relation2, object2)",
+        ...
+    ],
+    "reasoning": "Brief explanation of why certain relationships were kept or removed"
+}}
+
+The "to_keep" list should contain only the relationships that are essential for understanding the current narrative.
+"""

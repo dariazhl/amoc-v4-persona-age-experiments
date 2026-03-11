@@ -21,6 +21,7 @@ from amoc.prompts.amoc_prompts import (
     FORCED_CONNECTIVITY_EDGE_PROMPT,
     VALIDATE_TRIPLET_PROMPT,
     NARRATIVE_RELEVANCE_PROMPT,
+    PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE,
 )
 
 
@@ -319,8 +320,19 @@ class VLLMClient:
             "corrected_triple": result.get("corrected_triple", None),
         }
 
+    # call in sentrene builder before adding the edges
+    def prune_irrelevant_triplets_by_narrative(
+        self, story_context, current_sentence, active_triplets, persona
+    ):
+        prompt = PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE.format(
+            story_context=story_context,
+            current_sentence=current_sentence,
+            active_triplets=active_triplets,
+        )
+        response = self.call_vllm(prompt, persona)
+        return parse_for_dict(response)
+
     # Check if a triple is narratively relevant to the story using LLM only
-    # trouble - ADD PERSONA?
     def check_narrative_relevance(
         self, story_context, current_sentence, active_triplets, persona
     ):

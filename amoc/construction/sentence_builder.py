@@ -741,50 +741,50 @@ class SentenceGraphBuilder:
         return None
 
     # Check if a triple is narratively relevant to the story using LLM only
-    # def check_narrative_relevance(self, active_triplets, prev_sentences):
-    #     if len(active_triplets) <= 3:
-    #         return active_triplets
+    def prune_irrelevant_triplets_wrapper(self, active_triplets, prev_sentences):
+        if len(active_triplets) <= 3:
+            return active_triplets
 
-    #     # Format triplets for the prompt
-    #     triplet_strings = [f"({s}, {r}, {o})" for s, r, o in active_triplets]
+        # Format triplets for the prompt
+        triplet_strings = [f"({s}, {r}, {o})" for s, r, o in active_triplets]
 
-    #     # Get story context from last 3 sent
-    #     story_context = " ".join(prev_sentences[-3:]) if prev_sentences else ""
+        # Get story context from last 3 sent
+        story_context = " ".join(prev_sentences[-3:]) if prev_sentences else ""
 
-    #     result = self.llm.check_narrative_relevance(
-    #         story_context=story_context,
-    #         current_sentence=self._current_sentence_text,
-    #         active_triplets="\n".join(triplet_strings),
-    #         persona=self.persona,
-    #     )
+        result = self.llm.prune_irrelevant_triplets_by_narrative(
+            story_context=story_context,
+            current_sentence=self._current_sentence_text,
+            active_triplets="\n".join(triplet_strings),
+            persona=self.persona,
+        )
 
-    #     if not result or "to_remove" not in result:
-    #         return active_triplets
+        if not result or "to_remove" not in result:
+            return active_triplets
 
-    #     # Build connectivity map before removing
-    #     node_connections = {}
-    #     for s, r, o in active_triplets:
-    #         node_connections[s] = node_connections.get(s, 0) + 1
-    #         node_connections[o] = node_connections.get(o, 0) + 1
+        # Build connectivity map before removing
+        node_connections = {}
+        for s, r, o in active_triplets:
+            node_connections[s] = node_connections.get(s, 0) + 1
+            node_connections[o] = node_connections.get(o, 0) + 1
 
-    #     # Only remove edges that won't isolate nodes
-    #     to_keep = []
-    #     removal_set = set(result["to_remove"])
+        # Only remove edges that won't isolate nodes
+        to_keep = []
+        removal_set = set(result["to_remove"])
 
-    #     for triplet in active_triplets:
-    #         triplet_str = f"({triplet[0]}, {triplet[1]}, {triplet[2]})"
-    #         if triplet_str in removal_set:
-    #             s, r, o = triplet
-    #             # Check if removing would isolate a node
-    #             if node_connections.get(s, 0) <= 1 or node_connections.get(o, 0) <= 1:
-    #                 to_keep.append(triplet)
-    #                 # logging.info(f"Keeping connectivity-critical edge: {triplet}")
-    #             # else:
-    #             #     logging.info(f"Pruning low-importance edge: {triplet}")
-    #         else:
-    #             to_keep.append(triplet)
+        for triplet in active_triplets:
+            triplet_str = f"({triplet[0]}, {triplet[1]}, {triplet[2]})"
+            if triplet_str in removal_set:
+                s, r, o = triplet
+                # Check if removing would isolate a node
+                if node_connections.get(s, 0) <= 1 or node_connections.get(o, 0) <= 1:
+                    to_keep.append(triplet)
+                    # logging.info(f"Keeping connectivity-critical edge: {triplet}")
+                # else:
+                #     logging.info(f"Pruning low-importance edge: {triplet}")
+            else:
+                to_keep.append(triplet)
 
-    #     return to_keep
+        return to_keep
 
     # Take the raw list of triples returned by the LLM, process them and add edges to graph
     def add_edges_from_llm(
@@ -870,14 +870,63 @@ class SentenceGraphBuilder:
                 # )
                 continue
 
-            # find or create nodes (ensure create_node=True in get_or_create_nodes)
-            source_node, dest_node = self.get_or_create_nodes(
-                subj_final,
-                obj_final,
-                graph_active_nodes,
-                current_sentence_text_based_nodes,
-                current_sentence_text_based_words,
-            )
+            # SPECIAL CASE: For first sentence only, allow pronouns as nodes
+            pronouns = {"he", "she", "it", "they", "him", "her", "i", "you", "we"}
+
+            if self._current_sentence_index == 0:
+                # Handle subject
+                if subj_final.lower() in pronouns:
+                    source_node = self._graph.add_or_get_node(
+                        lemmas=[subj_final.lower()],
+                        actual_text=subj_final,
+                        node_type=NodeType.CONCEPT,
+                        node_source=NodeSource.TEXT_BASED,
+                        provenance=NodeProvenance.STORY_TEXT,
+                        origin_sentence=self._current_sentence_index,
+                        mark_explicit=True,
+                    )
+                else:
+                    # Normal node creation path for subject
+                    source_node = self.get_or_create_node_from_relationship(
+                        subj_final,
+                        graph_active_nodes,
+                        current_sentence_text_based_nodes,
+                        current_sentence_text_based_words,
+                        NodeSource.TEXT_BASED,
+                        create_node=True,
+                    )
+
+                # Handle object
+                if obj_final.lower() in pronouns:
+                    dest_node = self._graph.add_or_get_node(
+                        lemmas=[obj_final.lower()],
+                        actual_text=obj_final,
+                        node_type=NodeType.CONCEPT,
+                        node_source=NodeSource.TEXT_BASED,
+                        provenance=NodeProvenance.STORY_TEXT,
+                        origin_sentence=self._current_sentence_index,
+                        mark_explicit=True,
+                    )
+                else:
+                    # Normal node creation path for object
+                    dest_node = self.get_or_create_node_from_relationship(
+                        obj_final,
+                        graph_active_nodes,
+                        current_sentence_text_based_nodes,
+                        current_sentence_text_based_words,
+                        NodeSource.TEXT_BASED,
+                        create_node=True,
+                    )
+            else:
+                # Normal processing for sentences 2+
+                source_node, dest_node = self.get_or_create_nodes(
+                    subj_final,
+                    obj_final,
+                    graph_active_nodes,
+                    current_sentence_text_based_nodes,
+                    current_sentence_text_based_words,
+                )
+
             # logging.info(
             #     f"LLM DEBUG: source_node = {source_node}, dest_node = {dest_node}"
             # )
@@ -916,33 +965,40 @@ class SentenceGraphBuilder:
                 )
 
         # check for narrative flow and remove irrelevant edges
-        # if added_edges and len(added_edges) > 3:
-        #     all_active = []
-        #     for edge in self.graph.edges:
-        #         if edge.active:
-        #             all_active.append(
-        #                 (
-        #                     edge.source_node.get_text_representer(),
-        #                     edge.label,
-        #                     edge.dest_node.get_text_representer(),
-        #                 )
-        #             )
+        if added_edges and len(added_edges) > 3:
+            # Get ALL active edges (not just newly added ones)
+            all_active_triplets = []
+            for edge in self.graph.edges:
+                if edge.active:
+                    all_active_triplets.append(
+                        (
+                            edge.source_node.get_text_representer(),
+                            edge.label,
+                            edge.dest_node.get_text_representer(),
+                        )
+                    )
 
-        #     if all_active:
-        #         pruned = self.check_narrative_relevance(all_active, prev_sentences)
-        #         # Deactivate edges that were pruned
-        #         pruned_set = set(pruned)
-        #         for edge in self.graph.edges:
-        #             if edge.active:
-        #                 triplet = (
-        #                     edge.source_node.get_text_representer(),
-        #                     edge.label,
-        #                     edge.dest_node.get_text_representer(),
-        #                 )
-        #                 if triplet not in pruned_set:
-        #                     edge.active = False
-        #                     edge.visibility_score = 0
-        #                     logging.info(f"Pruned edge: {triplet}")
+            if all_active_triplets:
+                # Get pruned list from LLM
+                pruned_triplets = self.prune_irrelevant_triplets_wrapper(
+                    all_active_triplets, prev_sentences
+                )
+
+                # Convert to set for O(1) lookup
+                pruned_set = set(pruned_triplets)
+
+                # Deactivate edges that were pruned
+                for edge in self.graph.edges:
+                    if edge.active:
+                        triplet = (
+                            edge.source_node.get_text_representer(),
+                            edge.label,
+                            edge.dest_node.get_text_representer(),
+                        )
+                        if triplet not in pruned_set:
+                            edge.active = False
+                            edge.visibility_score = 0
+                            logging.info(f"Pruned edge: {triplet}")
 
         return added_edges
 

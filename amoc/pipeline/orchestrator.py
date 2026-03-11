@@ -775,30 +775,53 @@ class AMoCv4:
                     previous_graph_state=_previous_graph_state,
                     previous_carryover_nodes=_previous_carryover_nodes,
                 )
-                continue
-
-            # #  build the per-sentence view with the final graph state
-            # self._per_sentence_view = self.build_per_sentence_view_wrapper(
-            #     explicit_nodes=list(self._explicit_nodes_current_sentence),
-            #     sentence_index=self._current_sentence_index,
-            # )
-            # Update carryover nodes from projection
-            if self._per_sentence_view is not None:
-                self._carryover_nodes_current_sentence.clear()
-                self._carryover_nodes_current_sentence.update(
-                    self._per_sentence_view.carryover_nodes
-                )
+                # Nothing new was inferred since graph was restored
+                newly_inferred_nodes = set()
+                # Keep _per_sentence_view = None so plotting reads active edges
+                # directly from the restored graph (fallback path)
+                # Carryover already restored by rollback handler — don't overwrite
             else:
-                self._carryover_nodes_current_sentence.clear()
+                # Update carryover nodes from projection (normal path only)
+                if self._per_sentence_view is not None:
+                    self._carryover_nodes_current_sentence.clear()
+                    self._carryover_nodes_current_sentence.update(
+                        self._per_sentence_view.carryover_nodes
+                    )
+                else:
+                    self._carryover_nodes_current_sentence.clear()
 
-            (
-                recently_deactivated_nodes,
-                explicit_nodes_for_plot,
-                salient_nodes_for_plot,
-                inactive_nodes_for_plot,
-            ) = self.update_post_projection_state_wrapper(
-                sentence_id, i, newly_inferred_nodes, self._per_sentence_view
-            )
+            if rollback_needed:
+                # Rollback: compute plot lists from the restored graph state.
+                # Explicit = this sentence's nodes (may be empty or dangling).
+                # Salient = all active nodes in restored graph minus explicit.
+                # Inactive = all truly inactive nodes in restored graph.
+                explicit_nodes_for_plot = [
+                    n.get_text_representer()
+                    for n in self._explicit_nodes_current_sentence
+                    if n.get_text_representer()
+                ]
+                active_node_names = {
+                    n.get_text_representer()
+                    for n in self.graph.nodes
+                    if n.active and n.get_text_representer()
+                }
+                explicit_set = set(explicit_nodes_for_plot)
+                salient_nodes_for_plot = sorted(active_node_names - explicit_set)
+                inactive_nodes_for_plot = sorted(
+                    n.get_text_representer()
+                    for n in self.graph.nodes
+                    if not n.active and n.get_text_representer()
+                )
+                recently_deactivated_nodes = set()
+            else:
+                (
+                    recently_deactivated_nodes,
+                    explicit_nodes_for_plot,
+                    salient_nodes_for_plot,
+                    inactive_nodes_for_plot,
+                ) = self.update_post_projection_state_wrapper(
+                    sentence_id, i, newly_inferred_nodes, self._per_sentence_view
+                )
 
             logging.info(
                 f"INACTIVE_TRACK: After update_post_projection, inactive={inactive_nodes_for_plot}"

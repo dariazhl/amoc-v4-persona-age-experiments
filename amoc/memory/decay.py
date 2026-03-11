@@ -325,23 +325,40 @@ class Decay:
                 f"MULTI_HOP: Reinforced {reinforced_count} edges in inference chains"
             )
 
-    def enforce_node_limit(self, max_nodes: int = 30) -> None:
-        if len(self._graph.nodes) <= max_nodes:
+    def enforce_node_limit(self, max_nodes: int = 20) -> None:
+        # Only count ACTIVE nodes toward the limit — inactive nodes are
+        # retained in memory and should not trigger further deactivation
+        active_count = sum(1 for n in self._graph.nodes if n.active)
+        if active_count <= max_nodes:
             return
 
-        # Build connectivity map for analysis
-        connectivity = self.build_connectivity_map()
+        # Protect explicit and carryover nodes from deactivation
+        protected_nodes = set()
+        if self._get_explicit_nodes:
+            protected_nodes.update(self._get_explicit_nodes())
 
-        # Track current sentence for recency calculation
+        G_active, active_nodes, critical_nodes = self.identify_critical_nodes()
+        # Add protected nodes to critical so they are never candidates
+        critical_nodes = critical_nodes | protected_nodes
         current_sentence = getattr(self, "_current_sentence_idx", 0)
+        node_scores = self.score_nodes(
+            G_active, active_nodes, current_sentence, critical_nodes
+        )
+        candidates, excess = self.select_removal_candidates(
+            node_scores, max_nodes, critical_nodes, active_only=True
+        )
 
-        # Calculate node scores with improved metrics
-        node_scores = {}
-        critical_nodes = set()
+        if not candidates:
+            return
 
-        # First pass: identify critical nodes (articulation points)
+        safe_to_remove, would_fragment = self.simulate_removals(G_active, candidates)
+        removed = self.deactivate_nodes(safe_to_remove, would_fragment, excess)
+        self.log_removal_results(removed, excess, candidates)
+
+    def identify_critical_nodes(self):
         G = nx.Graph()
         active_nodes = set()
+
         for node in self._graph.nodes:
             if node.active:
                 active_nodes.add(node)
@@ -351,77 +368,128 @@ class Decay:
             if edge.active:
                 G.add_edge(edge.source_node, edge.dest_node)
 
-        # Find articulation points in the active graph
+        critical_nodes = set()
         if len(active_nodes) > 1:
-            articulation_points = set(nx.articulation_points(G))
-            critical_nodes.update(articulation_points)
+            critical_nodes = set(nx.articulation_points(G))
 
-        # Second pass: score all nodes
+        return G, active_nodes, critical_nodes
+
+    def score_nodes(self, G, active_nodes, current_sentence, critical_nodes):
+        node_scores = {}
+
         for node in self._graph.nodes:
-            # Skip if already critical
             if node in critical_nodes:
                 node_scores[node] = float("inf")
                 continue
 
             score = 0
-
-            # Active edge count (weighted)
             active_edge_count = sum(1 for e in node.edges if e.active)
             score += active_edge_count * 3
 
-            # Node source importance
+            # Boost inference-based nodes significantly — they represent
+            # LLM-inferred knowledge that bridges concepts
             if node.node_source == NodeSource.TEXT_BASED:
-                score += 10  # Text-based nodes are more important
+                score += 5
             elif node.node_source == NodeSource.INFERENCE_BASED:
-                score += 5  # Inferred nodes are somewhat important
+                score += 20
 
-            # Node activity status
+            # Extra boost for inference nodes that bridge to text-based nodes
+            if node.node_source == NodeSource.INFERENCE_BASED:
+                connects_to_text = any(
+                    e.active
+                    and (
+                        (
+                            e.source_node == node
+                            and e.dest_node.node_source == NodeSource.TEXT_BASED
+                        )
+                        or (
+                            e.dest_node == node
+                            and e.source_node.node_source == NodeSource.TEXT_BASED
+                        )
+                    )
+                    for e in node.edges
+                )
+                if connects_to_text:
+                    score += 15
+
             if node.active:
-                score += 8  # Active nodes are more important
+                score += 8
 
-            # Recency - nodes that appeared recently are more important
             if (
                 hasattr(node, "created_at_sentence")
                 and node.created_at_sentence is not None
             ):
                 age = current_sentence - node.created_at_sentence
-                recency_score = max(0, 10 - min(age, 10))  # Scale 0-10, newer = higher
+                recency_score = max(0, 10 - min(age, 10))
                 score += recency_score * 2
 
-            # Last active recency - nodes used recently are more important
             if (
                 hasattr(node, "last_active_sentence")
                 and node.last_active_sentence is not None
             ):
                 inactivity = current_sentence - node.last_active_sentence
-                if inactivity <= 2:  # Active in last 2 sentences
+                if inactivity <= 2:
                     score += 5
-                elif inactivity <= 5:  # Active in last 5 sentences
+                elif inactivity <= 5:
                     score += 2
 
-            # Degree centrality in active graph
-            if node in G:
+            if node in G and len(G) > 1:
                 degree = G.degree(node)
-                if len(G) > 1:
-                    centrality = degree / (len(G) - 1)
-                    score += centrality * 5
+                centrality = degree / (len(G) - 1)
+                score += centrality * 5
 
             node_scores[node] = score
 
-        # Sort nodes by score (lowest first)
-        sorted_nodes = sorted(
-            [n for n in node_scores if n not in critical_nodes],
-            key=lambda n: node_scores[n],
-        )
+        return node_scores
 
-        excess = len(self._graph.nodes) - max_nodes
-        candidates = sorted_nodes[:excess]
+    def select_removal_candidates(
+        self, node_scores, max_nodes, critical_nodes, active_only=False
+    ):
+        # Separate candidates by source — prune text-based first
+        text_nodes = []
+        inference_nodes = []
 
-        # Pre-check which removals would fragment the graph
+        for n in node_scores:
+            if n in critical_nodes:
+                continue
+            if active_only and not n.active:
+                continue
+            if n.node_source == NodeSource.TEXT_BASED:
+                text_nodes.append(n)
+            else:
+                inference_nodes.append(n)
+
+        sorted_text = sorted(text_nodes, key=lambda n: node_scores[n])
+        sorted_inference = sorted(inference_nodes, key=lambda n: node_scores[n])
+
+        if active_only:
+            excess = sum(1 for n in self._graph.nodes if n.active) - max_nodes
+        else:
+            excess = len(self._graph.nodes) - max_nodes
+
+        if excess <= 0:
+            return [], 0
+
+        # Take from text-based first, then inference-based only if needed
+        if len(sorted_text) >= excess:
+            candidates = sorted_text[:excess]
+            logging.info(
+                f"NODE_LIMIT: Selecting {excess} text-based nodes for potential removal"
+            )
+        else:
+            candidates = sorted_text.copy()
+            remaining = excess - len(sorted_text)
+            candidates.extend(sorted_inference[:remaining])
+            logging.info(
+                f"NODE_LIMIT: Taking all {len(sorted_text)} text-based nodes + "
+                f"{remaining} inference-based nodes for potential removal"
+            )
+
+        return candidates, excess
+
+    def simulate_removals(self, G, candidates):
         safe_to_remove = []
         would_fragment = []
-
-        # Create a copy of the graph for simulation
         G_copy = G.copy()
 
         for node in candidates:
@@ -429,13 +497,9 @@ class Decay:
                 safe_to_remove.append(node)
                 continue
 
-            # Check if removing this node would disconnect the graph
             neighbors = list(G_copy.neighbors(node))
-
-            # Temporarily remove node and check connectivity
             G_copy.remove_node(node)
 
-            # Check if any neighbors became isolated or if component count increased
             fragments = False
             for neighbor in neighbors:
                 if neighbor in G_copy and G_copy.degree(neighbor) == 0:
@@ -446,60 +510,77 @@ class Decay:
                 safe_to_remove.append(node)
             else:
                 would_fragment.append(node)
-                # Restore node for next iteration
                 G_copy.add_node(node)
                 for neighbor in neighbors:
-                    if neighbor in G_copy.nodes():  # Neighbor might have been removed
+                    if neighbor in G_copy.nodes():
                         G_copy.add_edge(node, neighbor)
 
-        # Remove safe nodes first
+        return safe_to_remove, would_fragment
+
+    def deactivate_nodes(self, safe_to_remove, would_fragment, excess):
         removed = 0
+
         for node in safe_to_remove[:excess]:
-            # Remove all edges connected to this node
-            for edge in list(node.edges):
-                edge.active = False
-            if hasattr(self._graph, "_inactive_nodes"):
-                self._graph._inactive_nodes.add(node)
+            self.deactivate_single_node(node)
             removed += 1
             if removed >= excess:
-                break
+                return removed
 
-        # If we still need to remove more, try the ones that might fragment but have lowest scores
         if removed < excess:
             additional_needed = excess - removed
             for node in would_fragment[:additional_needed]:
                 logging.warning(
-                    f"NODE_LIMIT: Deactivating node '{node.actual_texts}' (may fragment graph)"
+                    f"NODE_LIMIT: Deactivating node '{getattr(node, 'actual_texts', 'unknown')}' (may fragment graph)"
                 )
-                for edge in list(node.edges):
-                    edge.active = False
+                self.deactivate_single_node(node)
                 removed += 1
 
-        # Final connectivity check
-        if removed > 0:
-            # Rebuild active graph to check final state
-            final_G = nx.Graph()
-            for node in self._graph.nodes:
-                if node.active:
-                    final_G.add_node(node)
-            for edge in self._graph.edges:
-                if edge.active:
-                    final_G.add_edge(edge.source_node, edge.dest_node)
+        return removed
 
-            components = list(nx.connected_components(final_G))
+    def deactivate_single_node(self, node):
+        for edge in list(node.edges):
+            edge.active = False
 
-            logging.info(
-                f"NODE_LIMIT: Removed {removed}/{excess} nodes. "
-                f"Graph now has {len(final_G)} active nodes in {len(components)} components."
-            )
+        if hasattr(self._graph, "_inactive_nodes"):
+            self._graph._inactive_nodes.add(node)
 
-            # Log removed nodes for debugging
-            removed_names = [
-                n.actual_texts
-                for n in candidates[:removed]
-                if hasattr(n, "actual_texts")
-            ]
-            logging.debug(f"Removed nodes: {removed_names}")
+    def log_removal_results(self, removed, excess, candidates):
+        if removed == 0:
+            return
+
+        final_G = nx.Graph()
+        for node in self._graph.nodes:
+            if node.active:
+                final_G.add_node(node)
+        for edge in self._graph.edges:
+            if edge.active:
+                final_G.add_edge(edge.source_node, edge.dest_node)
+
+        components = list(nx.connected_components(final_G))
+
+        text_removed = sum(
+            1
+            for n in candidates[:removed]
+            if n.node_source == NodeSource.TEXT_BASED
+        )
+        inference_removed = sum(
+            1
+            for n in candidates[:removed]
+            if n.node_source == NodeSource.INFERENCE_BASED
+        )
+
+        logging.info(
+            f"NODE_LIMIT: Deactivated {removed}/{excess} nodes. "
+            f"Graph now has {len(final_G)} active nodes in {len(components)} components. "
+            f"(Text-based: {text_removed}, Inference-based: {inference_removed})"
+        )
+
+        removed_names = [
+            getattr(n, "actual_texts", "unknown")
+            for n in candidates[:removed]
+            if hasattr(n, "actual_texts")
+        ]
+        logging.info(f"Deactivated nodes: {removed_names}")
 
     def reactivate_relevant_edges(
         self,
