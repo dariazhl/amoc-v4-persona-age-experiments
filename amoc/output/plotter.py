@@ -50,6 +50,7 @@ class GraphPlotter:
         self._viz_positions: Dict[str, Tuple[float, float]] = {}
         self._prev_active_nodes: Set["Node"] = set()
         self._cumulative_deactivated_nodes: Set["Node"] = set()
+        self._ever_in_working_memory: Set[str] = set()  # cumulative explicit+carryover node names
         self._get_explicit_nodes_fn: Optional[Callable] = None
         self._get_edge_activation_scores_fn: Optional[Callable] = None
         self._graph_edges_to_triplets_fn: Optional[Callable] = None
@@ -363,7 +364,7 @@ class GraphPlotter:
                     if node_text:
                         nodes_to_plot.add(node_text)
 
-            for lst in (inactive_nodes, explicit_nodes, salient_nodes, highlight_nodes):
+            for lst in (explicit_nodes, salient_nodes, highlight_nodes):
                 if lst:
                     nodes_to_plot.update(lst)
 
@@ -589,13 +590,11 @@ class GraphPlotter:
             f"DEBUG: Plotting with {len(reconstruct_semantic_triplets_fn(only_active=True))} triplets, mode={"sentence_cumulative"}"
         )
         # recalculate inactive nodes right before plotting
-        all_graph_nodes = {
-            n.get_text_representer()
-            for n in self._graph.nodes
-            if n.get_text_representer()
-        }
         active_node_names = set(explicit_nodes_for_plot) | set(salient_nodes_for_plot)
-        inactive_nodes_recalc = sorted(all_graph_nodes - active_node_names)
+        # Track cumulative working memory: all nodes ever explicit or carryover
+        self._ever_in_working_memory.update(active_node_names)
+        # Inactive = previously in working memory but no longer active
+        inactive_nodes_recalc = sorted(self._ever_in_working_memory - active_node_names)
 
         # Use inactive_nodes_recalc
         self._capture_state(

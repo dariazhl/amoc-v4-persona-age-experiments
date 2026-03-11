@@ -321,9 +321,7 @@ def plot_amoc_triplets(
     show_all_edges: bool = False,
     edge_activation_scores: Optional[Dict[Tuple[str, str, str], int]] = None,
     layout_from_active_only: bool = True,
-    active_triplets_for_overlay: Optional[
-        List[Tuple[str, str, str]]
-    ] = None,  # TASK 2: Triplet overlay
+    active_triplets_for_overlay: Optional[List[Tuple[str, str, str]]] = None,
     show_triplet_overlay: bool = True,  # TASK 2: Control overlay visibility
     layout_depth: int = 3,
 ) -> str:
@@ -446,11 +444,8 @@ def plot_amoc_triplets(
             if node not in G:
                 G.add_node(node)
 
-    # Ensure inactive nodes are in the graph
-    if inactive_nodes:
-        for node in inactive_nodes:
-            if node not in G:
-                G.add_node(node)
+    # NOTE: Do NOT add disconnected inactive nodes to the graph.
+    # Inactive nodes only appear if they already have edges in the triplet set.
 
     # If after injection the graph is still empty, return
     if G.number_of_nodes() == 0:
@@ -1011,7 +1006,8 @@ def plot_amoc_triplets(
         list(explicit_nodes) if explicit_nodes is not None else None
     )
     salient_nodes_filtered = _filter_to_plotted(salient_nodes, plotted_nodes)
-    inactive_nodes_filtered = _filter_to_plotted(inactive_for_title, plotted_nodes)
+    # Show all inactive nodes in title (not filtered to plotted) since it's informational
+    inactive_nodes_filtered = list(inactive_for_title) if inactive_for_title else None
 
     if inactive_for_title is not None:
         sup_lines.append("\n")
@@ -1074,8 +1070,8 @@ def plot_amoc_triplets(
                 ax,
                 overlay_triplets,
                 active_nodes=active_nodes_for_filter,
-                max_triplets=12,
-                font_size=8,
+                max_triplets=20,
+                font_size=10,
             )
 
     ax.axis("off")
