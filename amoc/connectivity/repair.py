@@ -179,26 +179,16 @@ class ConnectivityRepair:
         if explicit_active and not all_inactive and not active_empty:
             return
 
+        # Reactivate visible edges when active subgraph is empty
         if active_empty:
-            visible_edges = {e for e in self._graph.edges if e.visibility_score > 0}
-            visible_nodes = {e.source_node for e in visible_edges} | {
-                e.dest_node for e in visible_edges
-            }
-            new_nodes = set(visible_nodes)
-            new_edges = set(visible_edges)
-        else:
-            new_nodes = set(active_nodes)
-            new_edges = set(active_edges)
-
-        for node in new_nodes:
-            node.edges = []
-
-        for edge in new_edges:
-            edge.source_node.edges.append(edge)
-            edge.dest_node.edges.append(edge)
-
-        self._graph.nodes = new_nodes
-        self._graph.edges = new_edges
+            for edge in self._graph.edges:
+                if edge.visibility_score > 0 and not edge.active:
+                    edge.active = True
+                    logging.info(
+                        f"STABILIZE: Reactivated visible edge "
+                        f"'{edge.source_node.get_text_representer()}' -> "
+                        f"'{edge.dest_node.get_text_representer()}'"
+                    )
 
     def ensure_carryover_connected(self, carryover_nodes: set) -> None:
         # carryover nodes get disconnected sometimes - added guard

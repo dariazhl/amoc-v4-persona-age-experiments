@@ -468,14 +468,11 @@ class Decay:
         if removed < excess:
             additional_needed = excess - removed
             for node in would_fragment[:additional_needed]:
-                # Log warning when removing potentially fragmenting nodes
                 logging.warning(
-                    f"NODE_LIMIT: Removing node '{node.actual_texts}' may fragment graph"
+                    f"NODE_LIMIT: Deactivating node '{node.actual_texts}' (may fragment graph)"
                 )
-
                 for edge in list(node.edges):
-                    self._graph.remove_edge(edge)
-                self._graph.nodes.discard(node)
+                    edge.active = False
                 removed += 1
 
         # Final connectivity check

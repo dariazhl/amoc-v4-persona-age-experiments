@@ -520,6 +520,7 @@ class AMoCv4:
         original_text: str,
         prev_sentences: list,
         previous_graph_state,
+        previous_carryover_nodes,
     ) -> None:
         logging.warning(
             f"ROLLBACK_OCCURRED: At sentence {i+1} | "
@@ -535,7 +536,10 @@ class AMoCv4:
         if original_text not in prev_sentences:
             prev_sentences.append(original_text)
 
-        # 3. Clear per-sentence view
+        # 3. Restore carryover nodes to pre-sentence state
+        self._carryover_nodes_current_sentence = previous_carryover_nodes
+
+        # 4. Clear per-sentence view
         self._per_sentence_view = None
 
         logging.info(
@@ -729,6 +733,7 @@ class AMoCv4:
             )
 
             _previous_graph_state = self.snapshot_graph_state()
+            _previous_carryover_nodes = set(self._carryover_nodes_current_sentence)
 
             nodes_before_sentence, should_skip_sentence = (
                 self.process_sentence_core_wrapper(
@@ -768,6 +773,7 @@ class AMoCv4:
                     original_text=original_text,
                     prev_sentences=prev_sentences,
                     previous_graph_state=_previous_graph_state,
+                    previous_carryover_nodes=_previous_carryover_nodes,
                 )
                 continue
 

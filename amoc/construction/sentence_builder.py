@@ -1054,4 +1054,4 @@ class SentenceGraphBuilder:
         apply_edge_decay_fn()
         if enforce_node_limit_fn:
             enforce_node_limit_fn()
-        self.graph.stabilize_cumulative_graph_wrapper(set(explicit_nodes))
+        # self.graph.stabilize_cumulative_graph_wrapper(set(explicit_nodes))

@@ -10,6 +10,9 @@ import textwrap
 
 DEFAULT_BLUE_NODES: Iterable[str] = ()
 
+# Sentinel key stored inside the positions dict to remember the original hub
+_HUB_CENTER_KEY = "__hub_center__"
+
 
 def _pretty_text(text: str) -> str:
     text = (text or "").strip()
@@ -471,11 +474,19 @@ def plot_amoc_triplets(
             for idx, node in enumerate(sorted(new_nodes)):
                 angle = idx * angle_step
                 pos[node] = (radius * math.cos(angle), radius * math.sin(angle))
+        # Cache the hub center for future calls
+        if positions is not None and hub in pos:
+            positions[_HUB_CENTER_KEY] = pos[hub]
     else:
-        # Have frozen positions + new nodes — place new nodes with collision avoidance
+        # Have frozen positions + new nodes — place around the original hub center
         pos = dict(frozen)
-        center_x = sum(x for x, y in pos.values()) / len(pos)
-        center_y = sum(y for x, y in pos.values()) / len(pos)
+
+        if positions is not None and _HUB_CENTER_KEY in positions:
+            center_x, center_y = positions[_HUB_CENTER_KEY]
+        else:
+            center_x = sum(x for x, y in pos.values()) / len(pos)
+            center_y = sum(y for x, y in pos.values()) / len(pos)
+
         max_dist = max(
             math.hypot(x - center_x, y - center_y) for x, y in pos.values()
         )
