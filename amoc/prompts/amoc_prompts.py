@@ -458,7 +458,14 @@ Candidate triple: ({subject}, {relation}, {object})
    - ✓ VALID: "wrote", "is", "wears", "has", "takes_place_at", "prefers", "finds"
    - ✗ INVALID: "not applicable", "na", "none", adjectives as relations like "traditional", "simple", "interesting"
 
-2. **OBJECT MUST COMPLETE THE VERB'S MEANING:**
+2. **PREPOSITIONS MUST BE INCLUDED WHEN REQUIRED:**
+   - Many verbs require prepositions to complete their meaning
+   - ✓ CORRECT: "related to", "lives in", "travels to", "depends on", "wrote about", "believes in"
+   - ✗ INCORRECT: "related", "lives", "travels", "depends", "wrote", "believes"
+   - If the relation is missing a required preposition, mark as INVALID and provide the corrected version
+   - Example: (charlemagne, related, charles) → INVALID, correct to (charlemagne, related to, charles)
+
+3. **OBJECT MUST COMPLETE THE VERB'S MEANING:**
    - For transitive verbs (verbs that require an object), the object must be a noun
    - ✓ VALID: (charlemagne, prefers, simplicity) - noun object completes "prefers"
    - ✓ VALID: (charlemagne, wears, attire) - noun object
@@ -467,14 +474,14 @@ Candidate triple: ({subject}, {relation}, {object})
    - ✗ INVALID: (charlemagne, wears, traditional) - "wears" needs a noun (what does he wear?)
    - ✗ INVALID: (charlemagne, finds, interesting) - "finds" needs a noun (what does he find?)
 
-3. **COPULA VERBS ("is", "was", "are") HANDLE ADJECTIVES CORRECTLY:**
+4. **COPULA VERBS ("is", "was", "are") HANDLE ADJECTIVES CORRECTLY:**
    - "is" + adjective is COMPLETE and VALID
    - ✓ VALID: (charlemagne, is, handsome) - complete property description
    - ✓ VALID: (charlemagne, is, skilled) - complete
    - ✓ VALID: (attire, is, traditional) - complete
    - This is correct because "is" links a subject to a property/state
 
-4. **NO GENERIC SUBJECTS FOR ACTION VERBS:**
+5. **NO GENERIC SUBJECTS FOR ACTION VERBS:**
    - Generic words ("thing", "something", "it", "this", "that", "certain", "year") cannot be subjects of action verbs
    - ✓ VALID: (charlemagne, writes, book)
    - ✗ INVALID: (thing, writes, book)
@@ -490,6 +497,12 @@ Output: {{"valid": true, "reason": "'is' + adjective is a complete property desc
 
 Input: (charlemagne, wears, traditional)
 Output: {{"valid": false, "reason": "'wears' requires a noun object - what does he wear? 'traditional' as an adjective doesn't complete the meaning", "corrected_triple": null}}
+
+Input: (charlemagne, has, regal)
+Output: {{"valid": false, "reason": "'has' is not a valid verb in this context", "corrected_triple": null}}
+
+Input: (charlemagne, values, educational)
+Output: {{"valid": false, "'values' requires a noun object - what does he value?", "corrected_triple": ["charlemagne", "values", "education"]}}
 
 Input: (charlemagne, wears, attire)
 Output: {{"valid": true, "reason": "Complete: subject + verb + noun object", "corrected_triple": null}}
@@ -527,7 +540,7 @@ Current sentence being processed:
 Active relationships in the reader's memory:
 {active_triplets}
 
-**SCORING GUIDE (1-3):**
+**SCORING GUIDE (0-3):**
 
 **SCORE 3 - HIGH RELEVANCE (Essential to keep)**
 - Involves main characters (Charlemagne, his family, kingdoms, key figures)
@@ -557,6 +570,12 @@ Active relationships in the reader's memory:
   * Prefer "is + adjective" (score 3) over "has + noun" (score 1) for the same attribute
 - Minor details from early sentences no longer connected to current narrative
 
+**SCORE 0 - COMPLETELY IRRELEVANT (Remove immediately)**
+- Semantically incoherent or garbage triples
+- Complete non-sequiturs that have no connection to the current narrative
+- Triplets that are clearly errors or hallucinations
+- **Must check connectivity protection** - only remove if node remains connected
+
 **CRITICAL RULES:**
 
 1. **CONTEXT AWARENESS:**
@@ -570,7 +589,9 @@ Active relationships in the reader's memory:
    - The graph should prefer: [Concept] -[verb]-> [Concept] + [Concept] -[is]-> [Property]
 
 3. **CONNECTIVITY PROTECTION:**
-   - Never assign score 1 to a triple if removing it would disconnect a node from the graph
+   - **NEVER assign score 0 to an edge if removing it would disconnect a node from the graph**
+   - Score 0 means immediate removal in the current sentence
+   - Score 1 means gradual decay over multiple sentences
    - Check if the node has other connections before marking for removal
 
 **SCORING EXAMPLES:**
@@ -644,7 +665,7 @@ Here are the active relationships in the reader's memory:
 **REMOVE (IRRELEVANT) if:**
 
 1. **SEMANTICALLY INCOMPLETE:**
-   - Action verb + adjective without noun (e.g., "prefers - simple", "wears - traditional", "finds - interesting")
+   - Action verb + adjective without noun (e.g., "has - regal", "prefers - simple", "wears - traditional", "finds - interesting")
    - These are grammatically incomplete and add confusion, not meaning
 
 2. **VAGUE OR GENERIC RELATIONS:**
@@ -664,6 +685,11 @@ Here are the active relationships in the reader's memory:
 5. **STRUCTURALLY DANGEROUS (BUT HANDLE CAREFULLY):**
    - **Never remove a relationship if it's the only connection between a node and the rest of the graph**
    - Check connectivity before removing!
+
+6. **SEMANTICALLY AMBIGUOUS OR ILLOGICAL:**
+   - Taken together, the triplet's subject, relation and verb do not make sense logically e.g. "ability" - "enables" - "famous" OR "charlemagne" - "wears at" - festival"
+   - The relation misses a copular verbs 
+   - These are semantically non-sensical add confusion, not meaning
 
 **DECISION EXAMPLES:**
 

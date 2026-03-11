@@ -91,7 +91,7 @@ class Decay:
 
         if not current_sentence:
             logging.warning("SEMANTIC_DECAY: No current sentence text, skipping")
-            self._apply_fallback_decay(decay_candidates)
+            self.apply_fallback_decay(decay_candidates)
             return
 
         # Call LLM to evaluate narrative relevance
@@ -104,12 +104,12 @@ class Decay:
             )
         except Exception as e:
             logging.error(f"SEMANTIC_DECAY: LLM call failed: {e}")
-            self._apply_fallback_decay(decay_candidates)
+            self.apply_fallback_decay(decay_candidates)
             return
 
         if not result or "scores" not in result:
             # Fallback to simple decay
-            self._apply_fallback_decay(decay_candidates)
+            self.apply_fallback_decay(decay_candidates)
             return
 
         # Get scores from LLM response
@@ -123,17 +123,17 @@ class Decay:
         connectivity_map = self.build_connectivity_map()
 
         # Track stats for logging
-        stats = {"reinforce": 0, "maintain": 0, "decay": 0, "protected": 0}
+        stats = {"reinforce": 0, "maintain": 0, "decay": 0, "decay_immediate": 0, "protected": 0}
 
         for edge in decay_candidates:
             triplet_str = edge_to_triplet[edge]
             score = scores.get(triplet_str, 2)  # Default to maintain (2)
 
-            # Ensure score is within 1-3 range
+            # Ensure score is within 0-3 range
             try:
                 score = int(score)
-                if score < 1:
-                    score = 1
+                if score < 0:
+                    score = 0
                 elif score > 3:
                     score = 3
             except:
@@ -142,9 +142,27 @@ class Decay:
             # Check if this edge is critical for connectivity
             is_critical = not self.can_remove_edge(edge, connectivity_map)
 
-            if score == 1:  # LOW RELEVANCE - should decay
+            if score == 0:  # COMPLETELY IRRELEVANT - immediate removal
                 if is_critical:
-                    # Double decay
+                    # Can't remove — treat as score 1 instead
+                    edge.reduce_visibility()
+                    stats["protected"] += 1
+                    logging.info(
+                        f"SEMANTIC_DECAY: Protected connectivity-critical edge {triplet_str} "
+                        f"(score=0 but would break graph, treating as score 1)"
+                    )
+                else:
+                    # Immediate deactivation
+                    edge.visibility_score = 0
+                    edge.active = False
+                    stats["decay_immediate"] += 1
+                    logging.info(
+                        f"SEMANTIC_DECAY: Immediately removed edge {triplet_str} (score=0)"
+                    )
+
+            elif score == 1:  # LOW RELEVANCE - gradual decay
+                if is_critical:
+                    # Double decay but keep
                     edge.reduce_visibility()
                     edge.reduce_visibility()
                     stats["protected"] += 1
@@ -188,8 +206,8 @@ class Decay:
 
         logging.info(
             f"SEMANTIC_DECAY: Stats - Reinforce: {stats['reinforce']}, "
-            f"Maintain: {stats['maintain']}, Decay: {stats['decay']}, "
-            f"Protected: {stats['protected']}"
+            f"Maintain: {stats['maintain']}, Decay (gradual): {stats['decay']}, "
+            f"Decay (immediate): {stats['decay_immediate']}, Protected: {stats['protected']}"
         )
 
         self.reinforce_multi_hop_chains()
@@ -262,7 +280,7 @@ class Decay:
         # deprecated
         return set()
 
-    def _apply_fallback_decay(self, edges):
+    def apply_fallback_decay(self, edges):
         for edge in edges:
             edge.reduce_visibility()
             if edge.visibility_score <= 0:
@@ -559,9 +577,7 @@ class Decay:
         components = list(nx.connected_components(final_G))
 
         text_removed = sum(
-            1
-            for n in candidates[:removed]
-            if n.node_source == NodeSource.TEXT_BASED
+            1 for n in candidates[:removed] if n.node_source == NodeSource.TEXT_BASED
         )
         inference_removed = sum(
             1

@@ -49,6 +49,7 @@ class TextNormalizer:
             "has_kind": "has",
             "possesses": "has",
             "owns": "has",
+            "has property": "is",
         }
 
         # Apply mapping if exact match found

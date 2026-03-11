@@ -15,6 +15,7 @@ BANNED_LEMMAS = {
     "man",
     "certain",
     "year",
+    "time",
     "something",
     "anything",
     "it",
