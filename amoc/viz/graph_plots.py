@@ -450,34 +450,67 @@ def plot_amoc_triplets(
     salient_node_set = set(salient_nodes) if salient_nodes else set()
     inferred_node_set = set(inferred_nodes) if inferred_nodes else set()
 
-    # Select hub: highest degree node
-    hub = max(G.degree, key=lambda x: x[1])[0]
+    # Frozen positions: reuse existing positions, only compute for new nodes
+    frozen = {n: positions[n] for n in G.nodes() if positions and n in positions}
+    new_nodes = [n for n in G.nodes() if n not in frozen]
 
-    # Compute positions using pure BFS radial layout
-    pos = _compute_radial_positions(G, hub)
+    if not new_nodes:
+        pos = dict(frozen)
+    elif not frozen:
+        # First call — compute full radial layout
+        hub = max(G.degree, key=lambda x: x[1])[0]
+        pos = _compute_radial_positions(G, hub)
+        if not pos:
+            pos = nx.spring_layout(G, seed=42)
+        # Handle any nodes _compute_radial_positions missed (disconnected)
+        new_nodes = [n for n in G.nodes() if n not in pos]
+        if new_nodes:
+            count = len(new_nodes)
+            radius = max(10.0, count * 1.5)
+            angle_step = 2 * math.pi / max(1, count)
+            for idx, node in enumerate(sorted(new_nodes)):
+                angle = idx * angle_step
+                pos[node] = (radius * math.cos(angle), radius * math.sin(angle))
+    else:
+        # Have frozen positions + new nodes — place new nodes with collision avoidance
+        pos = dict(frozen)
+        center_x = sum(x for x, y in pos.values()) / len(pos)
+        center_y = sum(y for x, y in pos.values()) / len(pos)
+        max_dist = max(
+            math.hypot(x - center_x, y - center_y) for x, y in pos.values()
+        )
+        min_distance = 3.0
 
-    if not pos:
-        pos = nx.spring_layout(G, seed=42)
+        for i, node in enumerate(sorted(new_nodes)):
+            angle = i * 0.5
+            placed = False
 
-    missing_nodes = [n for n in G.nodes() if n not in pos]
+            for radius_mult in range(1, 20):
+                test_radius = max_dist + (radius_mult * min_distance)
 
-    if missing_nodes:
-        # Compute current max radius safely
-        if pos:
-            max_radius = max(math.hypot(x, y) for x, y in pos.values())
-        else:
-            max_radius = 10.0
+                for angle_offset in range(16):
+                    test_angle = angle + (angle_offset * math.pi / 8)
+                    test_x = center_x + test_radius * math.cos(test_angle)
+                    test_y = center_y + test_radius * math.sin(test_angle)
 
-        fallback_radius = max_radius + 4.5
+                    too_close = any(
+                        math.hypot(test_x - ex_x, test_y - ex_y) < min_distance
+                        for ex_x, ex_y in pos.values()
+                    )
 
-        count = len(missing_nodes)
-        angle_step = 2 * math.pi / max(1, count)
+                    if not too_close:
+                        pos[node] = (test_x, test_y)
+                        placed = True
+                        break
 
-        for idx, node in enumerate(sorted(missing_nodes)):
-            theta = idx * angle_step
-            x = fallback_radius * math.cos(theta)
-            y = fallback_radius * math.sin(theta)
-            pos[node] = (x, y)
+                if placed:
+                    break
+
+            if not placed:
+                pos[node] = (
+                    center_x + max_dist + (i * min_distance),
+                    center_y,
+                )
 
     inactive_in_graph = [n for n in G.nodes() if n in inactive_node_set]
     active_in_graph = [n for n in G.nodes() if n not in inactive_node_set]

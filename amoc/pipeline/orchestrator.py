@@ -571,33 +571,14 @@ class AMoCv4:
 
         if plot_after_each_sentence:
             try:
-                # Active plot
                 explicit = [
                     n.get_text_representer()
                     for n in self._explicit_nodes_current_sentence
                 ]
-                self.plot_graph_snapshot_wrapper(
-                    sentence_index=i,
-                    sentence_text=original_text,
-                    output_dir=graphs_output_dir,
-                    highlight_nodes=highlight_nodes,
-                    inactive_nodes=[],
-                    explicit_nodes=explicit,
-                    salient_nodes=[],
-                    only_active=True,
-                    largest_component_only=largest_component_only,
-                    mode="sentence_active",
-                    triplets_override=self._previous_active_triplets,  # from previous state
-                    active_edges=set(),
-                    active_triplets_for_overlay=self._previous_active_triplets,
-                    property_nodes=[],
-                )
-
                 # Cumulative plot using restored graph
                 cumulative_triplets = self._triplet_ops.reconstruct_semantic_triplets(
                     only_active=False
                 )
-                logging.info(f"DEBUG: Cumulative triplets for sentence {i}: {triplets}")
                 self.plot_graph_snapshot_wrapper(
                     sentence_index=i,
                     sentence_text=original_text,
@@ -648,48 +629,6 @@ class AMoCv4:
             for n in self.graph.nodes
             if n.node_source == NodeSource.INFERENCE_BASED
         ]
-
-        # Active view state
-        if self._per_sentence_view is not None:
-            active_edge_pairs = {
-                (
-                    e.source_node.get_text_representer(),
-                    e.dest_node.get_text_representer(),
-                )
-                for e in self._per_sentence_view.active_edges
-            }
-            active_triplets = [
-                (
-                    e.source_node.get_text_representer(),
-                    e.label,
-                    e.dest_node.get_text_representer(),
-                )
-                for e in self._per_sentence_view.active_edges
-            ]
-        else:
-            active_edge_pairs = {
-                (
-                    edge.source_node.get_text_representer(),
-                    edge.dest_node.get_text_representer(),
-                )
-                for edge in self.graph.edges
-                if edge.active
-            }
-            active_triplets = self._triplet_ops.reconstruct_semantic_triplets(
-                only_active=True
-            )
-
-        self._plot_ops._capture_state(
-            sentence_idx=i,
-            sentence_text=original_text,
-            mode="active",
-            triplets=active_triplets,
-            explicit_nodes=explicit_nodes_for_plot,
-            inactive_nodes=inactive_nodes_for_plot,
-            salient_nodes=salient_nodes_for_plot,
-            inferred_nodes=inferred_nodes,
-            active_edges=active_edge_pairs,
-        )
 
         # Cumulative view state
         cumulative_active_pairs = {

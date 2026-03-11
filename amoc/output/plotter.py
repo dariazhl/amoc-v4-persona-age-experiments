@@ -367,19 +367,8 @@ class GraphPlotter:
                 if lst:
                     nodes_to_plot.update(lst)
 
-            # Assign positions for any missing nodes
+            # Keep historical nodes for cumulative plots
             if nodes_to_plot:
-                for node_text in nodes_to_plot:
-                    if node_text not in self._viz_positions:
-                        idx = len(self._viz_positions)
-                        angle = 2 * math.pi * idx / max(1, len(nodes_to_plot))
-                        radius = 1 + 0.5 * idx
-                        self._viz_positions[node_text] = (
-                            radius * math.cos(angle),
-                            radius * math.sin(angle),
-                        )
-
-                # Keep historical nodes for cumulative plots
                 for node_text in list(self._viz_positions.keys()):
                     if node_text not in nodes_to_plot:
                         nodes_to_plot.add(node_text)
@@ -587,58 +576,6 @@ class GraphPlotter:
                 },
             )
         )
-        # Plot active view
-        if per_sentence_view is not None:
-            active_edge_pairs = {
-                (
-                    e.source_node.get_text_representer(),
-                    e.dest_node.get_text_representer(),
-                )
-                for e in per_sentence_view.active_edges
-            }
-        else:
-            snapshot_edges = [e for e in self._graph.edges if e.active]
-            active_edge_pairs = {
-                (
-                    edge.source_node.get_text_representer(),
-                    edge.dest_node.get_text_representer(),
-                )
-                for edge in snapshot_edges
-            }
-
-        self._capture_state(
-            sentence_idx=sentence_idx,
-            sentence_text=original_text,
-            mode="active",
-            triplets=active_triplets,
-            explicit_nodes=explicit_nodes_for_plot,
-            inactive_nodes=inactive_nodes_for_plot,
-            salient_nodes=salient_nodes_for_plot,
-            inferred_nodes=[
-                n.get_text_representer()
-                for n in self._graph.nodes
-                if n.node_source == NodeSource.INFERENCE_BASED
-            ],
-            active_edges=active_edge_pairs,
-        )
-
-        self.plot_graph_snapshot_full(
-            sentence_index=sentence_idx,
-            sentence_text=original_text,
-            output_dir=graphs_output_dir,
-            highlight_nodes=highlight_nodes,
-            inactive_nodes=inactive_nodes_for_plot,
-            explicit_nodes=explicit_nodes_for_plot,
-            salient_nodes=salient_nodes_for_plot,
-            only_active=True,
-            largest_component_only=largest_component_only,
-            mode="sentence_active",
-            triplets_override=active_triplets,
-            active_edges=active_edge_pairs,
-            active_triplets_for_overlay=active_triplets,
-            property_nodes=property_nodes_for_plot,
-        )
-
         # Plot cumulative view — ACTIVE edges only, ALL nodes
         snapshot_edges = [e for e in self._graph.edges if e.active]
         cumulative_active_pairs = {
@@ -753,17 +690,6 @@ class GraphPlotter:
             }
         )
 
-        # Assign positions for any new nodes (using all_nodes)
-        for node_text in all_nodes:
-            if node_text not in self._viz_positions:
-                idx = len(self._viz_positions)
-                angle = 2 * math.pi * idx / max(1, len(all_nodes))
-                radius = 1 + 0.5 * idx
-                self._viz_positions[node_text] = (
-                    radius * math.cos(angle),
-                    radius * math.sin(angle),
-                )
-
         age_val = self._persona_age if self._persona_age is not None else -1
 
         # Build active_edges set for visual distinction
@@ -794,6 +720,7 @@ class GraphPlotter:
                 inferred_nodes=sorted(inferred_node_names & nodes_with_active_edges),
                 salient_nodes=carryover_nodes,
                 inactive_nodes=sorted(all_nodes - nodes_with_active_edges),
+                inactive_nodes_for_title=sorted(all_nodes - nodes_with_active_edges),
                 positions=self._viz_positions,
                 active_edges=active_edge_set,  # Highlight active edges
                 edge_activation_scores=edge_scores,
