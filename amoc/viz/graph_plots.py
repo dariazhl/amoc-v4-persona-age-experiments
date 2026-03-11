@@ -21,19 +21,34 @@ def _pretty_text(text: str) -> str:
     return text
 
 
-def _compute_radial_positions(G, hub):
+def _compute_bfs_levels(G, hub):
     from collections import deque
 
-    # BFS COMPUTATION
     levels = {hub: 0}
     queue = deque([hub])
 
     while queue:
-        node = queue.popleft()
-        for neighbor in G.neighbors(node):
+        current = queue.popleft()
+        for neighbor in G.neighbors(current):
             if neighbor not in levels:
-                levels[neighbor] = levels[node] + 1
+                levels[neighbor] = levels[current] + 1
                 queue.append(neighbor)
+
+    return levels
+
+
+# Radial layout constants (shared between initial layout and incremental placement)
+_RADIAL_BASE_RADIUS = 4.0
+_RADIAL_RING_GAP = 4.5
+_RADIAL_NODE_DIAMETER = 1.8
+_RADIAL_MIN_DISTANCE = 3.0
+
+
+def _compute_radial_positions(G, hub):
+    from collections import deque
+
+    # BFS COMPUTATION
+    levels = _compute_bfs_levels(G, hub)
 
     # GROUP NODES BY LEVEL
     rings = {}
@@ -42,17 +57,13 @@ def _compute_radial_positions(G, hub):
 
     pos = {}
 
-    BASE_RADIUS = 4.0
-    RING_GAP = 4.5
-    NODE_DIAMETER = 1.8
-
     # PLACE EACH RING
     for level, nodes in rings.items():
 
         n = len(nodes)
 
         if n == 1:
-            radius = BASE_RADIUS + level * RING_GAP
+            radius = _RADIAL_BASE_RADIUS + level * _RADIAL_RING_GAP
 
             # Alternate direction to avoid collinearity
             angle = (math.pi / 3) if level % 2 == 0 else (-math.pi / 3)
@@ -64,10 +75,10 @@ def _compute_radial_positions(G, hub):
             continue
 
         # ensure no overlap using circumference math
-        circumference_needed = n * NODE_DIAMETER * 1.5
+        circumference_needed = n * _RADIAL_NODE_DIAMETER * 1.5
         min_radius = circumference_needed / (2 * math.pi)
 
-        radius = max(BASE_RADIUS + level * RING_GAP, min_radius)
+        radius = max(_RADIAL_BASE_RADIUS + level * _RADIAL_RING_GAP, min_radius)
 
         angle_step = 2 * math.pi / n
 
@@ -435,6 +446,12 @@ def plot_amoc_triplets(
             if node not in G:
                 G.add_node(node)
 
+    # Ensure inactive nodes are in the graph
+    if inactive_nodes:
+        for node in inactive_nodes:
+            if node not in G:
+                G.add_node(node)
+
     # If after injection the graph is still empty, return
     if G.number_of_nodes() == 0:
         fig, ax = plt.subplots(figsize=(34, 26))
@@ -477,50 +494,95 @@ def plot_amoc_triplets(
         # Cache the hub center for future calls
         if positions is not None and hub in pos:
             positions[_HUB_CENTER_KEY] = pos[hub]
+
+            levels = _compute_bfs_levels(G, hub)
+            for node, level in levels.items():
+                positions[f"{node}_level"] = level
     else:
-        # Have frozen positions + new nodes — place around the original hub center
+        # Have frozen positions + new nodes — place on proper radial rings
         pos = dict(frozen)
 
+        # Get hub center
         if positions is not None and _HUB_CENTER_KEY in positions:
             center_x, center_y = positions[_HUB_CENTER_KEY]
         else:
             center_x = sum(x for x, y in pos.values()) / len(pos)
             center_y = sum(y for x, y in pos.values()) / len(pos)
 
-        max_dist = max(
-            math.hypot(x - center_x, y - center_y) for x, y in pos.values()
-        )
-        min_distance = 3.0
+        # Find the hub node (closest to center)
+        hub_node = None
+        best_hub_dist = float("inf")
+        for node, (x, y) in pos.items():
+            d = math.hypot(x - center_x, y - center_y)
+            if d < best_hub_dist:
+                best_hub_dist = d
+                hub_node = node
 
-        for i, node in enumerate(sorted(new_nodes)):
-            angle = i * 0.5
-            placed = False
+        if hub_node is None:
+            hub_node = max(G.degree, key=lambda x: x[1])[0]
 
-            for radius_mult in range(1, 20):
-                test_radius = max_dist + (radius_mult * min_distance)
+        # Compute BFS levels for ALL nodes (including new ones)
+        levels = _compute_bfs_levels(G, hub_node)
 
-                for angle_offset in range(16):
-                    test_angle = angle + (angle_offset * math.pi / 8)
-                    test_x = center_x + test_radius * math.cos(test_angle)
-                    test_y = center_y + test_radius * math.sin(test_angle)
+        # Group new nodes by their BFS level
+        new_nodes_by_level = {}
+        for node in new_nodes:
+            level = levels.get(node, 1)  # Default to ring 1 if disconnected
+            new_nodes_by_level.setdefault(level, []).append(node)
 
-                    too_close = any(
-                        math.hypot(test_x - ex_x, test_y - ex_y) < min_distance
-                        for ex_x, ex_y in pos.values()
+        # Place nodes level by level on their radial ring
+        for level, level_nodes in new_nodes_by_level.items():
+            if not level_nodes:
+                continue
+
+            # Base radius for this level
+            radius = _RADIAL_BASE_RADIUS + level * _RADIAL_RING_GAP
+
+            # Count existing nodes at approximately this radius
+            existing_at_radius = []
+            for node, (x, y) in pos.items():
+                dist = math.hypot(x - center_x, y - center_y)
+                if abs(dist - radius) < _RADIAL_RING_GAP / 2:
+                    existing_at_radius.append(math.atan2(y - center_y, x - center_x))
+
+            total_nodes_at_level = len(existing_at_radius) + len(level_nodes)
+
+            # Expand ring radius if overcrowded
+            circumference_needed = total_nodes_at_level * _RADIAL_NODE_DIAMETER * 1.5
+            min_radius = circumference_needed / (2 * math.pi)
+            radius = max(radius, min_radius)
+
+            # Place each new node on the ring
+            for i, node in enumerate(sorted(level_nodes)):
+                target_angle = (2 * math.pi * i) / max(1, total_nodes_at_level)
+
+                # Try angles to avoid collisions with existing nodes
+                best_angle = target_angle
+                best_min_dist = 0
+
+                for attempt in range(36):
+                    test_angle = target_angle + (attempt * math.pi / 18)
+                    test_x = center_x + radius * math.cos(test_angle)
+                    test_y = center_y + radius * math.sin(test_angle)
+
+                    min_dist = min(
+                        (
+                            math.hypot(test_x - ex, test_y - ey)
+                            for ex, ey in pos.values()
+                        ),
+                        default=float("inf"),
                     )
 
-                    if not too_close:
-                        pos[node] = (test_x, test_y)
-                        placed = True
+                    if min_dist >= _RADIAL_MIN_DISTANCE:
+                        best_angle = test_angle
                         break
+                    elif min_dist > best_min_dist:
+                        best_min_dist = min_dist
+                        best_angle = test_angle
 
-                if placed:
-                    break
-
-            if not placed:
                 pos[node] = (
-                    center_x + max_dist + (i * min_distance),
-                    center_y,
+                    center_x + radius * math.cos(best_angle),
+                    center_y + radius * math.sin(best_angle),
                 )
 
     inactive_in_graph = [n for n in G.nodes() if n in inactive_node_set]
