@@ -409,7 +409,7 @@ class AMoCv4:
                 sent, resolved_text, prev_sentences, nodes_before_sentence
             )
             logging.info(
-                f"DEBUG: After sentence 1, main graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges."
+                f"after sentence 1, graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges"
             )
         else:
             result = self.handle_nonfirst_sentence_wrapper(
@@ -543,7 +543,7 @@ class AMoCv4:
         self._per_sentence_view = None
 
         logging.info(
-            f"ROLLBACK COMPLETE: Sentence {i+1} rolled back, "
+            f"rollback done for sentence {i+1}, "
             f"context preserved ({len(prev_sentences)} sentences in history)"
         )
 
@@ -694,13 +694,13 @@ class AMoCv4:
         force_node: bool = False,
     ) -> List[Tuple[str, str, str]]:
         logging.info(
-            "Story text: %s", self.story_text[:200] if self.story_text else "NONE"
+            "story text: %s", self.story_text[:200] if self.story_text else "none"
         )
         doc = self.spacy_nlp(self.story_text)
         sentences = list(doc.sents)
-        logging.info("Number of sentences detected by spaCy: %d", len(sentences))
+        logging.info("spacy found %d sentences", len(sentences))
         for i, sent in enumerate(sentences):
-            logging.info("Sentence %d: %s", i + 1, sent.text.strip()[:100])
+            logging.info("sentence %d: %s", i + 1, sent.text.strip()[:100])
 
         self.initialize_run_state()
 
@@ -721,10 +721,10 @@ class AMoCv4:
             self._current_sentence_index = sentence_counter
 
             logging.info(
-                f"NODE_TRACKER: Before sentence {sentence_counter} | "
-                f"Total nodes: {len(self.graph.nodes)} | "
-                f"Total edges: {len(self.graph.edges)} | "
-                f"Graph ID: {id(self.graph)}"
+                f"before sentence {sentence_counter} | "
+                f"nodes: {len(self.graph.nodes)} | "
+                f"edges: {len(self.graph.edges)} | "
+                f"graph id: {id(self.graph)}"
             )
 
             self._sentence_ops.configure_graph_for_sentence(
@@ -751,10 +751,10 @@ class AMoCv4:
             )
 
             logging.info(
-                f"NODE_TRACKER: After processing sentence {sentence_counter} | "
-                f"Total nodes: {len(self.graph.nodes)} | "
-                f"Active edges: {sum(1 for e in self.graph.edges if e.active)} | "
-                f"Graph ID: {id(self.graph)}"
+                f"after sentence {sentence_counter} | "
+                f"nodes: {len(self.graph.nodes)} | "
+                f"active edges: {sum(1 for e in self.graph.edges if e.active)} | "
+                f"graph id: {id(self.graph)}"
             )
 
             sentence_id = i + 1
@@ -824,13 +824,10 @@ class AMoCv4:
                 )
 
             logging.info(
-                f"INACTIVE_TRACK: After update_post_projection, inactive={inactive_nodes_for_plot}"
+                f"after projection update, inactive nodes: {inactive_nodes_for_plot}"
             )
 
             if plot_after_each_sentence:
-                logging.info(
-                    f"INACTIVE_TRACK: Before plot wrapper, inactive={inactive_nodes_for_plot}"
-                )
                 self.plot_sentence_views_wrapper(
                     i,
                     original_text,

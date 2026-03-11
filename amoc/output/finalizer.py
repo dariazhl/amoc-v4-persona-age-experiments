@@ -101,11 +101,11 @@ class OutputFinalizer:
         if not matrix.empty:
             matrix.to_csv(matrix_path)
             logging.info(
-                "Saved activation matrix for persona '%s' to %s",
+                "saved activation matrix for persona '%s' to %s",
                 self._persona,
                 matrix_path,
             )
-            logging.info("AMoC activation matrix:\n%s", matrix.to_string())
+            logging.info("activation matrix:\n%s", matrix.to_string())
 
         final_sentence_idx = current_sentence_index
         final_triplets = []

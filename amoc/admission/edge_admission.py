@@ -198,7 +198,7 @@ class EdgeAdmission:
 
                 if self._debug:
                     logging.info(
-                        "Replaced equivalent edge: %s --%s--> %s (was: %s)",
+                        "replaced equivalent edge: %s --%s--> %s (was: %s)",
                         source_node.get_text_representer(),
                         label,
                         dest_node.get_text_representer(),

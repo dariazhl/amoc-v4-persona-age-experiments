@@ -185,7 +185,7 @@ class ConnectivityRepair:
                 if edge.visibility_score > 0 and not edge.active:
                     edge.active = True
                     logging.info(
-                        f"STABILIZE: Reactivated visible edge "
+                        f"reactivated visible edge "
                         f"'{edge.source_node.get_text_representer()}' -> "
                         f"'{edge.dest_node.get_text_representer()}'"
                     )

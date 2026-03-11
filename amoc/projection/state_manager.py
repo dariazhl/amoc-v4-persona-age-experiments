@@ -94,7 +94,7 @@ class ProjectionStateManager:
             reactivated = self._cumulative_inactive_nodes & current_active_nodes
             if reactivated:
                 logging.info(
-                    f"REACTIVATED: Nodes {[n.get_text_representer() for n in reactivated]} are now active again"
+                    f"nodes back in action: {[n.get_text_representer() for n in reactivated]}"
                 )
                 self._cumulative_inactive_nodes.difference_update(reactivated)
 
@@ -133,9 +133,9 @@ class ProjectionStateManager:
             )
 
             logging.info(
-                f"INACTIVE_DEBUG: sentence {sentence_id} | "
-                f"cumulative_inactive={len(inactive_nodes_for_plot)} | "
-                f"graph.nodes={len(self.graph.nodes)} | "
+                f"sentence {sentence_id} stats | "
+                f"inactive={len(inactive_nodes_for_plot)} | "
+                f"total nodes={len(self.graph.nodes)} | "
                 f"explicit={len(list(per_sentence_view.explicit_nodes))} | "
                 f"carryover={len(list(per_sentence_view.carryover_nodes))}"
             )
@@ -171,12 +171,12 @@ class ProjectionStateManager:
             and per_sentence_view.is_empty()
             and previous_active_triplets
         ):
-            logging.info("Per-sentence view empty — preserving previous projection.")
+            logging.info("per-sentence view is empty, keeping the previous projection")
 
         if self.debug and per_sentence_view is not None:
             logging.info(
-                "Per-sentence view for sentence %d: "
-                "%d explicit, %d carry-over, %d active edges, connected=%s",
+                "sentence %d view: "
+                "%d explicit, %d carryover, %d active edges, connected=%s",
                 sentence_id,
                 len(per_sentence_view.explicit_nodes),
                 len(per_sentence_view.carryover_nodes),

@@ -570,7 +570,7 @@ def process_persona_csv(
 
                         if len(all_states) >= 2:
                             logging.info(
-                                f"Generating reverse PNGs from {len(all_states)} states..."
+                                f"generating reverse plots from {len(all_states)} states"
                             )
 
                             reverse_plotter = ReverseGraphPlotter(
@@ -605,7 +605,7 @@ def process_persona_csv(
                                             mode=mode,
                                         )
                                         logging.info(
-                                            f"Generated {len(png_paths)} reverse PNGs for {mode} mode"
+                                            f"made {len(png_paths)} reverse plots for {mode} mode"
                                         )
                             else:
                                 filtered_states = [
@@ -621,12 +621,12 @@ def process_persona_csv(
                                         final_positions,
                                         mode=reverse_plot_mode,
                                     )
-                                    logging.info(f"Generated {len(png_paths)} reverse PNGs")
+                                    logging.info(f"made {len(png_paths)} reverse plots")
 
                             reverse_dir = os.path.join(
                                 graphs_output_dir or output_dir, "reverse_plots"
                             )
-                            logging.info(f"Reverse PNGs saved in: {reverse_dir}")
+                            logging.info(f"reverse plots saved in: {reverse_dir}")
 
                         plotter.clear_graph_states()
 

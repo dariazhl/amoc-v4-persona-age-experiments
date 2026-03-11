@@ -32,15 +32,34 @@ class ReverseGraphPlotter:
         for idx, state in enumerate(reversed(graph_states)):
             frame_num = total_states - idx
             logging.info(
-                f"Generating reverse plot {idx+1}/{total_states} (Original Step {frame_num})"
+                f"making reverse plot {idx+1}/{total_states} (original step {frame_num})"
             )
 
             # Merge base kwargs with state-specific kwargs
             frame_kwargs = base_kwargs.copy()
             frame_kwargs.update(state)
 
-            # Use frozen positions
-            frame_kwargs["positions"] = positions.copy()
+            # Get all nodes that appear in this state's triplets
+            state_triplets = state.get("triplets", [])
+            state_nodes = set()
+            for s, r, o in state_triplets:
+                state_nodes.add(s)
+                state_nodes.add(o)
+
+            # Also include explicit, salient, inactive
+            if "explicit_nodes" in state:
+                state_nodes.update(state["explicit_nodes"])
+            if "salient_nodes" in state:
+                state_nodes.update(state["salient_nodes"])
+            if "inactive_nodes" in state:
+                state_nodes.update(state["inactive_nodes"])
+
+            # Filter positions to only include nodes that exist in this state
+            filtered_positions = {
+                node: pos for node, pos in positions.items() if node in state_nodes
+            }
+
+            frame_kwargs["positions"] = filtered_positions
 
             # Override output directory to our reverse plots folder
             original_step_tag = state.get("step_tag", f"step_{frame_num}")
@@ -51,7 +70,7 @@ class ReverseGraphPlotter:
             try:
                 png_path = plot_amoc_triplets(**frame_kwargs)
                 png_paths.append(png_path)
-                logging.info(f"Generated reverse plot: {png_path}")
+                logging.info(f"saved reverse plot: {png_path}")
             except Exception as e:
                 logging.error(
                     f"Failed to generate reverse plot for step {original_step_tag}: {e}"

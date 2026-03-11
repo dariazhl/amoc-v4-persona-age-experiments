@@ -53,7 +53,7 @@ class NodeActivationEngine:
             edge.reset_for_sentence_start()
         active_after = sum(1 for e in self._graph.edges if e.active)
         logging.info(
-            f"RESET_DEBUG: deactivate_all_edges | "
+            f"deactivated all edges | "
             f"active before: {active_before} | "
             f"active after: {active_after} | "
             f"total edges: {len(self._graph.edges)}"

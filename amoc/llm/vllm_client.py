@@ -40,7 +40,7 @@ class VLLMClient:
         else:
             logging.getLogger().setLevel(logging.INFO)
 
-        logging.info(f"Initializing vLLM with model: {model_name}, tp_size={tp_size}")
+        logging.info(f"starting up vllm with model: {model_name}, tp_size={tp_size}")
         self.llm = LLM(
             model=model_name,
             tensor_parallel_size=tp_size,

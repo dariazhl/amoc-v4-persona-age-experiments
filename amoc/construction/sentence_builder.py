@@ -258,7 +258,7 @@ class SentenceGraphBuilder:
         )
         if edge:
             logging.info(
-                f"FS_DEBUG: edge added: {source_node} --{edge_label}--> {dest_node}"
+                f"edge added: {source_node} --{edge_label}--> {dest_node}"
             )
             return True
         else:
@@ -285,7 +285,7 @@ class SentenceGraphBuilder:
             nodes_from_text, sent.text, self.persona
         )
         logging.info(
-            f"FS_DEBUG: Raw LLM relationships for first sentence: {relationships}"
+            f"raw llm relationships for first sentence: {relationships}"
         )
 
         for rel in relationships:
@@ -321,13 +321,13 @@ class SentenceGraphBuilder:
         prev_sentences: list,
         nodes_before_sentence: set,
     ) -> tuple:
-        logging.info("FS_DEBUG: Starting first sentence processing")
+        logging.info("starting first sentence processing")
         # add resolved sentence text
         prev_sentences.append(resolved_text)
         # initiliaze graph
         self.init_graph(sent)
         logging.info(
-            f"FS_DEBUG: After first sentence, graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges."
+            f"after first sentence, graph has {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges"
         )
 
         # extrat nodes
@@ -359,7 +359,7 @@ class SentenceGraphBuilder:
                     # Remove invalid edge
                     self.graph.remove_edge(edge)
                     logging.info(
-                        f"First sentence: removed invalid edge ({subj}, {rel}, {obj})"
+                        f"first sentence: removed invalid edge ({subj}, {rel}, {obj})"
                     )
 
         # identify explict nodes
@@ -388,7 +388,7 @@ class SentenceGraphBuilder:
         )
         # ensure at least one active edge
         if not any(edge.active for edge in self.graph.edges):
-            logging.info("FS_DEBUG: No active edges – marking all edges as current")
+            logging.info("no active edges found, marking all edges as current")
             for edge in self.graph.edges:
                 edge.mark_as_current_sentence(reset_score=True)
 
@@ -998,7 +998,7 @@ class SentenceGraphBuilder:
                         if triplet not in pruned_set:
                             edge.active = False
                             edge.visibility_score = 0
-                            logging.info(f"Pruned edge: {triplet}")
+                            logging.info(f"pruned edge: {triplet}")
 
         return added_edges
 

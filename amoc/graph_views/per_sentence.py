@@ -147,7 +147,7 @@ class PerSentenceGraphBuilder:
         excluded = reachable_nodes - self._carryover_nodes
         for node in excluded:
             logging.info(
-                f"CARRYOVER_EXCLUDED: {node.get_text_representer()} reachable but has no active edges"
+                f"excluded from carryover: {node.get_text_representer()} (reachable but no active edges)"
             )
 
         return self

@@ -137,7 +137,7 @@ class SentenceRuntime:
 
                 if mapping and isinstance(mapping, dict):
                     resolved_text = self.apply_pronoun_mapping(orig_sent.text, mapping)
-                    logging.info(f"Pronoun mapping: {mapping} -> '{resolved_text}'")
+                    logging.info(f"pronoun mapping: {mapping} -> '{resolved_text}'")
 
             # Validate no contamination
             if resolved_text.strip().startswith("{"):

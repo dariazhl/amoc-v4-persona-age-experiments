@@ -50,6 +50,10 @@ class TextNormalizer:
             "possesses": "has",
             "owns": "has",
             "has property": "is",
+            "likes at": "enjoys",
+            "not applicable": "does not wear",
+            "not connected": "not connected to",
+            "not related": "not related to",
         }
 
         # Apply mapping if exact match found

@@ -29,7 +29,7 @@ class LinguisticProcessing:
         self._story_text = story_text
         self._persona = persona
         self._add_edge_fn: Optional[Callable] = None
-        self._edge_visibility: int = 3
+        self._edge_visibility: int = 2
         self._current_sentence_index: int = 0
 
     def set_callbacks(

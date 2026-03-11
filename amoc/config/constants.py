@@ -4,7 +4,7 @@ MAX_NEW_PROPERTIES = 3
 CONTEXT_LENGTH = 1
 # edge_visibility = edge forget from old code
 EDGE_VISIBILITY = 2
-NR_RELEVANT_EDGES = 15
+NR_RELEVANT_EDGES = 10
 DEBUG = False
 
 

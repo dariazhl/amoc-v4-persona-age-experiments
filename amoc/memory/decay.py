@@ -117,13 +117,19 @@ class Decay:
         reasoning = result.get("reasoning", "")
 
         if reasoning:
-            logging.info(f"SEMANTIC_DECAY: LLM reasoning: {reasoning}")
+            logging.info(f"llm reasoning for decay: {reasoning}")
 
         # Build connectivity map to check critical edges
         connectivity_map = self.build_connectivity_map()
 
         # Track stats for logging
-        stats = {"reinforce": 0, "maintain": 0, "decay": 0, "decay_immediate": 0, "protected": 0}
+        stats = {
+            "reinforce": 0,
+            "maintain": 0,
+            "decay": 0,
+            "decay_immediate": 0,
+            "protected": 0,
+        }
 
         for edge in decay_candidates:
             triplet_str = edge_to_triplet[edge]
@@ -147,18 +153,18 @@ class Decay:
                     # Can't remove — treat as score 1 instead
                     edge.reduce_visibility()
                     stats["protected"] += 1
-                    logging.info(
-                        f"SEMANTIC_DECAY: Protected connectivity-critical edge {triplet_str} "
-                        f"(score=0 but would break graph, treating as score 1)"
-                    )
+                    # logging.info(
+                    #     f"SEMANTIC_DECAY: Protected connectivity-critical edge {triplet_str} "
+                    #     f"(score=0 but would break graph, treating as score 1)"
+                    # )
                 else:
                     # Immediate deactivation
                     edge.visibility_score = 0
                     edge.active = False
                     stats["decay_immediate"] += 1
-                    logging.info(
-                        f"SEMANTIC_DECAY: Immediately removed edge {triplet_str} (score=0)"
-                    )
+                    # logging.info(
+                    #     f"SEMANTIC_DECAY: Immediately removed edge {triplet_str} (score=0)"
+                    # )
 
             elif score == 1:  # LOW RELEVANCE - gradual decay
                 if is_critical:
@@ -166,9 +172,9 @@ class Decay:
                     edge.reduce_visibility()
                     edge.reduce_visibility()
                     stats["protected"] += 1
-                    logging.info(
-                        f"SEMANTIC_DECAY: Kept connectivity-critical edge {triplet_str} (would break graph)"
-                    )
+                    # logging.info(
+                    #     f"SEMANTIC_DECAY: Kept connectivity-critical edge {triplet_str} (would break graph)"
+                    # )
                 else:
                     # Safe to decay fully
                     edge.reduce_visibility()
@@ -177,14 +183,14 @@ class Decay:
                         edge.active = False
                     stats["decay"] += 1
                     logging.info(
-                        f"SEMANTIC_DECAY: Decayed edge {triplet_str} (score=1)"
+                        f"decayed edge {triplet_str} (score=1)"
                     )
 
             elif score == 2:  # MEDIUM RELEVANCE - maintain
                 # Decay faster
                 edge.visibility_score = max(0, edge.visibility_score - 1)
                 stats["maintain"] += 1
-                logging.info(f"SEMANTIC_DECAY: Maintained edge {triplet_str} (score=2)")
+                logging.info(f"maintained edge {triplet_str} (score=2)")
 
             elif score == 3:  # HIGH RELEVANCE - reinforce
                 # Reactivate to full visibility
@@ -194,20 +200,20 @@ class Decay:
                 edge.mark_as_reactivated(reset_score=False)
                 stats["reinforce"] += 1
                 logging.info(
-                    f"SEMANTIC_DECAY: Reactivated edge {triplet_str} to full visibility (score=3)"
+                    f"reactivated edge {triplet_str} to full visibility (score=3)"
                 )
 
             else:
                 # Fallback for any other values
                 edge.reduce_visibility()
                 logging.info(
-                    f"SEMANTIC_DECAY: Fallback decay for edge {triplet_str} (unexpected score={score})"
+                    f"fallback decay for edge {triplet_str} (unexpected score={score})"
                 )
 
         logging.info(
-            f"SEMANTIC_DECAY: Stats - Reinforce: {stats['reinforce']}, "
-            f"Maintain: {stats['maintain']}, Decay (gradual): {stats['decay']}, "
-            f"Decay (immediate): {stats['decay_immediate']}, Protected: {stats['protected']}"
+            f"decay stats - reinforce: {stats['reinforce']}, "
+            f"maintain: {stats['maintain']}, gradual decay: {stats['decay']}, "
+            f"immediate decay: {stats['decay_immediate']}, protected: {stats['protected']}"
         )
 
         self.reinforce_multi_hop_chains()
@@ -232,7 +238,7 @@ class Decay:
 
         if newly_dangling:
             logging.info(
-                f"DANGLING_CLEANUP: Deactivated {len(newly_dangling)} dangling nodes: "
+                f"cleaned up {len(newly_dangling)} dangling nodes: "
                 f"{[n.get_text_representer() for n in newly_dangling]}"
             )
 
@@ -340,7 +346,7 @@ class Decay:
 
         if reinforced_count > 0:
             logging.info(
-                f"MULTI_HOP: Reinforced {reinforced_count} edges in inference chains"
+                f"reinforced {reinforced_count} edges in inference chains"
             )
 
     def enforce_node_limit(self, max_nodes: int = 20) -> None:
@@ -492,14 +498,14 @@ class Decay:
         if len(sorted_text) >= excess:
             candidates = sorted_text[:excess]
             logging.info(
-                f"NODE_LIMIT: Selecting {excess} text-based nodes for potential removal"
+                f"selecting {excess} text-based nodes for potential removal"
             )
         else:
             candidates = sorted_text.copy()
             remaining = excess - len(sorted_text)
             candidates.extend(sorted_inference[:remaining])
             logging.info(
-                f"NODE_LIMIT: Taking all {len(sorted_text)} text-based nodes + "
+                f"taking all {len(sorted_text)} text-based + "
                 f"{remaining} inference-based nodes for potential removal"
             )
 
@@ -586,9 +592,9 @@ class Decay:
         )
 
         logging.info(
-            f"NODE_LIMIT: Deactivated {removed}/{excess} nodes. "
-            f"Graph now has {len(final_G)} active nodes in {len(components)} components. "
-            f"(Text-based: {text_removed}, Inference-based: {inference_removed})"
+            f"deactivated {removed}/{excess} nodes. "
+            f"graph now has {len(final_G)} active nodes in {len(components)} components "
+            f"(text-based: {text_removed}, inference-based: {inference_removed})"
         )
 
         removed_names = [
@@ -596,7 +602,7 @@ class Decay:
             for n in candidates[:removed]
             if hasattr(n, "actual_texts")
         ]
-        logging.info(f"Deactivated nodes: {removed_names}")
+        logging.info(f"deactivated nodes: {removed_names}")
 
     def reactivate_relevant_edges(
         self,
@@ -649,7 +655,7 @@ class Decay:
                     self._record_edge_fn(edge, self._current_sentence_index)
         else:
             selected = set()  # Edge not selected by LLM
-            logging.info("No relevant edges identified by LLM for reactivation")
+            logging.info("llm didn't find any edges to reactivate")
 
         for idx, edge in enumerate(edges, start=1):
             if idx in selected or edge in newly_added_edges:

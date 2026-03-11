@@ -50,7 +50,9 @@ class GraphPlotter:
         self._viz_positions: Dict[str, Tuple[float, float]] = {}
         self._prev_active_nodes: Set["Node"] = set()
         self._cumulative_deactivated_nodes: Set["Node"] = set()
-        self._ever_in_working_memory: Set[str] = set()  # cumulative explicit+carryover node names
+        self._ever_in_working_memory: Set[str] = (
+            set()
+        )  # cumulative explicit+carryover node names
         self._get_explicit_nodes_fn: Optional[Callable] = None
         self._get_edge_activation_scores_fn: Optional[Callable] = None
         self._graph_edges_to_triplets_fn: Optional[Callable] = None
@@ -307,10 +309,6 @@ class GraphPlotter:
         property_nodes: Optional[List[str]] = None,
     ) -> None:
 
-        logging.info(
-            f"INACTIVE_TRACK: In plot_graph_snapshot_full, mode={mode}, inactive_nodes={inactive_nodes}"
-        )
-
         sentence_text_lower = (sentence_text or "").lower().strip()
         for pattern in self.PROMPT_CONTAMINATION_PATTERNS:
             if sentence_text_lower.startswith(pattern):
@@ -428,12 +426,6 @@ class GraphPlotter:
                 n.get_text_representer() for n in active_nodes_for_filter
             }
 
-            logging.info(f"PLOT_DEBUG: Active nodes: {active_node_names}")
-            logging.info(f"PLOT_DEBUG: Total triplets before filter: {len(triplets)}")
-            logging.info(
-                f"PLOT_DEBUG: Sample triplets: {triplets[:3] if triplets else 'None'}"
-            )
-
             # SAFE FILTERING: Only filter to active nodes for active plots
             # Cumulative plots show ALL edges (active + inactive)
             if mode == "sentence_cumulative":
@@ -479,22 +471,23 @@ class GraphPlotter:
                 show_triplet_overlay=True,
                 layout_depth=self._layout_depth,
                 inferred_nodes=inferred_nodes_for_plot,
+                graph=self._graph,
             )
             if triplets:
                 logging.info(
-                    "[Plot] Saved sentence %d graph to %s",
+                    "saved sentence %d graph to %s",
                     sentence_index + 1,
                     saved_path,
                 )
             elif explicit_nodes:
                 logging.info(
-                    "[Plot] Saved sentence %d graph (explicit nodes only) to %s",
+                    "saved sentence %d graph (explicit nodes only) to %s",
                     sentence_index + 1,
                     saved_path,
                 )
             else:
                 logging.info(
-                    "[Plot] Sentence %d graph empty (no explicit nodes, no edges)",
+                    "sentence %d graph is empty (no explicit nodes, no edges)",
                     sentence_index + 1,
                 )
         except Exception:
@@ -517,7 +510,7 @@ class GraphPlotter:
         reconstruct_semantic_triplets_fn: callable,
     ) -> None:
         logging.info(
-            f"INACTIVE_TRACK: At plot_sentence_views start, inactive={inactive_nodes_for_plot}"
+            f"plotting sentence views, inactive nodes: {inactive_nodes_for_plot}"
         )
         # Active view - use per-sentence view
         if per_sentence_view is not None:
@@ -555,7 +548,7 @@ class GraphPlotter:
                     f"but graph has 0 active edges! Graph ID: {id(self._graph)}"
                 )
             logging.info(
-                f"VIEW_VS_GRAPH: view_active_edges={view_edge_count} | "
+                f"view vs graph: view_active_edges={view_edge_count} | "
                 f"graph_active_edges={graph_active_count} | "
                 f"active_triplets_from_view={len(active_triplets)}"
             )
@@ -587,7 +580,7 @@ class GraphPlotter:
             for edge in snapshot_edges
         }
         logging.info(
-            f"DEBUG: Plotting with {len(reconstruct_semantic_triplets_fn(only_active=True))} triplets, mode={"sentence_cumulative"}"
+            f"plotting with {len(reconstruct_semantic_triplets_fn(only_active=True))} triplets, mode=sentence_cumulative"
         )
         # recalculate inactive nodes right before plotting
         active_node_names = set(explicit_nodes_for_plot) | set(salient_nodes_for_plot)
@@ -673,7 +666,7 @@ class GraphPlotter:
         dangling = active_node_names - nodes_with_active_edges
         if dangling:
             logging.info(
-                f"PAPER_PLOT: Moving {len(dangling)} dangling nodes to inactive "
+                f"moving {len(dangling)} dangling nodes to inactive "
                 f"(no active edges): {sorted(dangling)}"
             )
 
@@ -726,9 +719,10 @@ class GraphPlotter:
                 layout_from_active_only=False,  # Layout based on all nodes
                 show_triplet_overlay=True,
                 layout_depth=self._layout_depth,
+                graph=self._graph,
             )
             logging.info(
-                "[Paper Plot] Saved sentence %d paper graph (active subgraph) to %s",
+                "saved sentence %d paper graph to %s",
                 sentence_index + 1,
                 saved_path,
             )

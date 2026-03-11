@@ -1,12 +1,17 @@
 import os
 import re
 import math
-from typing import List, Tuple, Iterable, Optional, Dict
+from typing import Any, List, Tuple, Iterable, Optional, Dict
 import networkx as nx
 import matplotlib.pyplot as plt
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
 from collections import defaultdict
 import textwrap
+from matplotlib.patches import FancyBboxPatch
+from collections import deque
+from collections import defaultdict
+from matplotlib.gridspec import GridSpec
+
 
 DEFAULT_BLUE_NODES: Iterable[str] = ()
 
@@ -14,15 +19,14 @@ DEFAULT_BLUE_NODES: Iterable[str] = ()
 _HUB_CENTER_KEY = "__hub_center__"
 
 
-def _pretty_text(text: str) -> str:
+def pretty_text(text: str) -> str:
     text = (text or "").strip()
     text = text.replace("_", " ")
     text = re.sub(r"\s+", " ", text)
     return text
 
 
-def _compute_bfs_levels(G, hub):
-    from collections import deque
+def compute_bfs_levels(G, hub):
 
     levels = {hub: 0}
     queue = deque([hub])
@@ -44,11 +48,13 @@ _RADIAL_NODE_DIAMETER = 1.8
 _RADIAL_MIN_DISTANCE = 3.0
 
 
-def _compute_radial_positions(G, hub):
-    from collections import deque
+# Golden angle (~137.5°) for optimal angular separation across rings
+_GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
 
+
+def compute_radial_positions(G, hub):
     # BFS COMPUTATION
-    levels = _compute_bfs_levels(G, hub)
+    levels = compute_bfs_levels(G, hub)
 
     # GROUP NODES BY LEVEL
     rings = {}
@@ -57,46 +63,94 @@ def _compute_radial_positions(G, hub):
 
     pos = {}
 
+    # Hub at center
+    if hub in levels:
+        pos[hub] = (0.0, 0.0)
+
+    # Per-ring angular offset: each ring starts at a different angle
+    # using the golden angle so nodes on adjacent rings never align
+    # through the center.
+    ring_offset_base = 0.0
+
     # PLACE EACH RING
-    for level, nodes in rings.items():
+    for level in sorted(rings.keys()):
+        nodes = rings[level]
+        if level == 0:
+            # Hub already placed at (0,0)
+            continue
 
         n = len(nodes)
-
-        if n == 1:
-            radius = _RADIAL_BASE_RADIUS + level * _RADIAL_RING_GAP
-
-            # Alternate direction to avoid collinearity
-            angle = (math.pi / 3) if level % 2 == 0 else (-math.pi / 3)
-
-            x = radius * math.cos(angle)
-            y = radius * math.sin(angle)
-
-            pos[nodes[0]] = (x, y)
-            continue
+        ring_offset = ring_offset_base + level * _GOLDEN_ANGLE
 
         # ensure no overlap using circumference math
         circumference_needed = n * _RADIAL_NODE_DIAMETER * 1.5
         min_radius = circumference_needed / (2 * math.pi)
-
         radius = max(_RADIAL_BASE_RADIUS + level * _RADIAL_RING_GAP, min_radius)
+
+        if n == 1:
+            pos[nodes[0]] = (
+                radius * math.cos(ring_offset),
+                radius * math.sin(ring_offset),
+            )
+            continue
 
         angle_step = 2 * math.pi / n
 
         for i, node in enumerate(sorted(nodes)):
-            angle = i * angle_step
-            x = radius * math.cos(angle)
-            y = radius * math.sin(angle)
-            pos[node] = (x, y)
+            angle = ring_offset + i * angle_step
+            pos[node] = (radius * math.cos(angle), radius * math.sin(angle))
+
+    # POST-PLACEMENT: break collinear triplets (three nodes roughly on a line
+    # through the center).  Nudge the middle node perpendicular to the line.
+    break_collinear_nodes(pos)
 
     return pos
 
 
-def _compute_edge_curvatures(
+def break_collinear_nodes(
+    pos: Dict[str, Tuple[float, float]],
+    threshold: float = 0.97,
+    nudge_fraction: float = 0.15,
+) -> None:
+    node_list = [n for n in pos if pos[n] != (0.0, 0.0)]
+    already_nudged: set = set()
+
+    for i, a in enumerate(node_list):
+        ax, ay = pos[a]
+        a_len = math.hypot(ax, ay)
+        if a_len < 1e-6:
+            continue
+        uax, uay = ax / a_len, ay / a_len
+
+        for b in node_list[i + 1 :]:
+            bx, by = pos[b]
+            b_len = math.hypot(bx, by)
+            if b_len < 1e-6:
+                continue
+            ubx, uby = bx / b_len, by / b_len
+
+            dot = uax * ubx + uay * uby
+            if abs(dot) < threshold:
+                continue  # not collinear
+
+            # Pick the node farther from center to nudge
+            target = b if b_len >= a_len else a
+            if target in already_nudged:
+                continue
+
+            tx, ty = pos[target]
+            t_len = math.hypot(tx, ty)
+            # Perpendicular direction (rotate 90°)
+            px, py = -ty / t_len, tx / t_len
+            offset = t_len * nudge_fraction
+            pos[target] = (tx + px * offset, ty + py * offset)
+            already_nudged.add(target)
+
+
+def compute_edge_curvatures(
     edges_with_keys: List[Tuple[str, str, str]],
 ) -> Tuple[Dict[Tuple[str, str, str], float], Dict[Tuple[str, str, str], float]]:
     # Group edges by their node pair (undirected for overlap detection)
-    from collections import defaultdict
-
     pair_edges: Dict[tuple, List[Tuple[str, str, str]]] = defaultdict(list)
     for u, v, k in edges_with_keys:
         # Use sorted tuple for undirected grouping (to catch A->B and B->A)
@@ -147,7 +201,7 @@ def _compute_edge_curvatures(
     return curvatures, label_t_params
 
 
-def _compute_label_position_curved(
+def compute_label_position_curved(
     pos: Dict[str, Tuple[float, float]],
     u: str,
     v: str,
@@ -183,7 +237,7 @@ def _compute_label_position_curved(
     return b_x, b_y
 
 
-def _compute_label_angle_along_edge(
+def compute_label_angle_along_edge(
     pos: Dict[str, Tuple[float, float]],
     u: str,
     v: str,
@@ -231,15 +285,15 @@ def _compute_label_angle_along_edge(
     return angle_deg
 
 
-def _draw_triplet_overlay(
+# box with active triplets
+def draw_triplet_panel(
     ax,
     triplets: List[Tuple[str, str, str]],
     active_nodes: Optional[set] = None,
-    max_triplets: int = 20,
-    font_size: int = 8,
+    max_triplets: int = 43,
+    font_size: int = 9,
 ) -> None:
-    if not triplets:
-        return
+    ax.axis("off")
 
     # Filter triplets to only those involving active nodes
     if active_nodes is not None:
@@ -249,48 +303,120 @@ def _draw_triplet_overlay(
     else:
         filtered_triplets = triplets
 
+    # Panel title
+    ax.text(
+        0.5,
+        0.98,
+        "Active Triplets",
+        transform=ax.transAxes,
+        fontsize=font_size + 3,
+        fontweight="bold",
+        ha="center",
+        va="top",
+        color="#333333",
+    )
+
     if not filtered_triplets:
+        ax.text(
+            0.5,
+            0.5,
+            "No active triplets",
+            transform=ax.transAxes,
+            fontsize=font_size + 1,
+            ha="center",
+            va="center",
+            color="#888888",
+            style="italic",
+        )
         return
 
-    # Limit to max_triplets to avoid overwhelming the plot
-    display_triplets = filtered_triplets[:max_triplets]
-    truncated = len(filtered_triplets) > max_triplets
-
-    # Format triplets for display
-    triplet_lines = []
-    for s, r, o in display_triplets:
-        # Clean up and truncate long text
-        s_clean = _pretty_text(s)[:20]
-        r_clean = _pretty_text(r)[:15]
-        o_clean = _pretty_text(o)[:20]
-        triplet_lines.append(f"({s_clean}, {r_clean}, {o_clean})")
-
-    if truncated:
-        remaining = len(filtered_triplets) - max_triplets
-        triplet_lines.append(f"... and {remaining} more")
-
-    # Build overlay text
-    overlay_text = "Active Triplets:\n" + "\n".join(triplet_lines)
-
-    # Draw text box in top-right corner using axes coordinates
-    # axes coordinates: (0,0) = bottom-left, (1,1) = top-right
-    ax.text(
-        0.98,  # x position (right side)
-        0.98,  # y position (top)
-        overlay_text,
+    # Separator line below title
+    ax.plot(
+        [0.05, 0.95],
+        [0.955, 0.955],
         transform=ax.transAxes,
-        fontsize=font_size,
-        fontfamily="monospace",
-        verticalalignment="top",
-        horizontalalignment="right",
-        bbox=dict(
-            facecolor="white",
-            edgecolor="gray",
-            alpha=0.85,
-            pad=8,
-            boxstyle="round,pad=0.5",
-        ),
-        zorder=100,  # Ensure overlay is on top of everything
+        color="#cccccc",
+        linewidth=1,
+        clip_on=False,
+    )
+
+    display_triplets = filtered_triplets[:max_triplets]
+    total = len(filtered_triplets)
+    truncated = total > max_triplets
+
+    # Compute vertical spacing
+    y_start = 0.94
+    line_height = min(0.020, 0.9 / max(len(display_triplets), 1))
+
+    for idx, (s, r, o) in enumerate(display_triplets):
+        y = y_start - idx * line_height
+
+        s_clean = pretty_text(s)
+        r_clean = pretty_text(r)
+        o_clean = pretty_text(o)
+
+        # Alternating row background
+        if idx % 2 == 0:
+
+            bg = FancyBboxPatch(
+                (0.02, y - line_height * 0.55),
+                0.96,
+                line_height * 0.95,
+                transform=ax.transAxes,
+                facecolor="#f0f4f8",
+                edgecolor="none",
+                boxstyle="round,pad=0.002",
+                clip_on=False,
+            )
+            ax.add_patch(bg)
+
+        # Number
+        ax.text(
+            0.04,
+            y,
+            f"{idx + 1}.",
+            transform=ax.transAxes,
+            fontsize=font_size - 1,
+            fontfamily="monospace",
+            ha="right",
+            va="center",
+            color="#999999",
+        )
+        # Triplet text
+        ax.text(
+            0.07,
+            y,
+            f"({s_clean}, {r_clean}, {o_clean})",
+            transform=ax.transAxes,
+            fontsize=font_size,
+            fontfamily="monospace",
+            ha="left",
+            va="center",
+            color="#333333",
+        )
+
+    # Footer
+    footer_y = y_start - len(display_triplets) * line_height - 0.02
+    ax.plot(
+        [0.05, 0.95],
+        [footer_y + 0.01, footer_y + 0.01],
+        transform=ax.transAxes,
+        color="#cccccc",
+        linewidth=1,
+        clip_on=False,
+    )
+    footer_text = f"Total: {total} active triplet{'s' if total != 1 else ''}"
+    if truncated:
+        footer_text += f"  (showing {max_triplets})"
+    ax.text(
+        0.5,
+        footer_y - 0.005,
+        footer_text,
+        transform=ax.transAxes,
+        fontsize=font_size - 1,
+        ha="center",
+        va="top",
+        color="#666666",
     )
 
 
@@ -324,6 +450,7 @@ def plot_amoc_triplets(
     active_triplets_for_overlay: Optional[List[Tuple[str, str, str]]] = None,
     show_triplet_overlay: bool = True,  # TASK 2: Control overlay visibility
     layout_depth: int = 3,
+    graph: Optional[Any] = None,
 ) -> str:
 
     def expand_by_anchor(
@@ -444,8 +571,27 @@ def plot_amoc_triplets(
             if node not in G:
                 G.add_node(node)
 
-    # NOTE: Do NOT add disconnected inactive nodes to the graph.
-    # Inactive nodes only appear if they already have edges in the triplet set.
+    # Add inactive working-memory nodes to the graph so they render as gray nodes
+    # (the caller now ensures these are only nodes that were previously in working memory)
+    if inactive_nodes:
+        for node in inactive_nodes:
+            if node not in G:
+                G.add_node(node)
+
+        if graph is not None:
+            inactive_node_names = set(inactive_nodes)
+
+            for edge in graph.edges:
+                source_name = edge.source_node.get_text_representer()
+                dest_name = edge.dest_node.get_text_representer()
+
+                if source_name in inactive_node_names or dest_name in inactive_node_names:
+                    if source_name not in G:
+                        G.add_node(source_name)
+                    if dest_name not in G:
+                        G.add_node(dest_name)
+
+                    G.add_edge(source_name, dest_name, key=edge.label)
 
     # If after injection the graph is still empty, return
     if G.number_of_nodes() == 0:
@@ -457,7 +603,10 @@ def plot_amoc_triplets(
 
     plotted_nodes = set(G.nodes())
 
-    fig, ax = plt.subplots(figsize=(34, 26))
+    fig = plt.figure(figsize=(40, 26))
+    gs = GridSpec(1, 2, width_ratios=[0.85, 0.15], figure=fig, wspace=0.02)
+    ax = fig.add_subplot(gs[0])
+    ax_triplets = fig.add_subplot(gs[1])
 
     # Build sets for node categorization
     inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
@@ -474,7 +623,7 @@ def plot_amoc_triplets(
     elif not frozen:
         # First call — compute full radial layout
         hub = max(G.degree, key=lambda x: x[1])[0]
-        pos = _compute_radial_positions(G, hub)
+        pos = compute_radial_positions(G, hub)
         if not pos:
             pos = nx.spring_layout(G, seed=42)
         # Handle any nodes _compute_radial_positions missed (disconnected)
@@ -482,15 +631,14 @@ def plot_amoc_triplets(
         if new_nodes:
             count = len(new_nodes)
             radius = max(10.0, count * 1.5)
-            angle_step = 2 * math.pi / max(1, count)
             for idx, node in enumerate(sorted(new_nodes)):
-                angle = idx * angle_step
+                angle = idx * _GOLDEN_ANGLE  # golden angle avoids collinearity
                 pos[node] = (radius * math.cos(angle), radius * math.sin(angle))
         # Cache the hub center for future calls
         if positions is not None and hub in pos:
             positions[_HUB_CENTER_KEY] = pos[hub]
 
-            levels = _compute_bfs_levels(G, hub)
+            levels = compute_bfs_levels(G, hub)
             for node, level in levels.items():
                 positions[f"{node}_level"] = level
     else:
@@ -517,7 +665,7 @@ def plot_amoc_triplets(
             hub_node = max(G.degree, key=lambda x: x[1])[0]
 
         # Compute BFS levels for ALL nodes (including new ones)
-        levels = _compute_bfs_levels(G, hub_node)
+        levels = compute_bfs_levels(G, hub_node)
 
         # Group new nodes by their BFS level
         new_nodes_by_level = {}
@@ -621,7 +769,7 @@ def plot_amoc_triplets(
     reciprocals = {(u, v) for (u, v) in edge_pairs if (v, u) in edge_pairs}
 
     all_edges_with_keys = list(G.edges(keys=True))
-    edge_curvatures, edge_label_t_params = _compute_edge_curvatures(all_edges_with_keys)
+    edge_curvatures, edge_label_t_params = compute_edge_curvatures(all_edges_with_keys)
 
     normal_edges = []
     implicit_edges = []
@@ -641,67 +789,46 @@ def plot_amoc_triplets(
     inactive_edge_colors = []
     inactive_edge_widths = []
 
-    # Helper to compute edge width/alpha from activation_score
-    def _score_to_width(score: int, base_width: float = 1.3) -> float:
-        # Score typically 0-3, map to 0.8-2.5 width
-        return base_width + min(score, 3) * 0.4
-
-    def _score_to_alpha(score: int, base_alpha: float = 1.0) -> float:
-        # Score typically 0-3, map to 0.4-1.0 alpha
-        return min(1.0, base_alpha - (3 - min(score, 3)) * 0.15)
+    # Uniform edge thickness constants
+    _EDGE_WIDTH = 2.0  # all active edges
+    _EDGE_WIDTH_INACTIVE = 1.2  # edges touching inactive nodes
+    _EDGE_WIDTH_STRUCTURAL = 2.0  # structural (dashed) edges
 
     for u, v, k in G.edges(keys=True):
         status = edge_status.get((u, v, k), "normal")
         is_active = (u, v, k) in active_edge_set or (u, v) in active_edge_set
         involves_inactive = u in inactive_node_set or v in inactive_node_set
 
-        # Get activation score for this edge (default to 0 if not provided)
-        activation_score = edge_scores.get((u, v, k), edge_scores.get((u, v), 0))
-
         if status == "structural":
             structural_edges.append((u, v, k))
             structural_edge_colors.append(
                 "green" if not involves_inactive else "#90c090"
             )
-            # Use activation_score for structural edge width
-            base_width = 2.5 if not involves_inactive else 1.5
-            structural_edge_widths.append(
-                _score_to_width(activation_score, base_width)
-                if is_active
-                else base_width * 0.6
-            )
+            structural_edge_widths.append(_EDGE_WIDTH_STRUCTURAL)
 
         elif status == "implicit":
             implicit_edges.append((u, v, k))
             implicit_edge_colors.append("#999999" if not is_active else "#666699")
-            implicit_edge_widths.append(1.0)
+            implicit_edge_widths.append(_EDGE_WIDTH)
 
         elif involves_inactive:
-            # Edges involving inactive nodes: faded gray
             inactive_edges.append((u, v, k))
             inactive_edge_colors.append("#cccccc")
-            # Lower width for inactive edges
-            inactive_edge_widths.append(0.6 + activation_score * 0.1)
+            inactive_edge_widths.append(_EDGE_WIDTH_INACTIVE)
 
         else:
             normal_edges.append((u, v, k))
             if is_active:
                 normal_edge_colors.append("black")
-                # Use activation_score for edge width - higher score = thicker
-                normal_edge_widths.append(_score_to_width(activation_score))
             else:
                 normal_edge_colors.append("#cccccc")
-                normal_edge_widths.append(0.8)
+            normal_edge_widths.append(_EDGE_WIDTH)
 
-    # Compute alpha values for normal edges based on activation_score
+    # Uniform alpha: active = fully opaque, inactive = faded
     normal_edge_alphas = []
     for u, v, k in normal_edges:
         is_active = (u, v, k) in active_edge_set or (u, v) in active_edge_set
-        activation_score = edge_scores.get((u, v, k), edge_scores.get((u, v), 0))
-        if is_active:
-            normal_edge_alphas.append(_score_to_alpha(activation_score))
-        else:
-            normal_edge_alphas.append(0.4)
+        normal_edge_alphas.append(1.0 if is_active else 0.4)
 
     # Edges are drawn with arrows pointing from u to v
     if normal_edges:
@@ -826,10 +953,10 @@ def plot_amoc_triplets(
 
         curvature = edge_curvatures.get((u, v, k), 0.0)
         label_t = edge_label_t_params.get((u, v, k), 0.5)
-        lx, ly = _compute_label_position_curved(pos, u, v, curvature, t=label_t)
+        lx, ly = compute_label_position_curved(pos, u, v, curvature, t=label_t)
 
         # Compute rotation angle to align label along edge direction
-        label_angle = _compute_label_angle_along_edge(pos, u, v, curvature, t=label_t)
+        label_angle = compute_label_angle_along_edge(pos, u, v, curvature, t=label_t)
 
         label_text = edge_labels[(u, v, k)]
 
@@ -856,7 +983,7 @@ def plot_amoc_triplets(
             ax.text(
                 lx,
                 ly,
-                _pretty_text(label_text),
+                pretty_text(label_text),
                 fontsize=12,
                 fontweight="bold",
                 color=label_color,
@@ -877,7 +1004,7 @@ def plot_amoc_triplets(
             ax.text(
                 lx,
                 ly,
-                _pretty_text(label_text),
+                pretty_text(label_text),
                 fontsize=10,
                 color=label_color,
                 ha="center",
@@ -897,7 +1024,7 @@ def plot_amoc_triplets(
             ax.text(
                 lx,
                 ly,
-                _pretty_text(label_text),
+                pretty_text(label_text),
                 fontsize=12,
                 color=label_color,
                 ha="center",
@@ -909,10 +1036,8 @@ def plot_amoc_triplets(
             )
 
     # Draw labels separately for active and inactive nodes
-    active_labels = {
-        n: _pretty_text(n) for n in G.nodes() if n not in inactive_node_set
-    }
-    inactive_labels = {n: _pretty_text(n) for n in G.nodes() if n in inactive_node_set}
+    active_labels = {n: pretty_text(n) for n in G.nodes() if n not in inactive_node_set}
+    inactive_labels = {n: pretty_text(n) for n in G.nodes() if n in inactive_node_set}
 
     # Draw active node labels (bold, black)
     if active_labels:
@@ -959,7 +1084,7 @@ def plot_amoc_triplets(
         if nodes is None:
             return None
 
-        cleaned = [_pretty_text(n) for n in nodes if n]
+        cleaned = [pretty_text(n) for n in nodes if n]
         if not cleaned:
             return f"{label}: none"
 
@@ -1047,13 +1172,7 @@ def plot_amoc_triplets(
         color="darkblue",
     )
 
-    # Draw active triplet overlay in top-right corner
-    active_triplets_for_overlay = [
-        (u, edge_labels[(u, v, k)], v)
-        for u, v, k in G.edges(keys=True)
-        if (u, v, k) in edge_labels
-    ]
-
+    # Draw active triplets in dedicated right panel
     if show_triplet_overlay:
         active_nodes_for_filter = plotted_nodes - inactive_node_set
 
@@ -1064,15 +1183,15 @@ def plot_amoc_triplets(
                 if u in active_nodes_for_filter and v in active_nodes_for_filter:
                     overlay_triplets.append((u, edge_labels[(u, v, k)], v))
 
-        # Draw overlay using the computed triplets
-        if overlay_triplets:
-            _draw_triplet_overlay(
-                ax,
-                overlay_triplets,
-                active_nodes=active_nodes_for_filter,
-                max_triplets=20,
-                font_size=10,
-            )
+        draw_triplet_panel(
+            ax_triplets,
+            overlay_triplets,
+            active_nodes=active_nodes_for_filter,
+            max_triplets=35,
+            font_size=9,
+        )
+    else:
+        ax_triplets.axis("off")
 
     ax.axis("off")
     fig.savefig(save_path, format="PNG", dpi=300, bbox_inches="tight")

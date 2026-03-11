@@ -29,7 +29,7 @@ def load_spacy():
         except Exception:
             nlp = spacy.load("en_core_web_sm")
 
-        logging.info("Loaded spaCy model.")
+        logging.info("loaded spacy model")
         return nlp
 
     except Exception as e:
