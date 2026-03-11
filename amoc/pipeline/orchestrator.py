@@ -1,3 +1,4 @@
+import copy
 import logging
 import re
 from typing import List, Tuple, Optional, Iterable
@@ -338,14 +339,8 @@ class AMoCv4:
         self._story_lemma_set = story_lemma_set
         return resolved_sentences
 
-    def snapshot_sentence_state_wrapper(self) -> tuple:
-        return self._sentence_ops.snapshot_sentence_state(
-            anchor_nodes=set(),
-            triplet_intro=self._triplet_intro,
-            per_sentence_view=self._per_sentence_view,
-            recently_deactivated=self._recently_deactivated_nodes_for_inference,
-            prev_active_nodes=self._prev_active_nodes_for_plot,
-        )
+    def snapshot_graph_state(self):
+        return copy.deepcopy(self.graph)
 
     def reset_sentence_state_wrapper(self, original_text: str) -> set:
         nodes_before_sentence = self._sentence_ops.reset_sentence_state(original_text)
@@ -452,63 +447,46 @@ class AMoCv4:
         )
 
     def stabilize_connectivity_wrapper(self, prev_sentences: list) -> bool:
-        # build per-sentence view first
-        if self._per_sentence_view is None:
-            logging.error("No per-sentence view available for connectivity check")
+        explicit_nodes = self._explicit_nodes_current_sentence
+
+        # Condition 1: No explicit nodes at all
+        if len(explicit_nodes) == 0:
+            logging.warning(
+                f"ROLLBACK TRIGGER: No explicit nodes in sentence {self._current_sentence_index}"
+            )
             return True
 
-        # # call the unified repair pipeline
-        # self._connectivity_ops.run_repair_pipeline(
-        #     per_sentence_view=self._per_sentence_view,
-        #     prev_sentences=prev_sentences,
-        #     current_sentence_text=self._current_sentence_text,
-        #     normalize_edge_label_fn=self._normalize_edge_label,
-        #     create_forced_edges_fn=self.create_forced_connectivity_edges_wrapper,
-        #     persona=self.persona,
-        # )
+        # Run repair pipeline before checking for dangling nodes
+        if self._per_sentence_view is not None:
+            self._connectivity_ops.run_repair_pipeline(
+                per_sentence_view=self._per_sentence_view,
+                prev_sentences=prev_sentences,
+                current_sentence_text=self._current_sentence_text,
+                normalize_edge_label_fn=self._normalize_edge_label,
+                create_forced_edges_fn=self.create_forced_connectivity_edges_wrapper,
+                persona=self.persona,
+            )
 
-        # after repairs, rebuild the view to reflect new edgess
-        # self._per_sentence_view = self.build_per_sentence_view_wrapper(
-        #     explicit_nodes=list(self._explicit_nodes_current_sentence),
-        #     sentence_index=self._current_sentence_index,
-        # )
+            # Rebuild the view to reflect any edges added by repair
+            self._per_sentence_view = self.build_per_sentence_view_wrapper(
+                explicit_nodes=list(explicit_nodes),
+                sentence_index=self._current_sentence_index,
+            )
 
-        # # Check if the final view is valid
-        # if self._per_sentence_view is None:
-        #     logging.error("Final per‑sentence view is None – rolling back")
-        #     return True  # rollback needed
-
-        # # Empty view
-        # if len(self._per_sentence_view.active_nodes) == 0:
-        #     logging.error("Empty per‑sentence view after repairs – rolling back")
-        #     return True
-
-        # # Single isolated node with no edges
-        # if (
-        #     len(self._per_sentence_view.active_nodes) == 1
-        #     and len(self._per_sentence_view.active_edges) == 0
-        # ):
-        #     logging.error(
-        #         "Single isolated node with no edges after repairs – rolling back"
-        #     )
-        #     return True
-
-        # # all explicit nodes are isolated
-        # if (
-        #     len(self._per_sentence_view.active_edges) == 0
-        #     and len(self._explicit_nodes_current_sentence) > 1
-        # ):
-        #     logging.error(
-        #         "multiple explicit nodes but no edges after repairs – rolling back"
-        #     )
-        #     return True
-
-        # # validation
-        # if not self._connectivity_ops.validate_active_connectivity():
-        #     logging.error(
-        #         "Active connectivity validation failed after repairs – rolling back"
-        #     )
-        #     return True  # rollback needed
+        # Condition 2: Single dangling explicit node (no active edges after repair)
+        if len(explicit_nodes) == 1:
+            node = next(iter(explicit_nodes))
+            has_active_edge = any(
+                e.active and (e.source_node == node or e.dest_node == node)
+                for e in self.graph.edges
+            )
+            if not has_active_edge:
+                logging.warning(
+                    f"ROLLBACK TRIGGER: Single dangling node "
+                    f"'{node.get_text_representer()}' in sentence "
+                    f"{self._current_sentence_index}"
+                )
+                return True
 
         return False
 
@@ -540,63 +518,30 @@ class AMoCv4:
         self,
         i: int,
         original_text: str,
-        plot_after_each_sentence: bool,
-        graphs_output_dir: Optional[str],
-        highlight_nodes: Optional[Iterable[str]],
-        largest_component_only: bool,
+        prev_sentences: list,
         previous_graph_state,
-        previous_triplet_intro,
-        previous_per_sentence_view,
-        previous_recently_deactivated,
-        previous_prev_active_nodes,
     ) -> None:
-        logging.error("Sentence invalid — reverting to previous state.")
-
         logging.warning(
             f"ROLLBACK_OCCURRED: At sentence {i+1} | "
             f"Before rollback: {len(self.graph.nodes)} nodes | "
-            f"Restoring to: {len(previous_graph_state.nodes)} nodes | "
-            f"Old graph ID: {id(self.graph)} | "
-            f"New graph ID: {id(previous_graph_state)}"
+            f"Restoring to: {len(previous_graph_state.nodes)} nodes"
         )
 
-        # Restore state first
+        # 1. Restore graph to previous state
         self.graph = previous_graph_state
         self.rebind_ops_graph_refs()
-        self._triplet_intro.clear()
-        self._triplet_intro.update(previous_triplet_intro)
-        self._recently_deactivated_nodes_for_inference = previous_recently_deactivated
-        self._prev_active_nodes_for_plot = previous_prev_active_nodes
-        self._per_sentence_view = previous_per_sentence_view
 
-        if plot_after_each_sentence:
-            try:
-                explicit = [
-                    n.get_text_representer()
-                    for n in self._explicit_nodes_current_sentence
-                ]
-                # Cumulative plot using restored graph
-                cumulative_triplets = self._triplet_ops.reconstruct_semantic_triplets(
-                    only_active=False
-                )
-                self.plot_graph_snapshot_wrapper(
-                    sentence_index=i,
-                    sentence_text=original_text,
-                    output_dir=graphs_output_dir,
-                    highlight_nodes=highlight_nodes,
-                    inactive_nodes=[],
-                    explicit_nodes=explicit,
-                    salient_nodes=[],
-                    only_active=False,
-                    largest_component_only=largest_component_only,
-                    mode="sentence_cumulative",
-                    triplets_override=cumulative_triplets,
-                    active_edges=set(),
-                    active_triplets_for_overlay=self._previous_active_triplets,
-                    property_nodes=[],
-                )
-            except Exception as e:
-                logging.warning(f"Rollback plot failed: {e}")
+        # 2. Keep current sentence in prev_sentences so LLM context is aware
+        if original_text not in prev_sentences:
+            prev_sentences.append(original_text)
+
+        # 3. Clear per-sentence view
+        self._per_sentence_view = None
+
+        logging.info(
+            f"ROLLBACK COMPLETE: Sentence {i+1} rolled back, "
+            f"context preserved ({len(prev_sentences)} sentences in history)"
+        )
 
     def capture_sentence_triplets_wrapper(self, original_text: str) -> None:
         self._triplet_ops.capture_sentence_triplets(
@@ -783,13 +728,7 @@ class AMoCv4:
                 self._sentence_ops.extract_sentence_lemmas(original_text),
             )
 
-            (
-                _previous_graph_state,
-                _previous_triplet_intro,
-                _previous_per_sentence_view,
-                _previous_recently_deactivated,
-                _previous_prev_active_nodes,
-            ) = self.snapshot_sentence_state_wrapper()
+            _previous_graph_state = self.snapshot_graph_state()
 
             nodes_before_sentence, should_skip_sentence = (
                 self.process_sentence_core_wrapper(
@@ -827,15 +766,8 @@ class AMoCv4:
                 self.handle_sentence_rollback_wrapper(
                     i=i,
                     original_text=original_text,
-                    plot_after_each_sentence=plot_after_each_sentence,
-                    graphs_output_dir=graphs_output_dir,
-                    highlight_nodes=highlight_nodes,
-                    largest_component_only=largest_component_only,
+                    prev_sentences=prev_sentences,
                     previous_graph_state=_previous_graph_state,
-                    previous_triplet_intro=_previous_triplet_intro,
-                    previous_per_sentence_view=_previous_per_sentence_view,
-                    previous_recently_deactivated=_previous_recently_deactivated,
-                    previous_prev_active_nodes=_previous_prev_active_nodes,
                 )
                 continue
 

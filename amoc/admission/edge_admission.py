@@ -146,7 +146,12 @@ class EdgeAdmission:
 
         # If both nodes are explicit in the current sentence, always allow
         explicit_nodes = self._get_explicit_nodes()
-        if source_node in explicit_nodes and dest_node in explicit_nodes:
+        both_explicit = source_node in explicit_nodes and dest_node in explicit_nodes
+
+        # Also allow if this is the first sentence and we have explicit nodes
+        is_first_sentence = self._current_sentence_index == 0
+        has_explicit_nodes = len(explicit_nodes) > 0
+        if both_explicit or (is_first_sentence and has_explicit_nodes):
             # Skip attachment constraint entirely
             pass
         else:
