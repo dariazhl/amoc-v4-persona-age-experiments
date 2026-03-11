@@ -449,82 +449,165 @@ VALIDATE_TRIPLET_PROMPT = """You are validating a candidate relationship for a k
 Given the sentence:
 "{sentence}"
 
-
 Candidate triple: ({subject}, {relation}, {object})
 
-**CRITICAL RULES ABOUT GENERIC WORDS:**
-- Words like "certain", "year", "thing", "something", "anything", "it", "this", "that" should NEVER be the SUBJECT of an action verb (writes, describes, knows, says, tells, etc.)
-- The subject is a generic term (e.g., "thing describes charlemagne" is invalid).
-- The subject is a temporal noun (e.g., "year", "month") performing an action.
-- The triplet contains semantic redundancy (e.g., "strategy is strategic")
-- Example: "thing describes charlemagne" is ALWAYS INVALID because "thing" cannot perform the action "describes"
-- Generic words can only be objects, never subjects
-- If the subject is a generic word, the triple is automatically INVALID
+**SEMANTIC COMPLETENESS VALIDATION RULES:**
 
-**VALIDATION RULES:**
-- The triple must be EXPLICITLY STATED in the sentence
-- The subject must be the actual doer of the action in the sentence
-- The object must be the actual receiver of the action
-- If the sentence says "man wrote about king", then:
-  - ✓ (man, wrote about, king) is VALID
-  - ✗ (thing, describes, charlemagne) is INVALID because "thing" is not the subject
-  - ✗ (king, wrote about, man) is INVALID (wrong direction)
-  - ✗ (man, knows, king) is INVALID ("knows" not in sentence)
+1. **RELATION MUST BE A VERB OR VERB PHRASE:**
+   - The relation must be a verb or contain a verb (e.g., "wrote", "is", "wears", "takes_place_at")
+   - ✓ VALID: "wrote", "is", "wears", "has", "takes_place_at", "prefers", "finds"
+   - ✗ INVALID: "not applicable", "na", "none", adjectives as relations like "traditional", "simple", "interesting"
 
+2. **OBJECT MUST COMPLETE THE VERB'S MEANING:**
+   - For transitive verbs (verbs that require an object), the object must be a noun
+   - ✓ VALID: (charlemagne, prefers, simplicity) - noun object completes "prefers"
+   - ✓ VALID: (charlemagne, wears, attire) - noun object
+   - ✓ VALID: (charlemagne, finds, manuscript) - noun object
+   - ✗ INVALID: (charlemagne, prefers, simple) - if "simple" is just an adjective, the meaning is incomplete
+   - ✗ INVALID: (charlemagne, wears, traditional) - "wears" needs a noun (what does he wear?)
+   - ✗ INVALID: (charlemagne, finds, interesting) - "finds" needs a noun (what does he find?)
 
-Respond with a JSON object containing:
+3. **COPULA VERBS ("is", "was", "are") HANDLE ADJECTIVES CORRECTLY:**
+   - "is" + adjective is COMPLETE and VALID
+   - ✓ VALID: (charlemagne, is, handsome) - complete property description
+   - ✓ VALID: (charlemagne, is, skilled) - complete
+   - ✓ VALID: (attire, is, traditional) - complete
+   - This is correct because "is" links a subject to a property/state
+
+4. **NO GENERIC SUBJECTS FOR ACTION VERBS:**
+   - Generic words ("thing", "something", "it", "this", "that", "certain", "year") cannot be subjects of action verbs
+   - ✓ VALID: (charlemagne, writes, book)
+   - ✗ INVALID: (thing, writes, book)
+   - ✓ VALID: Generic words can be objects: (charlemagne, writes, something)
+
+**DECISION EXAMPLES:**
+
+Input: (charlemagne, prefers, simple)
+Output: {{"valid": false, "reason": "'prefers' requires a noun object - what does he prefer? 'simple' as an adjective doesn't complete the meaning", "corrected_triple": null}}
+
+Input: (charlemagne, is, handsome)
+Output: {{"valid": true, "reason": "'is' + adjective is a complete property description", "corrected_triple": null}}
+
+Input: (charlemagne, wears, traditional)
+Output: {{"valid": false, "reason": "'wears' requires a noun object - what does he wear? 'traditional' as an adjective doesn't complete the meaning", "corrected_triple": null}}
+
+Input: (charlemagne, wears, attire)
+Output: {{"valid": true, "reason": "Complete: subject + verb + noun object", "corrected_triple": null}}
+
+Input: (pride, relates_to, ability)
+Output: {{"valid": false, "reason": "Vague relation 'relates_to' adds no semantic content - doesn't specify how pride relates to ability", "corrected_triple": null}}
+
+Input: (charlemagne, finds, interesting)
+Output: {{"valid": false, "reason": "'finds' requires a noun object - what does he find interesting? The adjective doesn't complete the meaning", "corrected_triple": null}}
+
+Input: (charlemagne, finds, manuscript)
+Output: {{"valid": true, "reason": "Complete with noun object", "corrected_triple": null}}
+
+Input: (festival, takes_place_at, aachen)
+Output: {{"valid": true, "reason": "Complete: subject + verb phrase + location object", "corrected_triple": null}}
+
+Input: (festival, take place at, aachen)
+Output: {{"valid": false, "reason": "Incorrect verb form - should be 'takes_place_at' for subject 'festival'", "corrected_triple": ["festival", "takes_place_at", "aachen"]}}
+
+Return a JSON object with:
 1. "valid": true or false
-2. "reason": a brief explanation of your decision (1 sentence)
+2. "reason": brief explanation focusing on semantic completeness
 3. "corrected_triple": if you think the triple is almost correct but needs adjustment (e.g., wrong direction, or replacing a generic word with a more specific one from context), provide the corrected (subject, relation, object) as a list. Otherwise, null.
-
-Example response format:
-Input: (thing, describes, charlemagne)
-Output: {{"valid": false, "reason": "'thing' cannot be the subject of 'describes' - generic words cannot perform actions", "corrected_triple": null}}
-
-Input: (man, wrote, thing)
-Output: {{"valid": true, "reason": "The sentence says 'man wrote most of the things'", "corrected_triple": null}}
 """
 
 # Simplified with 1-3 scale
-NARRATIVE_RELEVANCE_PROMPT = """You are helping to maintain a clean knowledge graph of a story. Your task is to identify which relationships are **least important** and could be removed without harming the reader's understanding.
+NARRATIVE_RELEVANCE_PROMPT = """You are maintaining a knowledge graph of a story. Your task is to score each relationship by how important it is for understanding the current narrative.
 
-Story so far:
+Story context (previous sentences):
 {story_context}
 
-Current sentence:
+Current sentence being processed:
 {current_sentence}
 
-Here are the active relationships in the reader's memory:
+Active relationships in the reader's memory:
 {active_triplets}
 
-For each relationship, assign a relevance score from 1-3 using these definitions:
+**SCORING GUIDE (1-3):**
 
-1 = LOW RELEVANCE - Not important to current narrative, safe to remove if not structurally critical
-2 = MEDIUM RELEVANCE - Provides useful context but not essential
-3 = HIGH RELEVANCE - Important for understanding current events
+**SCORE 3 - HIGH RELEVANCE (Essential to keep)**
+- Involves main characters (Charlemagne, his family, kingdoms, key figures)
+- Directly describes actions or states in the current sentence
+- Forms part of a meaningful multi-hop chain (e.g., "charlemagne - wears - attire" AND "attire - is - traditional")
+- Bridges inferred concepts to explicit story elements
+- Inferred nodes that connect to explicit nodes in valuable chains:
+  * (charlemagne, has, court) [explicit] + (court, employs, scholars) [inferred] + (scholars, write, manuscripts) [inferred]
+  * Chains that explain "how" things work are high value (score 3 for each link in the chain)
 
-IMPORTANT GUIDELINES:
-- Relationships involving main characters (Charlemagne, his family, kingdoms, etc.) should generally score 3
-- Generic relations like "relates to", "is associated with" should score 1-2 unless they carry specific meaning
-- Vague placeholders ("thing", "certain", "good") as subjects or objects lower the score (generally 1)
-- **Inferred relationships that bridge concepts should be preserved and scored higher (2-3)**
-- **Multi-hop inference chains are valuable for comprehension - preserve edges that connect inferred concepts**
-- **Do NOT** suggest removing a relationship if it's the only connection between a node and the rest of the graph
+**SCORE 2 - MEDIUM RELEVANCE (Useful context)**
+- Background information about secondary characters
+- Generic but meaningful relations ("lives_in", "travels_to", "works_with")
+- Inferred nodes that are one hop from explicit nodes but not part of explanatory chains
+- Provides supporting details not central to current events
 
-Return a JSON object with this exact structure:
+**SCORE 1 - LOW RELEVANCE (Can be removed)**
+- Semantically incomplete triples (action verb + adjective without noun):
+  * (charlemagne, prefers, simple) - what does he prefer?
+  * (charlemagne, wears, traditional) - wears WHAT?
+  * (charlemagne, finds, interesting) - finds WHAT interesting?
+- Vague relations with no specific meaning:
+  * (pride, relates_to, ability) - how do they relate?
+  * (x, associated_with, y) - in what way?
+- Semantic duplicates when a better form exists:
+  * If both (charlemagne, is, skilled) AND (charlemagne, has, skill) exist, the "has" version is score 1
+  * Prefer "is + adjective" (score 3) over "has + noun" (score 1) for the same attribute
+- Minor details from early sentences no longer connected to current narrative
+
+**CRITICAL RULES:**
+
+1. **CONTEXT AWARENESS:**
+   - A triple's score can CHANGE based on later context
+   - Example: (pride, relates_to, ability) in sentence 1 with no context = score 1
+   - If sentence 3 discusses how pride affects ability, that same triple becomes score 3
+
+2. **MULTI-HOP CHAINS:**
+   - When you see an incomplete triple like (charlemagne, wears, traditional), score it 1
+   - If the complete chain exists (charlemagne, wears, attire) + (attire, is, traditional), score BOTH as 3
+   - The graph should prefer: [Concept] -[verb]-> [Concept] + [Concept] -[is]-> [Property]
+
+3. **CONNECTIVITY PROTECTION:**
+   - Never assign score 1 to a triple if removing it would disconnect a node from the graph
+   - Check if the node has other connections before marking for removal
+
+**SCORING EXAMPLES:**
+
+Context: First sentence "Charlemagne preferred simple living."
+Active triplets:
+- (charlemagne, preferred, simple) → SCORE 1 (incomplete - preferred WHAT?)
+- (charlemagne, is, simple) → SCORE 3 (valid property of main character)
+- (charlemagne, has, simplicity) → SCORE 1 (duplicate of "is simple" - worse form)
+
+Context: Later sentence "He wore traditional Frankish attire."
+Active triplets:
+- (charlemagne, wore, traditional) → SCORE 1 (still incomplete - wore WHAT?)
+- (charlemagne, wore, attire) → SCORE 3 (complete, current action)
+- (attire, is, traditional) → SCORE 3 (complete property, forms chain with above)
+- (charlemagne, preferred, simple) → SCORE 1 (still incomplete, not fixed by context)
+
+Context: Sentence about Charlemagne's court with inference chain:
+- (charlemagne, has, court) → SCORE 3 (main character, chain start)
+- (court, employs, scholars) → SCORE 3 (inferred, explains court's function)
+- (scholars, write, manuscripts) → SCORE 3 (inferred, continues explanatory chain)
+- All three form a meaningful narrative unit worth preserving at highest score
+
+Return a JSON object with:
 {{
     "scores": {{
         "(subject1, relation1, object1)": 3,
         "(subject2, relation2, object2)": 1,
         ...
     }},
-    "reasoning": "Brief explanation of pruning strategy"
+    "reasoning": "Brief explanation of scoring strategy, noting context changes, multi-hop patterns preserved, and duplicate resolutions"
 }}
 
 The scores will be used to determine which edges decay (score 1) and which are reinforced (score 3).
 """
 
-PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE = """You are helping to maintain a clean knowledge graph of a story. Your task is to identify which relationships are **essential** to keep and which are **irrelevant** and can be removed.
+PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE = """You are maintaining a clean knowledge graph of a story. Your task is to identify which relationships are **essential** to keep and which are **irrelevant** and can be removed.
 
 Story so far:
 {story_context}
@@ -535,23 +618,71 @@ Current sentence:
 Here are the active relationships in the reader's memory:
 {active_triplets}
 
-For each relationship, decide if it is RELEVANT or IRRELEVANT to the current narrative.
-
 **KEEP (RELEVANT) if:**
-- Involves main characters, key objects, or central themes
-- Provides context needed to understand the current sentence
-- Is the only connection between a concept and the rest of the graph
-- Bridges important concepts (even if inferred)
-- Is part of a meaningful chain of events
+
+1. **SEMANTICALLY COMPLETE RELATIONSHIPS:**
+   - Subject + action verb + noun object (e.g., "charlemagne - wears - attire")
+   - Subject + is + adjective (e.g., "charlemagne - is - powerful")
+   - Subject + verb + preposition + noun (e.g., "charlemagne - travels_to - aachen")
+
+2. **MAIN CHARACTER CONNECTIONS:**
+   - Involves main characters (Charlemagne, his family, kingdoms, key figures)
+   - Describes their actions, states, or relationships
+
+3. **MULTI-HOP CHAINS THAT EXPLAIN MEANING:**
+   - When an adjective is used with an action verb (incorrectly), look for the correct chain:
+     - If you see "charlemagne - wears - traditional" (incorrect), KEEP the correct chain if it exists:
+       * "charlemagne - wears - attire" AND "attire - is - traditional" (BOTH relevant)
+   - Chains that connect inferred concepts to explicit text nodes
+   - Relationships that explain "how" or "why" things happen
+
+4. **CONTEXTUALLY GROUNDED:**
+   - Relationships mentioned or clearly implied in recent sentences
+   - Provides context needed to understand the current sentence
+   - Bridges important concepts even if inferred
 
 **REMOVE (IRRELEVANT) if:**
-- Relates to minor details or background information no longer relevant
-- Contains vague placeholders ("thing", "certain", "good") as subjects/objects
-- Is generic ("relates to", "is associated with") without specific meaning
-- Duplicates information already captured by other relationships
-- Describes events or states that have passed and are no longer needed
 
-**Critical Rule:** Never remove a relationship if it's the only connection between a node and the rest of the graph.
+1. **SEMANTICALLY INCOMPLETE:**
+   - Action verb + adjective without noun (e.g., "prefers - simple", "wears - traditional", "finds - interesting")
+   - These are grammatically incomplete and add confusion, not meaning
+
+2. **VAGUE OR GENERIC RELATIONS:**
+   - "relates_to", "associated_with", "connected_to" without specific meaning
+   - "involves", "concerns", "has" when used generically
+
+3. **SEMANTIC DUPLICATES:**
+   - When both (charlemagne, is, skilled) AND (charlemagne, has, skill) exist → KEEP only "is skilled", REMOVE "has skill"
+   - When both (strategy, is, strategic) AND (strategy, has, strategy) exist → KEEP only "is strategic"
+   - When both (x, is, adjective) AND (x, has, noun_form) describe the same attribute → KEEP "is + adjective", REMOVE "has + noun"
+   - Look for pairs where the relation and object express the same meaning in different forms
+
+4. **NO LONGER RELEVANT:**
+   - Minor details from earlier sentences no longer connected to current narrative
+   - Background information that has been superseded
+
+5. **STRUCTURALLY DANGEROUS (BUT HANDLE CAREFULLY):**
+   - **Never remove a relationship if it's the only connection between a node and the rest of the graph**
+   - Check connectivity before removing!
+
+**DECISION EXAMPLES:**
+
+Sentence 1: "Charlemagne preferred simple living."
+Active triplets after sentence 1:
+- (charlemagne, preferred, simple) - REMOVE (incomplete - what did he prefer? "simple" as adjective doesn't complete the meaning)
+- (charlemagne, is, simple) - KEEP (is + adjective is valid property)
+
+Sentence: "He wore traditional attire."
+Active triplets:
+- (charlemagne, wore, traditional) - REMOVE (incomplete - wore WHAT?)
+- (charlemagne, wore, attire) - KEEP (complete)
+- (attire, is, traditional) - KEEP (complete property)
+- (charlemagne, preferred, simple) - REMOVE (still incomplete, not fixed by new context)
+
+**DUPLICATE HANDLING EXAMPLE:**
+If both exist:
+- (charlemagne, is, skilled) - KEEP
+- (charlemagne, has, skill) - REMOVE (duplicate meaning, prefer adjective form)
 
 Return a JSON object with this exact structure:
 {{
@@ -560,8 +691,8 @@ Return a JSON object with this exact structure:
         "(subject2, relation2, object2)",
         ...
     ],
-    "reasoning": "Brief explanation of why certain relationships were kept or removed"
+    "reasoning": "Explain key pruning decisions, noting any incomplete action+adjective patterns removed, any multi-hop chains preserved, and any semantic duplicates resolved"
 }}
 
-The "to_keep" list should contain only the relationships that are essential for understanding the current narrative.
+The "to_keep" list should contain only the relationships that are essential for understanding the current narrative and are semantically complete.
 """
