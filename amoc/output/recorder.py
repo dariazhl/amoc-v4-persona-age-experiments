@@ -43,13 +43,6 @@ class TripletRecorder:
             )
         return triplets
 
-    def graph_to_triplets(self, graph: Any) -> List[Tuple[str, str, str]]:
-        triplets = []
-        for u, v, data in graph.edges(data=True):
-            label = data.get("label", "")
-            triplets.append((u, label, v))
-        return triplets
-
     def cumulative_triplets_upto(self, sentence_idx: int) -> List[Tuple[str, str, str]]:
         triplets = []
         for edge in self._graph.edges:

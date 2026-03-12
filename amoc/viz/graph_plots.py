@@ -585,7 +585,10 @@ def plot_amoc_triplets(
                 source_name = edge.source_node.get_text_representer()
                 dest_name = edge.dest_node.get_text_representer()
 
-                if source_name in inactive_node_names or dest_name in inactive_node_names:
+                if (
+                    source_name in inactive_node_names
+                    or dest_name in inactive_node_names
+                ):
                     if source_name not in G:
                         G.add_node(source_name)
                     if dest_name not in G:
@@ -1187,7 +1190,7 @@ def plot_amoc_triplets(
             ax_triplets,
             overlay_triplets,
             active_nodes=active_nodes_for_filter,
-            max_triplets=35,
+            max_triplets=45,
             font_size=9,
         )
     else:

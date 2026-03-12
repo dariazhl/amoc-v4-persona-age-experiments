@@ -214,9 +214,6 @@ class NodeAdmission:
         if existing_node is not None:
             return existing_node
 
-        # for node in graph_active_nodes:
-        #     if lemmas == node.lemmas:
-        #         return node
         # 4. Create node if allowed
         if not create_node:
             return None

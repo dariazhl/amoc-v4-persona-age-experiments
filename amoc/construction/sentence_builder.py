@@ -1,5 +1,4 @@
 import logging
-import copy
 import re
 from typing import TYPE_CHECKING, List, Optional, Tuple, Set
 import networkx as nx
@@ -187,7 +186,6 @@ class SentenceGraphBuilder:
         current_words,
         bypass_attachment: bool = False,
     ) -> bool:
-        # logging.info(f"FS_DEBUG: processing triple: {rel_tuple}")
         if len(rel_tuple) != 3:
             return False
         subj, rel, obj = rel_tuple
@@ -198,11 +196,7 @@ class SentenceGraphBuilder:
 
         norm_subj = self._normalize_endpoint_text_fn(subj, is_subject=True)
         norm_obj = self._normalize_endpoint_text_fn(obj, is_subject=False)
-        # logging.info(f"FS_DEBUG: normalized endpoints: ({norm_subj}, {norm_obj})")
         if norm_subj is None or norm_obj is None:
-            # logging.warning(
-            #     f"FS_DEBUG: normalization returned None: ({norm_subj}, {norm_obj})"
-            # )
             return False
 
         # Only perform attachability check if we are NOT bypassing attachment
@@ -235,16 +229,11 @@ class SentenceGraphBuilder:
             node_source=NodeSource.TEXT_BASED,
             create_node=True,
         )
-        # logging.info(f"FS_DEBUG: source_node = {source_node}, dest_node = {dest_node}")
         if source_node is None or dest_node is None:
-            # logging.warning(
-            #     f"FS_DEBUG: node creation failed for ({norm_subj}, {norm_obj})"
-            # )
             return False
 
         edge_label = rel.replace("(edge)", "").strip()
         edge_label = self._normalize_edge_label_fn(edge_label)
-        # logging.info(f"FS_DEBUG: cleaned edge_label = {edge_label}")
         if not self._is_valid_relation_label_fn(edge_label):
             logging.warning(f"FS_DEBUG: invalid relation label: {edge_label}")
             return False
@@ -279,7 +268,6 @@ class SentenceGraphBuilder:
         # self._extract_deterministic_structure_fn(sent, current_nodes, current_words)
 
         nodes_from_text = self.format_nodes_for_prompt(current_nodes, current_words)
-        # logging.info(f"FS_DEBUG: Nodes from text for first sentence: {nodes_from_text}")
 
         relationships = self.llm.get_new_relationships_first_sentence(
             nodes_from_text, sent.text, self.persona
@@ -306,9 +294,6 @@ class SentenceGraphBuilder:
             extra_relationships = self.llm.get_new_relationships_first_sentence(
                 nodes_from_text, sent.text, self.persona
             )
-            # logging.info(
-            #     f"FS_DEBUG: Extra relationships for node {node.get_text_representer()}: {extra_relationships}"
-            # )
             for rel in extra_relationships:
                 self.add_edge_from_triplet(rel, current_nodes, current_words)
 
@@ -334,7 +319,6 @@ class SentenceGraphBuilder:
         current_nodes, current_words = self._get_sentences_text_based_nodes_fn(
             [sent], True
         )
-        # self._extract_deterministic_structure_fn(sent, current_nodes, current_words)
         sentence_lemma_set = {token.lemma_.lower() for token in sent}
 
         # Get the validator
@@ -454,17 +438,11 @@ class SentenceGraphBuilder:
         for e in self.graph.edges:
             e.active_this_sentence = False
         added_edges = []
-        # snapshot graph state before processing sent
-        _graph_snapshot = copy.deepcopy(self.graph)
-        _anchor_snapshot = set()
-        _triplet_intro_snapshot = copy.deepcopy(triplet_intro)
         # update sent context
         current_sentence = sent
         prev_sentences.append(resolved_text)
         if len(prev_sentences) > self.context_length:
             prev_sentences.pop(0)
-        # extract main concepts
-        phrase_nodes = self._extract_main_nouns_fn(current_sentence)
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
             self._get_sentences_text_based_nodes_fn(
                 [current_sentence], create_unexistent_nodes=True
@@ -586,12 +564,6 @@ class SentenceGraphBuilder:
             current_all_text,
         )
         added_edges.extend(targeted_edges)
-        # # BFS from explicit nodes, reactivating inactive edges with visibility > 0
-        # reactivated_edges = self.graph.reactivate_memory_edges_within_distance_wrapper(
-        #     explicit_nodes=explicit_nodes_current_sentence,
-        #     max_distance=self.max_distance_from_active_nodes,
-        #     current_sentence=current_sentence_index,
-        # )
         # use LLM to select which memory edges to reactivate based on the sentence context
         self._reactivate_relevant_edges_fn(
             self.graph.get_active_nodes_wrapper(
@@ -603,25 +575,8 @@ class SentenceGraphBuilder:
         self._propagate_activation_from_edges_fn()
         # deactivate nodes that are not connected to the active graph and are not explicit
         self._restrict_active_nodes_fn(list(explicit_nodes_current_sentence))
-        # ISSUE: have seen plots where the first sentence is empty
-        # DESIGN: prevent the first sentence plot from collapsing
-        # TROUBLE - THIS ALWAYS RETURNS FALSE SO DEAD CODE, NEED TO DEBUG
-        should_skip = self.handle_empty_projection_retry(
-            explicit_nodes_current_sentence,
-            current_sentence_text_based_nodes,
-            current_sentence_text_based_words,
-            graph_active_nodes,
-            current_all_text,
-            nodes_from_text,
-            _graph_snapshot,
-            _anchor_snapshot,
-            _triplet_intro_snapshot,
-            set(),
-            triplet_intro,
-            nodes_before_sentence,
-        )
 
-        return (nodes_before_sentence, should_skip)
+        return (nodes_before_sentence, False)
 
     def connect_isolated_explicit_node(
         self,
@@ -701,23 +656,6 @@ class SentenceGraphBuilder:
                                 edge.mark_as_current_sentence(reset_score=True)
                                 break
 
-    def handle_empty_projection_retry(
-        self,
-        explicit_nodes_current_sentence: set,
-        current_sentence_text_based_nodes: list,
-        current_sentence_text_based_words: list,
-        graph_active_nodes: list,
-        current_all_text: str,
-        nodes_from_text: str,
-        _graph_snapshot,
-        _anchor_snapshot,
-        _triplet_intro_snapshot,
-        anchor_nodes: set,
-        triplet_intro: dict,
-        nodes_before_sentence: set,
-    ) -> bool:
-        return False
-
     # Normalize LLM output into (subj, rel, obj)
     def normalize_llm_triple(self, relationship):
         if not relationship:
@@ -778,9 +716,6 @@ class SentenceGraphBuilder:
                 # Check if removing would isolate a node
                 if node_connections.get(s, 0) <= 1 or node_connections.get(o, 0) <= 1:
                     to_keep.append(triplet)
-                    # logging.info(f"Keeping connectivity-critical edge: {triplet}")
-                # else:
-                #     logging.info(f"Pruning low-importance edge: {triplet}")
             else:
                 to_keep.append(triplet)
 
@@ -819,9 +754,6 @@ class SentenceGraphBuilder:
                 story_context=self._story_context,
             )
             if not validation.get("valid", False):
-                # logging.info(
-                #     f"LLM rejected triple ({subj},{rel},{obj}): {validation.get('reason', '')}"
-                # )
                 continue
 
             corrected = validation.get("corrected_triple")
@@ -831,14 +763,10 @@ class SentenceGraphBuilder:
                 and len(corrected) == 3
             ):
                 subj, rel, obj = corrected
-                # logging.info(f"Using corrected triple: ({subj},{rel},{obj})")
 
             validated_triples.append((subj, rel, obj))
 
         if not validated_triples:
-            # logging.info(
-            #     "LLM DEBUG: No valid triples after validation – returning early"
-            # )
             return added_edges
 
         # step 3: prioritize hub ordering
@@ -851,8 +779,6 @@ class SentenceGraphBuilder:
 
         # step 4: process each triple
         for subj, rel, obj in prioritized_triples:
-            # logging.info(f"LLM DEBUG: processing triple ({subj}, {rel}, {obj})")
-
             # Use raw strings directly – node lookup will handle them
             subj_final, obj_final = subj, obj
             rel_final = rel
@@ -865,9 +791,6 @@ class SentenceGraphBuilder:
                 current_sentence_text_based_nodes,
                 graph_active_nodes,
             ):
-                # logging.info(
-                #     f"LLM DEBUG: attachability check failed for ({subj_final}, {obj_final})"
-                # )
                 continue
 
             # SPECIAL CASE: For first sentence only, allow pronouns as nodes
@@ -927,11 +850,7 @@ class SentenceGraphBuilder:
                     current_sentence_text_based_words,
                 )
 
-            # logging.info(
-            #     f"LLM DEBUG: source_node = {source_node}, dest_node = {dest_node}"
-            # )
             if not source_node or not dest_node:
-                # logging.info(f"LLM DEBUG: node creation failed")
                 continue
 
             # clean and validate relation label
@@ -943,11 +862,6 @@ class SentenceGraphBuilder:
             self.update_node_source_if_in_sentence(source_node, sentence_lemma_keys)
             self.update_node_source_if_in_sentence(dest_node, sentence_lemma_keys)
 
-            # validate against sentence structure
-            # if not self.is_relation_valid(source_node, edge_label, dest_node):
-            #     logging.info(f"LLM DEBUG: cleaned edge_label = {edge_label}")
-            #     continue
-
             # create the edge
             edge = self.add_edge_wrapper_fn(
                 source_node,
@@ -958,7 +872,6 @@ class SentenceGraphBuilder:
 
             if edge:
                 added_edges.append(edge)
-                # logging.info(f"LLM DEBUG: edge added: {edge}")
             else:
                 logging.warning(
                     f"FS_DEBUG: edge NOT added: {source_node} --{edge_label}--> {dest_node}"

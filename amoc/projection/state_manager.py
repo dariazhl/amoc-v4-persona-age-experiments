@@ -65,8 +65,15 @@ class ProjectionStateManager:
                 explicit_nodes=list(explicit_nodes_current_sentence),
                 newly_inferred_nodes=newly_inferred_nodes,
             )
-        # find active nodes - active nodes are the source of truth
-        current_active_nodes = {node for node in self.graph.nodes if node.active}
+        # Working memory nodes = explicit + carryover from per-sentence view
+        # (not all graph-active nodes, which would include inferred nodes never in WM)
+        if per_sentence_view is not None and not per_sentence_view.is_empty():
+            current_active_nodes = (
+                set(per_sentence_view.explicit_nodes)
+                | set(per_sentence_view.carryover_nodes)
+            )
+        else:
+            current_active_nodes = set(explicit_nodes_current_sentence)
         # check for disconnection - it should not happen at this point, just checking
         if (
             per_sentence_view is not None

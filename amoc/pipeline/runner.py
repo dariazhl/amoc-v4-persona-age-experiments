@@ -590,28 +590,15 @@ def process_persona_csv(
                             }
 
                             if reverse_plot_mode == "both":
-                                for mode in ["active", "cumulative"]:
-                                    filtered_states = [
-                                        s
-                                        for s in all_states
-                                        if mode in s.get("step_tag", "")
-                                    ]
-
-                                    if len(filtered_states) >= 2:
-                                        png_paths = reverse_plotter.plot_reverse_sequence(
-                                            filtered_states,
-                                            base_kwargs,
-                                            final_positions,
-                                            mode=mode,
-                                        )
-                                        logging.info(
-                                            f"made {len(png_paths)} reverse plots for {mode} mode"
-                                        )
+                                modes = ["active", "cumulative", "paper"]
                             else:
+                                modes = [reverse_plot_mode]
+
+                            for mode in modes:
                                 filtered_states = [
                                     s
                                     for s in all_states
-                                    if reverse_plot_mode in s.get("step_tag", "")
+                                    if mode in s.get("step_tag", "")
                                 ]
 
                                 if len(filtered_states) >= 2:
@@ -619,9 +606,11 @@ def process_persona_csv(
                                         filtered_states,
                                         base_kwargs,
                                         final_positions,
-                                        mode=reverse_plot_mode,
+                                        mode=mode,
                                     )
-                                    logging.info(f"made {len(png_paths)} reverse plots")
+                                    logging.info(
+                                        f"made {len(png_paths)} reverse plots for {mode} mode"
+                                    )
 
                             reverse_dir = os.path.join(
                                 graphs_output_dir or output_dir, "reverse_plots"

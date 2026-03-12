@@ -35,10 +35,12 @@ class TextNormalizer:
 
         # Normalization mapping for common variants
         normalization_map = {
-            "is_type_of": "is",
-            "is_kind_of": "is",
-            "is_sort_of": "is",
-            "is_variant_of": "is",
+            "likes_at": "enjoys",
+            "is_described_by": "is",
+            "likes at": "enjoys",
+            "is type of:" "is" "is kind of": "is",
+            "is sort of": "is",
+            "is variant of": "is",
             "is_form_of": "is",
             "is_example_of": "is",
             "is_instance_of": "is",
@@ -50,7 +52,6 @@ class TextNormalizer:
             "possesses": "has",
             "owns": "has",
             "has property": "is",
-            "likes at": "enjoys",
             "not applicable": "does not wear",
             "not connected": "not connected to",
             "not related": "not related to",
@@ -60,8 +61,6 @@ class TextNormalizer:
         if cleaned in normalization_map:
             original = cleaned
             cleaned = normalization_map[cleaned]
-            # logging.info(f"Normalized edge label: '{original}' -> '{cleaned}'")
-
         return cleaned
 
     # verbs cannot become nodes
@@ -73,46 +72,6 @@ class TextNormalizer:
         if not re.search(r"[a-zA-Z]", label):
             return False
         return True
-
-    def is_verb_relation(self, label: str) -> bool:
-        if not label:
-            return False
-
-        doc = self._spacy_nlp(label)
-        has_verb = False
-        has_copula = False
-        has_adj_after_copula = False
-        prev_was_copula = False
-
-        for tok in doc:
-            if not tok.is_alpha:
-                continue
-
-            pos = tok.pos_
-            lemma = tok.lemma_.lower()
-
-            if pos in {"VERB", "AUX"}:
-                has_verb = True
-                if lemma in {"be", "is", "was", "were", "been", "being", "am", "are"}:
-                    has_copula = True
-                    prev_was_copula = True
-                else:
-                    prev_was_copula = False
-
-            elif pos == "ADJ":
-                if prev_was_copula or has_copula:
-                    has_adj_after_copula = True
-                prev_was_copula = False
-
-            elif pos in {"NOUN", "PROPN", "ADP", "PART", "ADV"}:
-                prev_was_copula = False
-
-        if has_verb:
-            return True
-        if has_copula and has_adj_after_copula:
-            return True
-
-        return False
 
     def extract_canonical_node_lemma(
         self, text: str, is_subject: bool

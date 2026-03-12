@@ -195,14 +195,17 @@ class GraphPlotter:
         if not self._collect_states:
             return
 
-        all_triplets = (
-            self._graph_edges_to_triplets_fn(only_active=False)
-            if self._graph_edges_to_triplets_fn
-            else []
-        )
+        if mode == "cumulative":
+            state_triplets = (
+                self._graph_edges_to_triplets_fn(only_active=False)
+                if self._graph_edges_to_triplets_fn
+                else []
+            )
+        else:
+            state_triplets = triplets
 
         state = {
-            "triplets": all_triplets if mode == "cumulative" else triplets,
+            "triplets": state_triplets,
             "persona": self._persona,
             "model_name": self._model_name,
             "age": self._persona_age if self._persona_age is not None else -1,
@@ -210,14 +213,25 @@ class GraphPlotter:
             "sentence_text": sentence_text,
             "explicit_nodes": explicit_nodes or [],
             "inactive_nodes": inactive_nodes or [],
+            "inactive_nodes_for_title": inactive_nodes or [],
             "salient_nodes": salient_nodes or [],
             "inferred_nodes": inferred_nodes or [],
             "active_edges": active_edges or set(),
-            "layout_from_active_only": False,
+            "layout_from_active_only": mode != "paper",
             "show_triplet_overlay": True,
             "avoid_edge_overlap": True,
             "layout_depth": self._layout_depth,
         }
+
+        if mode == "paper":
+            ever_explicit = sorted(
+                {
+                    n.get_text_representer()
+                    for n in self._graph.nodes
+                    if n.ever_explicit and n.get_text_representer()
+                }
+            )
+            state["ever_explicit_nodes"] = ever_explicit
 
         self._graph_states.append(state)
 
@@ -695,6 +709,18 @@ class GraphPlotter:
             self._get_edge_activation_scores_fn()
             if self._get_edge_activation_scores_fn
             else {}
+        )
+
+        self._capture_state(
+            sentence_idx=sentence_index,
+            sentence_text=sentence_text,
+            mode="paper",
+            triplets=all_triplets,
+            explicit_nodes=list(explicit_node_names),
+            inactive_nodes=sorted(all_nodes - nodes_with_active_edges),
+            salient_nodes=carryover_nodes,
+            inferred_nodes=sorted(inferred_node_names & nodes_with_active_edges),
+            active_edges=active_edge_set,
         )
 
         try:

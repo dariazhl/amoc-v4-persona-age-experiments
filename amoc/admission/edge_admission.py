@@ -32,7 +32,6 @@ class EdgeAdmission:
         self._edge_visibility = edge_visibility
         self._debug = debug
         self._triplet_intro = {}
-        self._persistent_is_edges = set()
         self._current_sentence_index = None
         self._normalize_endpoint_text_fn: Optional[callable] = None
         self._normalize_edge_label_fn: Optional[callable] = None
@@ -60,10 +59,8 @@ class EdgeAdmission:
     def configure_edge_state_refs(
         self,
         triplet_intro: dict,
-        persistent_is_edges: set,
     ):
         self._triplet_intro = triplet_intro
-        self._persistent_is_edges = persistent_is_edges
 
     def configure_edge_admission_with_core(self, core: "AMoCv4") -> None:
         self.configure_edge_inference_callbacks(
@@ -76,7 +73,6 @@ class EdgeAdmission:
         )
         self.configure_edge_state_refs(
             triplet_intro=core._triplet_intro,
-            persistent_is_edges=core._persistent_is_edges,
         )
 
     def set_edge_sentence_context(self, idx: int):
@@ -215,9 +211,6 @@ class EdgeAdmission:
                         use_sentence if use_sentence is not None else -1
                     )
 
-                # if label.strip().lower() == "is":
-                #     self._persistent_is_edges.add(trip_id)
-
                 return existing_edge
             self._graph.remove_edge(existing_edge)
         # edge duplication ie. knight - forest - forest
@@ -250,14 +243,6 @@ class EdgeAdmission:
                 self._triplet_intro[trip_id] = (
                     use_sentence if use_sentence is not None else -1
                 )
-
-            # if label.strip().lower() == "is":
-            #     trip_id = (
-            #         edge.source_node.get_text_representer(),
-            #         edge.label,
-            #         edge.dest_node.get_text_representer(),
-            #     )
-            #     self._persistent_is_edges.add(trip_id)
 
         return edge
 

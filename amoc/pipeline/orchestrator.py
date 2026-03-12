@@ -89,7 +89,6 @@ class AMoCv4:
         self.cumulative_graph_builder = CumulativeGraphBuilder(self.cumulative_graph)
         self.active_graph_builder = ActiveGraphBuilder(self.active_graph)
         self._triplet_intro = {}
-        self._persistent_is_edges = set()
         self._cumulative_triplet_records = []
         self._per_sentence_view = None
         self._ever_admitted_nodes = set()
@@ -592,13 +591,11 @@ class AMoCv4:
             only_active=True
         )
 
-        all_graph_nodes = {
-            n.get_text_representer()
-            for n in self.graph.nodes
-            if n.get_text_representer()
-        }
         active_node_names = set(explicit_nodes_for_plot) | set(salient_nodes_for_plot)
-        inactive_nodes_recalc = sorted(all_graph_nodes - active_node_names)
+        self._plot_ops._ever_in_working_memory.update(active_node_names)
+        inactive_nodes_recalc = sorted(
+            self._plot_ops._ever_in_working_memory - active_node_names
+        )
 
         self._plot_ops._capture_state(
             sentence_idx=i,
@@ -610,6 +607,50 @@ class AMoCv4:
             salient_nodes=salient_nodes_for_plot,
             inferred_nodes=inferred_nodes,
             active_edges=cumulative_active_pairs,
+        )
+
+        # Paper view state: all triplets (active + inactive), active edges highlighted
+        all_triplets = self._triplet_ops.reconstruct_semantic_triplets(
+            only_active=False
+        )
+        active_triplets = self._triplet_ops.reconstruct_semantic_triplets(
+            only_active=True
+        )
+
+        nodes_with_active_edges = set()
+        for s, r, o in active_triplets:
+            if s:
+                nodes_with_active_edges.add(s)
+            if o:
+                nodes_with_active_edges.add(o)
+
+        active_edge_set = {(s, o) for s, r, o in active_triplets if s and o}
+
+        all_nodes = set()
+        for s, _, o in all_triplets:
+            if s:
+                all_nodes.add(s)
+            if o:
+                all_nodes.add(o)
+
+        carryover_nodes = sorted(nodes_with_active_edges - set(explicit_nodes_for_plot))
+
+        inferred_node_names = {
+            n.get_text_representer()
+            for n in self.graph.nodes
+            if n.node_source == NodeSource.INFERENCE_BASED and n.active
+        }
+
+        self._plot_ops._capture_state(
+            sentence_idx=i,
+            sentence_text=original_text,
+            mode="paper",
+            triplets=all_triplets,
+            explicit_nodes=explicit_nodes_for_plot,
+            inactive_nodes=sorted(all_nodes - nodes_with_active_edges),
+            salient_nodes=carryover_nodes,
+            inferred_nodes=sorted(inferred_node_names & nodes_with_active_edges),
+            active_edges=active_edge_set,
         )
 
     def plot_sentence_views_wrapper(

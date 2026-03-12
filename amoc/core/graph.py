@@ -244,16 +244,6 @@ class Graph:
     def deactivate_all_edges_wrapper(self) -> None:
         self._activation_ops.deactivate_all_edges()
 
-    # def reactivate_memory_edges_within_distance_wrapper(
-    #     self,
-    #     explicit_nodes: Set[Node],
-    #     max_distance: int,
-    #     current_sentence: int,
-    # ) -> Set[Edge]:
-    #     return self._activation_ops.reactivate_memory_edges_within_distance(
-    #         explicit_nodes, max_distance, current_sentence
-    #     )
-
     def get_active_nodes_wrapper(
         self, score_threshold: int, only_text_based: bool = False
     ) -> List[Node]:
@@ -282,20 +272,6 @@ class Graph:
         return self._stability_ops.restore_connectivity(
             required_nodes, allow_reactivation, enforce_cumulative
         )
-
-    # prevent nodes such as "dress" from  "He dressed like a Frank" from entering the graph
-    # def is_valid_node_candidate(self, text: str, node_source: "NodeSource") -> bool:
-    #     if not text or not text.strip():
-    #         return False
-
-    #     if node_source in [NodeSource.TEXT_BASED, NodeSource.INFERENCE_BASED]:
-    #         doc = self._spacy_nlp(text)
-    #         if doc and len(doc) > 0:
-    #             # Check if it's a verb
-    #             if doc[0].pos_ in {"VERB", "AUX"}:
-    #                 return False
-
-    #     return True
 
     def sanity_check_provenance_wrapper(
         self,
