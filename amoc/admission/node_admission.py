@@ -108,6 +108,16 @@ class NodeAdmission:
         if provenance != "STORY_EXPLICIT" and not is_allowed_inference:
             return False
 
+        # # cut down the number of nodes
+        # if provenance == "INFERRED_RELATION":
+        #     inferred_count = sum(
+        #         1
+        #         for n in self._graph.nodes
+        #         if n.node_source == NodeSource.INFERENCE_BASED
+        #     )
+        #     if inferred_count > 15:
+        #         return False
+
         # Track total nodes and layout depth
         if lemma not in self._ever_admitted_nodes:
             self._ever_admitted_nodes.add(lemma)

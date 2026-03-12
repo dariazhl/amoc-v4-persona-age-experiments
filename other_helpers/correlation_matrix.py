@@ -30,9 +30,6 @@ COLS = [
     "lexical_avg_word_len",
 ]
 
-# ------------------------------------------------------------------
-# Load & clean
-# ------------------------------------------------------------------
 
 df = pd.read_csv(INPUT_CSV)
 
@@ -40,9 +37,6 @@ df = df[COLS].apply(pd.to_numeric, errors="coerce")
 df = df.dropna()
 
 
-# ------------------------------------------------------------------
-# Correlations
-# ------------------------------------------------------------------
 def corr_pval_matrix(df, method="pearson"):
     corr = pd.DataFrame(index=df.columns, columns=df.columns, dtype=float)
     pval = pd.DataFrame(index=df.columns, columns=df.columns, dtype=float)
@@ -75,9 +69,7 @@ print(spearman_corr.round(3))
 print("\n=== Spearman p-values ===")
 print(spearman_p.round(4))
 
-# ------------------------------------------------------------------
-# Remove regime effects and recompute correlations
-# ------------------------------------------------------------------
+
 INPUT_CSV = Path(
     "/Users/dariazahaleanu/Documents/Coding_Projects/"
     "amoc-v4-persona-age-experiments/results/Qwen3-30b/"
@@ -94,9 +86,6 @@ VARS = [
 
 POSSIBLE_REGIME_COLS = ["regime", "education_regime", "regime_bin"]
 
-# ------------------------------------------------------------------
-# Load
-# ------------------------------------------------------------------
 
 df = pd.read_csv(INPUT_CSV)
 
@@ -110,17 +99,11 @@ def find_regime_col(df):
 
 GROUP_COL = find_regime_col(df)
 
-# ------------------------------------------------------------------
-# Clean
-# ------------------------------------------------------------------
 
 df = df[[GROUP_COL] + VARS]
 df[VARS] = df[VARS].apply(pd.to_numeric, errors="coerce")
 df = df.dropna()
 
-# ------------------------------------------------------------------
-# Residualize w.r.t. regime
-# ------------------------------------------------------------------
 
 residuals = pd.DataFrame(index=df.index)
 
@@ -128,9 +111,6 @@ for var in VARS:
     model = smf.ols(f"{var} ~ C({GROUP_COL})", data=df).fit()
     residuals[var] = model.resid
 
-# ------------------------------------------------------------------
-# Correlation + p-values
-# ------------------------------------------------------------------
 
 corr = pd.DataFrame(index=VARS, columns=VARS, dtype=float)
 pval = pd.DataFrame(index=VARS, columns=VARS, dtype=float)

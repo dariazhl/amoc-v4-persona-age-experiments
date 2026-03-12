@@ -55,7 +55,8 @@ class TripletDeduplicator:
         original_count = len(triplets)
 
         exact_deduped = self.remove_exact_duplicates(triplets)
-        vague_filtered = self.remove_vague_relations(exact_deduped)
+        negation_filtered = self.remove_negation_relations(exact_deduped)
+        vague_filtered = self.remove_vague_relations(negation_filtered)
         semantic_deduped = self.remove_semantic_duplicates(vague_filtered)
         final = self.remove_exact_duplicates(semantic_deduped)
 
@@ -87,6 +88,64 @@ class TripletDeduplicator:
         ]
 
         return any(pattern in r_check for pattern in vague_patterns)
+
+    _NEGATION_PHRASES = (
+        "not connected",
+        "not_connected",
+        "not connected to",
+        "not_connected_to",
+        "not related",
+        "not associated",
+        "not linked",
+        "not involved",
+        "not applicable",
+        "not present",
+        "not exist",
+        "no connection",
+        "no_connection",
+        "no relation",
+        "no link",
+        "no association",
+        "no involvement",
+        "without connection",
+        "without relation",
+        "unconnected",
+        "unrelated",
+        "disconnected",
+    )
+
+    def is_negation_relation(self, relation: str) -> bool:
+        if not relation:
+            return False
+
+        r_lower = relation.lower().strip().replace("_", " ")
+
+        for phrase in self._NEGATION_PHRASES:
+            if phrase in r_lower:
+                return True
+
+        return r_lower.startswith(("not ", "no "))
+
+    def remove_negation_relations(
+        self, triplets: List[Tuple[str, str, str]]
+    ) -> List[Tuple[str, str, str]]:
+        if not triplets:
+            return []
+
+        result = []
+        removed_count = 0
+
+        for s, r, o in triplets:
+            if self.is_negation_relation(r):
+                removed_count += 1
+                logging.debug(f"removed negation relation: ({s}, {r}, {o})")
+            else:
+                result.append((s, r, o))
+
+        if removed_count > 0:
+            logging.info(f"removed {removed_count} negation triplets")
+
+        return result
 
     def remove_vague_relations(
         self, triplets: List[Tuple[str, str, str]]

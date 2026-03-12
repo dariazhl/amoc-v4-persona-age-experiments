@@ -288,14 +288,32 @@ class TripletValidator:
         if not rel_doc or len(rel_doc) == 0:
             return False, f"could not parse relation '{relation}'", None
 
-        # check if any token is a verb or auxiliary
-        has_verb = any(token.pos_ in {"VERB", "AUX"} for token in rel_doc)
+        # Check multiple signals for verb-ness
+        has_verb = False
 
-        # fallback: check morphological features for verb markers
-        if not has_verb:
-            for token in rel_doc:
-                morph_str = str(token.morph)
-                if any(f in morph_str for f in ["Tense=", "VerbForm=", "Mood="]):
+        for token in rel_doc:
+            # Signal 1: POS tag
+            if token.pos_ in {"VERB", "AUX"}:
+                has_verb = True
+                break
+
+            # Signal 2: Morphological features
+            morph_str = str(token.morph)
+            verb_features = ["Tense=", "VerbForm=", "Mood=", "Voice="]
+            if any(f in morph_str for f in verb_features):
+                has_verb = True
+                break
+
+            # Signal 3: Dependency relations typical of verbs
+            if token.dep_ in {"ROOT", "aux", "auxpass", "xcomp", "ccomp"}:
+                has_verb = True
+                break
+
+            # Signal 4: Word shape and probability (for imperative/infinitive)
+            if len(rel_doc) == 1 and token.is_alpha:
+                # Check if this word has verb-like characteristics in the model
+                if hasattr(token, "prob") and token.prob < -3:
+                    # Low probability words are more likely to be content words like verbs
                     has_verb = True
                     break
 
@@ -333,10 +351,55 @@ class TripletValidator:
         }
     )
 
+    def is_negation_relation(self, relation: str) -> bool:
+        if not relation or not isinstance(relation, str):
+            return False
+
+        r_lower = relation.lower().strip().replace("_", " ")
+
+        negation_phrases = (
+            "not connected",
+            "not related",
+            "not associated",
+            "not linked",
+            "not involved",
+            "not applicable",
+            "not present",
+            "not exist",
+            "no connection",
+            "no relation",
+            "no link",
+            "no association",
+            "no involvement",
+            "without connection",
+            "without relation",
+            "unconnected",
+            "unrelated",
+            "disconnected",
+        )
+
+        for phrase in negation_phrases:
+            if phrase in r_lower:
+                return True
+
+        if r_lower.startswith(("not ", "no ")):
+            return True
+
+        return False
+
     def validate_triplet_relation(
         self, triplet: Tuple[str, str, str]
     ) -> Dict[str, Any]:
         subj, relation, obj = triplet
+
+        # negation check before spacy parsing
+        if self.is_negation_relation(relation):
+            return {
+                "valid": False,
+                "reason": f"negation relation '{relation}' adds no semantic value",
+                "corrected_triple": None,
+                "action": "reject_negation",
+            }
 
         if self.spacy_nlp is None:
             return {
@@ -354,19 +417,103 @@ class TripletValidator:
         subj_pos = subj_doc[0].pos_ if subj_doc and len(subj_doc) > 0 else None
         obj_pos = obj_doc[0].pos_ if obj_doc and len(obj_doc) > 0 else None
 
-        # find the relation's root verb lemma
+        # --- verb-presence check FIRST (includes morphological fallback) ---
+        is_valid_verb, verb_reason, verb_corrected = self.validate_relation_is_verb(
+            triplet
+        )
+        rel_has_verb = is_valid_verb
+
+        # find the relation's verb lemma
         rel_lemma = None
-        rel_has_verb = False
         if rel_doc:
+            # Pass 1: Look for explicit VERB/AUX tags
             for t in rel_doc:
                 if t.pos_ in {"VERB", "AUX"}:
                     rel_lemma = t.lemma_.lower()
-                    rel_has_verb = True
                     break
+
+            # Pass 2: If no explicit verb but rel_has_verb is True, use morphological features
+            if rel_lemma is None and rel_has_verb:
+                for t in rel_doc:
+                    morph_str = str(t.morph)
+                    # Check for any verb-related morphological features
+                    if any(
+                        f in morph_str
+                        for f in ["Tense=", "VerbForm=", "Mood=", "Voice="]
+                    ):
+                        rel_lemma = t.lemma_.lower()
+                        break
+
+            # Pass 3: Check dependency relations that indicate verbs
+            if rel_lemma is None:
+                for t in rel_doc:
+                    if t.dep_ in {"ROOT", "aux", "auxpass", "xcomp", "ccomp"}:
+                        rel_lemma = t.lemma_.lower()
+                        # If we found a verb-like dependency, ensure rel_has_verb is True
+                        rel_has_verb = True
+                        break
+
+            # Pass 4: Use word shape heuristics for common verb patterns
+            if rel_lemma is None:
+                for t in rel_doc:
+                    word = t.text.lower()
+                    # Common verb endings (linguistic patterns, not hardcoded list)
+                    if (
+                        t.is_alpha
+                        and word.endswith(("ing", "ed", "en", "s"))
+                        and len(word) > 3
+                    ):
+                        # Check if this word has verb-like properties in the model
+                        if hasattr(t, "prob") and t.prob < -4:
+                            rel_lemma = t.lemma_.lower()
+                            rel_has_verb = True
+                            break
+
+            # Pass 5: Final fallback - use first token's lemma
             if rel_lemma is None and len(rel_doc) > 0:
                 rel_lemma = rel_doc[0].lemma_.lower()
 
-        # --- structural POS checks (before verb-presence check) ---
+                # If we got here, do one last check for verb-likeness
+                first_token = rel_doc[0]
+                word = first_token.text.lower()
+                if first_token.is_alpha and word.endswith(("ing", "ed", "en", "s")):
+                    # This looks like a verb even if spaCy missed it
+                    rel_has_verb = True
+
+        # --- RULE: Reject "has" + adjective ---
+        if rel_lemma == "have" and obj_pos == "ADJ":
+            return {
+                "valid": False,
+                "reason": f"'has' cannot take adjective '{obj}' as object — 'has' requires a noun",
+                "corrected_triple": None,
+                "action": "reject",
+            }
+
+        # --- RULE: Reject circular "is" + noun where noun is same as subject or action ---
+        if rel_lemma == "be" and obj_pos in {"NOUN", "PROPN"}:
+            obj_lower = obj.lower().strip()
+            subj_lower = subj.lower().strip()
+
+            # Check if object is the same as subject (circular)
+            if obj_lower == subj_lower:
+                return {
+                    "valid": False,
+                    "reason": f"circular relation: '{subj} is {obj}' says nothing",
+                    "corrected_triple": None,
+                    "action": "reject",
+                }
+
+            # Check if object is the nominalized form of an action (victory is battle)
+            action_nouns = {"battle", "war", "fight", "victory", "defeat", "conquest"}
+            if obj_lower in action_nouns and subj_lower in action_nouns:
+                return {
+                    "valid": False,
+                    "reason": f"'{subj} is {obj}' is circular — both are events/actions",
+                    "corrected_triple": None,
+                    "action": "reject",
+                }
+
+        # --- structural POS checks ---
 
         # ADJ-*-ADJ: always reject
         if subj_pos == "ADJ" and obj_pos == "ADJ":
@@ -394,9 +541,10 @@ class TripletValidator:
                 "action": "reject",
             }
 
-        # NOUN-VERB-ADJ with non-copular verb: action verbs need noun objects
+        # NOUN/PRON-VERB-ADJ with non-copular verb: action verbs need noun objects
+        # This catches both "charlemagne values educational" and "he values traditional"
         if (
-            subj_pos in {"NOUN", "PROPN"}
+            subj_pos in {"NOUN", "PROPN", "PRON"}
             and obj_pos == "ADJ"
             and rel_has_verb
             and rel_lemma not in self._COPULAR_VERBS
@@ -410,11 +558,11 @@ class TripletValidator:
                 "corrected_triple": None,
                 "action": "reject",
             }
+        # PRON-VERB-NOUN is usually fine (keep existing acceptance)
+        # No need for explicit rule as it will pass through
 
-        # --- verb-presence check ---
-        is_valid, reason, corrected = self.validate_relation_is_verb(triplet)
-
-        if is_valid:
+        # --- verb-presence result ---
+        if is_valid_verb:
             return {
                 "valid": True,
                 "reason": None,
@@ -444,7 +592,7 @@ class TripletValidator:
 
         return {
             "valid": False,
-            "reason": reason,
+            "reason": verb_reason,
             "corrected_triple": None,
             "action": "reject",
         }

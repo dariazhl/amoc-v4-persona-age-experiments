@@ -590,7 +590,7 @@ def process_persona_csv(
                             }
 
                             if reverse_plot_mode == "both":
-                                modes = ["active", "cumulative", "paper"]
+                                modes = ["cumulative", "paper"]
                             else:
                                 modes = [reverse_plot_mode]
 

@@ -513,7 +513,14 @@ Candidate triple: ({subject}, {relation}, {object})
    - ✗ INVALID: (thing, writes, book)
    - ✓ VALID: Generic words can be objects: (charlemagne, writes, something)
 
-8. **AVOID VAGUE RELATIONS:**
+8. **REJECT NEGATION RELATIONS:**
+   - Relations that express absence of connection add no semantic value to a knowledge graph
+   - ✗ REJECT: "not connected", "not related", "no connection", "unrelated", "disconnected", "not connected to", "not related to"
+   - ✗ REJECT: (clothing, not connected to, school)
+   - ✗ REJECT: (charlemagne, not related to, shirt)
+   - Any relation starting with "not" or "no" or expressing absence should be rejected
+
+9. **AVOID VAGUE RELATIONS:**
    - Relations like "related to", "associated with", "connected to", "involves" add little semantic meaning
    - These should be avoided unless they are the only possible connection
    - ✓ BETTER: Use specific relations like "fought", "married", "ruled", "wrote"
@@ -571,6 +578,12 @@ Output: {{"valid": true, "reason": "Complete: subject + verb phrase + location o
 
 Input: (festival, take place at, aachen)
 Output: {{"valid": false, "reason": "Incorrect verb form - should be 'takes_place_at' for subject 'festival'", "corrected_triple": ["festival", "takes_place_at", "aachen"]}}
+
+Input: (clothing, not connected to, school)
+Output: {{"valid": false, "reason": "Negation relation adds no semantic value - absence of connection is not a valid relation", "corrected_triple": null}}
+
+Input: (charlemagne, not related to, pepin)
+Output: {{"valid": false, "reason": "Negation relation - absence of relation is not valid for a knowledge graph", "corrected_triple": null}}
 
 Input: (clothing, relates to, school)
 Output: {{"valid": false, "reason": "Vague relation 'relates to' doesn't specify how clothing relates to school. Consider 'is uniform for', 'is worn at', or other specific relation", "corrected_triple": null}}

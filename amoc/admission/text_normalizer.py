@@ -23,7 +23,6 @@ class TextNormalizer:
     def normalize_edge_label(self, label: str) -> str:
         if not label or not isinstance(label, str):
             return ""
-
         cleaned = label.strip()
         if not cleaned:
             return ""
@@ -49,14 +48,6 @@ class TextNormalizer:
             # Has patterns
             if re.search(r"\b(has|have|possess|own)\b", text):
                 return "has"
-
-            # Not patterns
-            if re.search(r"\b(not|n\'t|doesnt|does_not)\b", text):
-                if re.search(r"wear", text):
-                    return "does_not_wear"
-                if re.search(r"connect|relat|link", text):
-                    return "not_connected_to"
-                return "does_not"
 
             # If no pattern matched, return cleaned version
             return text

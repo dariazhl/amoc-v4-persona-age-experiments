@@ -2,8 +2,6 @@ import os
 import re
 from PIL import Image
 
-# ================= CONFIG =================
-
 INPUT_ROOT = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/results/Qwen3-30b/failed_graphs_jan_6/v8-to-show-for-comparison-replace-pronouns"  # folder with all images flat
 OUTPUT_DIR = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/results/Qwen3-30b/failed_graphs_jan_6/v8-to-show-for-comparison-replace-pronouns/grid"
 
@@ -15,8 +13,6 @@ MAX_IMAGES = 8
 
 CELL_BG_COLOR = (255, 255, 255)  # white
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg")
-
-# =========================================
 
 
 def find_images_by_sentence(root_dir):

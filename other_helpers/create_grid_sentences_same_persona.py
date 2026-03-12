@@ -4,7 +4,6 @@ import math
 from collections import defaultdict
 from PIL import Image
 
-# ================= CONFIG =================
 
 INPUT_ROOT = "/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/results/Qwen3-30b/graphs_per_sentence/18 y:o/"
 
@@ -16,8 +15,6 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg")
 CELL_BG_COLOR = (255, 255, 255)
 DEFAULT_CELL_SIZE = (512, 512)
 GRID_COLS = 5  # e.g. 5 columns x 3 rows for 15 sentences
-
-# =========================================
 
 
 def extract_prefix_and_sentence(filename):

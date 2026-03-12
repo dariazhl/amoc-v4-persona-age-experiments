@@ -223,6 +223,9 @@ class GraphPlotter:
             "layout_depth": self._layout_depth,
         }
 
+        # Always capture working memory history for reverse plot filtering
+        state["ever_in_wm"] = sorted(self._ever_in_working_memory)
+
         if mode == "paper":
             ever_explicit = sorted(
                 {
@@ -598,6 +601,13 @@ class GraphPlotter:
         )
         # recalculate inactive nodes right before plotting
         active_node_names = set(explicit_nodes_for_plot) | set(salient_nodes_for_plot)
+        # Only count nodes that actually have active edges
+        nodes_with_active_edges = set()
+        for edge in self._graph.edges:
+            if edge.active:
+                nodes_with_active_edges.add(edge.source_node.get_text_representer())
+                nodes_with_active_edges.add(edge.dest_node.get_text_representer())
+        active_node_names = active_node_names & nodes_with_active_edges
         # Track cumulative working memory: all nodes ever explicit or carryover
         self._ever_in_working_memory.update(active_node_names)
         # Inactive = previously in working memory but no longer active

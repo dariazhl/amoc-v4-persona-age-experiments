@@ -744,9 +744,9 @@ class SentenceGraphBuilder:
         for subj, rel, obj in normalized_triples:
             # verb check before calling LLM
             verb_result = validator.validate_triplet_relation((subj, rel, obj))
-            if verb_result["action"] == "reject":
+            if verb_result["action"] in ("reject", "reject_negation"):
                 logging.info(
-                    f"rejected (no verb): ({subj}, {rel}, {obj}) - {verb_result['reason']}"
+                    f"rejected ({verb_result['action']}): ({subj}, {rel}, {obj}) - {verb_result['reason']}"
                 )
                 continue
             elif verb_result["action"] == "swap" and verb_result.get(

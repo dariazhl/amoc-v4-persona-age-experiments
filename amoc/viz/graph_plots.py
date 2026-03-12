@@ -580,6 +580,7 @@ def plot_amoc_triplets(
 
         if graph is not None:
             inactive_node_names = set(inactive_nodes)
+            known_nodes = set(G.nodes())
 
             for edge in graph.edges:
                 source_name = edge.source_node.get_text_representer()
@@ -589,10 +590,11 @@ def plot_amoc_triplets(
                     source_name in inactive_node_names
                     or dest_name in inactive_node_names
                 ):
-                    if source_name not in G:
-                        G.add_node(source_name)
-                    if dest_name not in G:
-                        G.add_node(dest_name)
+                    # only add edges between nodes already known to the plot
+                    # (from triplets, explicit_nodes, or inactive_nodes)
+                    # to avoid pulling in nodes that were never in working memory
+                    if source_name not in known_nodes or dest_name not in known_nodes:
+                        continue
 
                     G.add_edge(source_name, dest_name, key=edge.label)
 

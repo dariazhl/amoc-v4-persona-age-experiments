@@ -251,7 +251,7 @@ def main(argv: List[str]) -> None:
                 force_node=True,
                 checkpoint=args.checkpoint,
                 generate_reverse_plots=True,
-                reverse_plot_mode="cumulative",
+                reverse_plot_mode="both",
             )
     finally:
         elapsed = time.time() - total_start
