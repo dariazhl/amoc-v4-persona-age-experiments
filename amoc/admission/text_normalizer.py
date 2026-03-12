@@ -23,44 +23,57 @@ class TextNormalizer:
     def normalize_edge_label(self, label: str) -> str:
         if not label or not isinstance(label, str):
             return ""
+
         cleaned = label.strip()
         if not cleaned:
             return ""
 
-        # Basic cleanup: remove "(edge)" if present, lowercase, replace spaces with underscores
+        # Remove (edge) tag
         cleaned = re.sub(r"\s*\(edge\)\s*", "", cleaned)
-        cleaned = cleaned.lower().replace(" ", "_")
-        # Remove any non‑alphanumeric characters except underscore
-        cleaned = re.sub(r"[^\w]", "", cleaned)
+        original_lower = cleaned.lower()
 
-        # Normalization mapping for common variants
-        normalization_map = {
-            "likes_at": "enjoys",
-            "is_described_by": "is",
-            "likes at": "enjoys",
-            "is type of:" "is" "is kind of": "is",
-            "is sort of": "is",
-            "is variant of": "is",
-            "is_form_of": "is",
-            "is_example_of": "is",
-            "is_instance_of": "is",
-            "is_subtype_of": "is",
-            "is_a": "is",
-            "is_an": "is",
-            "has_type": "has",
-            "has_kind": "has",
-            "possesses": "has",
-            "owns": "has",
-            "has property": "is",
-            "not applicable": "does not wear",
-            "not connected": "not connected to",
-            "not related": "not related to",
-        }
+        # Step 1: Extract core meaning using patterns
+        def extract_meaning(text: str) -> str:
+            text = text.replace("_", " ")
 
-        # Apply mapping if exact match found
-        if cleaned in normalization_map:
-            original = cleaned
-            cleaned = normalization_map[cleaned]
+            # Likes/enjoys patterns
+            if re.search(r"\b(like|likes?)\b", text):
+                return "enjoys"
+
+            # Is patterns
+            if re.search(r"\b(is|are|was|were|be|being|been)\b", text):
+                if re.search(r"kind|type|sort|form|variant|example|instance", text):
+                    return "is"
+                return "is"
+
+            # Has patterns
+            if re.search(r"\b(has|have|possess|own)\b", text):
+                return "has"
+
+            # Not patterns
+            if re.search(r"\b(not|n\'t|doesnt|does_not)\b", text):
+                if re.search(r"wear", text):
+                    return "does_not_wear"
+                if re.search(r"connect|relat|link", text):
+                    return "not_connected_to"
+                return "does_not"
+
+            # If no pattern matched, return cleaned version
+            return text
+
+        # Step 2: Apply meaning extraction
+        meaning = extract_meaning(original_lower)
+
+        # Step 3: Clean up for final output
+        if meaning != original_lower:
+            cleaned = meaning
+        else:
+            # Standard cleaning
+            cleaned = re.sub(r"[^\w]", "", original_lower.replace(" ", "_"))
+
+        # Remove double underscores
+        cleaned = re.sub(r"_+", "_", cleaned)
+
         return cleaned
 
     # verbs cannot become nodes

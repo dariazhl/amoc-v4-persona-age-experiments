@@ -246,9 +246,7 @@ class SentenceGraphBuilder:
             bypass_attachment_constraint=bypass_attachment,
         )
         if edge:
-            logging.info(
-                f"edge added: {source_node} --{edge_label}--> {dest_node}"
-            )
+            logging.info(f"edge added: {source_node} --{edge_label}--> {dest_node}")
             return True
         else:
             logging.warning(
@@ -272,9 +270,7 @@ class SentenceGraphBuilder:
         relationships = self.llm.get_new_relationships_first_sentence(
             nodes_from_text, sent.text, self.persona
         )
-        logging.info(
-            f"raw llm relationships for first sentence: {relationships}"
-        )
+        logging.info(f"raw llm relationships for first sentence: {relationships}")
 
         for rel in relationships:
             self.add_edge_from_triplet(
@@ -743,9 +739,27 @@ class SentenceGraphBuilder:
         if not normalized_triples:
             return added_edges
 
-        # step 2: validate each triple with LLM, possibly correcting
+        # step 2: verb validation + LLM validation
         validated_triples = []
         for subj, rel, obj in normalized_triples:
+            # verb check before calling LLM
+            verb_result = validator.validate_triplet_relation((subj, rel, obj))
+            if verb_result["action"] == "reject":
+                logging.info(
+                    f"rejected (no verb): ({subj}, {rel}, {obj}) - {verb_result['reason']}"
+                )
+                continue
+            elif verb_result["action"] == "swap" and verb_result.get(
+                "corrected_triple"
+            ):
+                subj, rel, obj = verb_result["corrected_triple"]
+                logging.info(f"swapped verb position: ({subj}, {rel}, {obj})")
+            elif verb_result["action"] == "add_copula" and verb_result.get(
+                "corrected_triple"
+            ):
+                subj, rel, obj = verb_result["corrected_triple"]
+                logging.info(f"added copula: ({subj}, {rel}, {obj})")
+
             validation = validator.validate_with_llm(
                 subj,
                 rel,
@@ -769,7 +783,10 @@ class SentenceGraphBuilder:
         if not validated_triples:
             return added_edges
 
-        # step 3: prioritize hub ordering
+        # step 3: deduplicate semantically similar triples
+        validated_triples = validator.deduplicate_triplets(validated_triples)
+
+        # step 4: prioritize hub ordering
         explicit_node_texts = [
             n.get_text_representer() for n in current_sentence_text_based_nodes
         ]
@@ -923,6 +940,7 @@ class SentenceGraphBuilder:
                 text_normalizer=self.text_normalizer,
                 client=self.llm,
                 persona=self.persona,
+                spacy_nlp=self.spacy_nlp,
             )
         return self._triple_validator
 

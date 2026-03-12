@@ -470,7 +470,7 @@ Candidate triple: ({subject}, {relation}, {object})
    - The triple should express an action affecting a separate entity, not the action itself
    - ✓ VALID: (charlemagne, unites, tribes) - tribes are separate from the act of uniting
    - ✓ VALID: (charlemagne, seeks, unity) - "unity" is a state, not the action itself
-   - ✗ INVALID: (charlemagne, seeks to unite, unification) - "unification" IS the act of uniting, creating a circular reference
+   - ✗ INVALID: (charlemagne, seeks to unite, unification) - "unification" IS the act of uniting
    - ✗ INVALID: (charlemagne, creates, creation) - creation IS the act of creating
    - ✗ INVALID: (charlemagne, governs, governance) - governance IS the act of governing
    - ✗ INVALID: (charlemagne, rules, rule) - rule IS the act of ruling
@@ -481,60 +481,87 @@ Candidate triple: ({subject}, {relation}, {object})
    - ✓ VALID: (charlemagne, prefers, simplicity) - noun object completes "prefers"
    - ✓ VALID: (charlemagne, wears, attire) - noun object
    - ✓ VALID: (charlemagne, finds, manuscript) - noun object
-   - ✗ INVALID: (charlemagne, prefers, simple) - if "simple" is just an adjective, the meaning is incomplete
+   - ✗ INVALID: (charlemagne, prefers, simple) - "simple" is an adjective, doesn't complete the meaning
    - ✗ INVALID: (charlemagne, wears, traditional) - "wears" needs a noun (what does he wear?)
    - ✗ INVALID: (charlemagne, finds, interesting) - "finds" needs a noun (what does he find?)
 
-5. **COPULA VERBS ("is", "was", "are") HANDLE ADJECTIVES CORRECTLY:**
+5. **ACTION VERBS REQUIRE NOUN OBJECTS (CRITICAL RULE):**
+   - Action verbs (wear, find, use, take, make, create, fight, dress, prefer, etc.) MUST have NOUN objects
+   - The object must be a concrete thing that receives the action
+   - ✓ VALID: (knight, wears, armor) - armor is a noun receiving the action
+   - ✓ VALID: (charlemagne, finds, manuscript) - manuscript is a noun receiving the action
+   - ✓ VALID: (charlemagne, prefers, simplicity) - simplicity is a noun (abstract but still noun)
+   - ✗ INVALID: (knight, wears, traditional) - "traditional" is an adjective, not a thing
+   - ✗ INVALID: (charlemagne, finds, interesting) - "interesting" is an adjective
+   - ✗ INVALID: (breech, is part of, famous) - "famous" is an adjective
+   - ✗ INVALID: (charlemagne, dresses in, beautiful) - "beautiful" is an adjective
+   - ✗ INVALID: (he, finds, interesting) - "interesting" is an adjective
+   - The ONLY exception is copular verbs (see Rule 6)
+
+6. **COPULA VERBS ("is", "was", "are") HANDLE ADJECTIVES CORRECTLY:**
+   - Copular verbs (is, was, are, become, seem, appear, feel, look, sound, taste, smell) can link to adjectives
    - "is" + adjective is COMPLETE and VALID
    - ✓ VALID: (charlemagne, is, handsome) - complete property description
    - ✓ VALID: (charlemagne, is, skilled) - complete
    - ✓ VALID: (attire, is, traditional) - complete
-   - This is correct because "is" links a subject to a property/state
+   - ✓ VALID: (princess, looks, beautiful) - "looks" is copular-like
+   - This is correct because copular verbs link a subject to a property/state
 
-6. **NO GENERIC SUBJECTS FOR ACTION VERBS:**
+7. **NO GENERIC SUBJECTS FOR ACTION VERBS:**
    - Generic words ("thing", "something", "it", "this", "that", "certain", "year") cannot be subjects of action verbs
    - ✓ VALID: (charlemagne, writes, book)
    - ✗ INVALID: (thing, writes, book)
    - ✓ VALID: Generic words can be objects: (charlemagne, writes, something)
 
+8. **AVOID VAGUE RELATIONS:**
+   - Relations like "related to", "associated with", "connected to", "involves" add little semantic meaning
+   - These should be avoided unless they are the only possible connection
+   - ✓ BETTER: Use specific relations like "fought", "married", "ruled", "wrote"
+   - ✗ AVOID: (charlemagne, related to, pepin) - use (charlemagne, is father of, pepin) if known
+   - ✗ AVOID: (pride, relates_to, ability) - use (pride, enhances, ability) or (pride, comes from, ability)
+   - If the only connection possible is vague, mark as INVALID with suggestion to use more specific relation
+
+
 **DECISION EXAMPLES:**
 
+Input: (breech, is part of, famous)
+Output: {{"valid": false, "reason": "Action verb phrase 'is part of' requires a noun object - 'famous' is an adjective. What is famous? This needs a noun.", "corrected_triple": null}}
+
+Input: (charlemagne, dresses in, beautiful)
+Output: {{"valid": false, "reason": "Action verb 'dresses in' requires a noun object - what does he dress in? 'beautiful' is an adjective describing the missing noun", "corrected_triple": null}}
+
+Input: (he, finds, interesting)
+Output: {{"valid": false, "reason": "Action verb 'finds' requires a noun object - what does he find interesting? The adjective doesn't complete the meaning", "corrected_triple": null}}
+
+Input: (knight, wears, traditional)
+Output: {{"valid": false, "reason": "'wears' requires a noun object - what does he wear? 'traditional' as an adjective doesn't complete the meaning", "corrected_triple": null}}
+
 Input: (charlemagne, seeks to unite, unification)
-Output: {{"valid": false, "reason": "Circular relationship - 'unification' IS the act of uniting. The object should be what is being united (e.g., tribes, kingdoms), not the action itself", "corrected_triple": ["charlemagne", "seeks to unite", "tribes"]}}
-
-Input: (charlemagne, unites, unification)
-Output: {{"valid": false, "reason": "Circular - cannot unite 'unification' which is the act itself. Should unite something concrete like kingdoms or tribes", "corrected_triple": ["charlemagne", "unites", "kingdoms"]}}
-
-Input: (charlemagne, creates, creation)
-Output: {{"valid": false, "reason": "Circular - 'creation' IS the act of creating. Should create something concrete like an empire or law", "corrected_triple": ["charlemagne", "creates", "empire"]}}
-
-Input: (charlemagne, governs, governance)
-Output: {{"valid": false, "reason": "Circular - 'governance' IS the act of governing. Should govern something like a kingdom or people", "corrected_triple": ["charlemagne", "governs", "kingdom"]}}
-
-Input: (charlemagne, prefers, simple)
-Output: {{"valid": false, "reason": "'prefers' requires a noun object - what does he prefer? 'simple' as an adjective doesn't complete the meaning", "corrected_triple": null}}
+Output: {{"valid": false, "reason": "Circular relationship - 'unification' IS the act of uniting. The object should be what is being united (e.g., tribes, kingdoms)", "corrected_triple": ["charlemagne", "seeks to unite", "tribes"]}}
 
 Input: (charlemagne, unites, tribes)
 Output: {{"valid": true, "reason": "Complete: subject + verb + concrete noun object", "corrected_triple": null}}
 
-Input: (charlemagne, is, handsome)
-Output: {{"valid": true, "reason": "'is' + adjective is a complete property description", "corrected_triple": null}}
+Input: (charlemagne, prefers, simple)
+Output: {{"valid": false, "reason": "'prefers' requires a noun object - what does he prefer? 'simple' as an adjective doesn't complete the meaning", "corrected_triple": null}}
 
-Input: (charlemagne, wears, traditional)
-Output: {{"valid": false, "reason": "'wears' requires a noun object - what does he wear? 'traditional' as an adjective doesn't complete the meaning", "corrected_triple": null}}
+Input: (charlemagne, prefers, simplicity)
+Output: {{"valid": true, "reason": "Complete: subject + verb + noun object (abstract noun is acceptable)", "corrected_triple": null}}
+
+Input: (charlemagne, is, handsome)
+Output: {{"valid": true, "reason": "'is' + adjective is a complete property description (copular verb)", "corrected_triple": null}}
+
+Input: (princess, looks, beautiful)
+Output: {{"valid": true, "reason": "'looks' is a copular verb linking subject to adjective", "corrected_triple": null}}
 
 Input: (charlemagne, values, educational)
-Output: {{"valid": false, "reason": "'values' requires a noun object - what does he value?", "corrected_triple": ["charlemagne", "values", "education"]}}
+Output: {{"valid": false, "reason": "'values' requires a noun object - what does he value? 'educational' is an adjective", "corrected_triple": ["charlemagne", "values", "education"]}}
 
 Input: (charlemagne, wears, attire)
 Output: {{"valid": true, "reason": "Complete: subject + verb + noun object", "corrected_triple": null}}
 
 Input: (pride, relates_to, ability)
 Output: {{"valid": false, "reason": "Vague relation 'relates_to' adds no semantic content - doesn't specify how pride relates to ability", "corrected_triple": null}}
-
-Input: (charlemagne, finds, interesting)
-Output: {{"valid": false, "reason": "'finds' requires a noun object - what does he find interesting? The adjective doesn't complete the meaning", "corrected_triple": null}}
 
 Input: (charlemagne, finds, manuscript)
 Output: {{"valid": true, "reason": "Complete with noun object", "corrected_triple": null}}
@@ -545,10 +572,14 @@ Output: {{"valid": true, "reason": "Complete: subject + verb phrase + location o
 Input: (festival, take place at, aachen)
 Output: {{"valid": false, "reason": "Incorrect verb form - should be 'takes_place_at' for subject 'festival'", "corrected_triple": ["festival", "takes_place_at", "aachen"]}}
 
+Input: (clothing, relates to, school)
+Output: {{"valid": false, "reason": "Vague relation 'relates to' doesn't specify how clothing relates to school. Consider 'is uniform for', 'is worn at', or other specific relation", "corrected_triple": null}}
+
+
 Return a JSON object with:
 1. "valid": true or false
 2. "reason": brief explanation focusing on semantic completeness
-3. "corrected_triple": if you think the triple is almost correct but needs adjustment (e.g., wrong direction, or replacing a generic word with a more specific one from context), provide the corrected (subject, relation, object) as a list. Otherwise, null.
+3. "corrected_triple": if you think the triple is almost correct but needs adjustment, provide the corrected (subject, relation, object) as a list. Otherwise, null.
 """
 
 # Simplified with 1-3 scale
@@ -707,11 +738,10 @@ Here are the active relationships in the reader's memory:
    - These are grammatically incomplete and add confusion, not meaning
    - **Exception: If an incomplete triple is part of a larger pattern that can be corrected, flag it but don't remove the corrected version**
 
-2. **VAGUE OR GENERIC RELATIONS NOT PART OF CHAINS:**
+2. **VAGUE OR GENERIC RELATIONS**
    - "relates_to", "associated_with", "connected_to" without specific meaning
    - "involves", "concerns", "has" when used generically
-   - **However, if these generic relations serve as BRIDGES in a multi-hop chain, KEEP them**
-
+  
 3. **SEMANTIC DUPLICATES:**
    - When both (charlemagne, is, skilled) AND (charlemagne, has, skill) exist → KEEP only "is skilled", REMOVE "has skill"
    - When both (strategy, is, strategic) AND (strategy, has, strategy) exist → KEEP only "is strategic"
@@ -720,7 +750,6 @@ Here are the active relationships in the reader's memory:
 4. **NO LONGER RELEVANT AND NOT PART OF CHAINS:**
    - Minor details from earlier sentences no longer connected to current narrative
    - Background information that has been superseded
-   - **But if these details are part of a preserved multi-hop chain, keep them**
 
 5. **STRUCTURALLY DANGEROUS (HANDLE WITH CARE):**
    - **Never remove a relationship if it's the only connection between a node and the rest of the graph**

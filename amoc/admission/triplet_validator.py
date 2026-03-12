@@ -8,6 +8,7 @@ from amoc.extraction.linguistic import LinguisticProcessing
 from amoc.admission.text_normalizer import TextNormalizer
 from amoc.llm.vllm_client import VLLMClient
 from amoc.core.edge import _maybe_embed
+from amoc.admission.triplet_deduplicator import TripletDeduplicator
 
 
 class TripletValidator:
@@ -19,6 +20,7 @@ class TripletValidator:
         client: VLLMClient,
         persona: str = "",
         similarity_threshold: float = 0.8,
+        spacy_nlp=None,
     ):
         self.linguistic_ops = linguistic_ops
         self.extract_deterministic_fn = extract_deterministic_fn
@@ -27,6 +29,15 @@ class TripletValidator:
         self.persona = persona
         self.similarity_threshold = similarity_threshold
         self._embedding_cache = {}
+        self.spacy_nlp = spacy_nlp or (
+            linguistic_ops._spacy_nlp if linguistic_ops else None
+        )
+        self.deduplicator = TripletDeduplicator(self.spacy_nlp)
+
+    def deduplicate_triplets(
+        self, triplets: List[Tuple[str, str, str]]
+    ) -> List[Tuple[str, str, str]]:
+        return self.deduplicator.deduplicate(triplets)
 
     def normalize_llm_triplets(
         self, new_relationships: List[Any]
@@ -257,3 +268,198 @@ class TripletValidator:
             return hub_as_subject + other_triples
 
         return triplets
+
+    def validate_relation_is_verb(
+        self, triplet: Tuple[str, str, str]
+    ) -> Tuple[bool, Optional[str], Optional[Tuple[str, str, str]]]:
+        subj, relation, obj = triplet
+
+        if not relation or not isinstance(relation, str):
+            return False, "empty or invalid relation", None
+
+        relation_clean = relation.strip().lower()
+        if not relation_clean:
+            return False, "empty relation after cleaning", None
+
+        if self.spacy_nlp is None:
+            return True, None, None
+
+        rel_doc = self.spacy_nlp(relation_clean)
+        if not rel_doc or len(rel_doc) == 0:
+            return False, f"could not parse relation '{relation}'", None
+
+        # check if any token is a verb or auxiliary
+        has_verb = any(token.pos_ in {"VERB", "AUX"} for token in rel_doc)
+
+        # fallback: check morphological features for verb markers
+        if not has_verb:
+            for token in rel_doc:
+                morph_str = str(token.morph)
+                if any(f in morph_str for f in ["Tense=", "VerbForm=", "Mood="]):
+                    has_verb = True
+                    break
+
+        if not has_verb:
+            pos_tags = [f"{t.text}({t.pos_})" for t in rel_doc]
+            return (
+                False,
+                f"relation '{relation}' has no verb. pos: {', '.join(pos_tags)}",
+                None,
+            )
+
+        return True, None, None
+
+    _COPULAR_VERBS = frozenset(
+        {
+            "be",
+            "is",
+            "am",
+            "are",
+            "was",
+            "were",
+            "been",
+            "being",
+            "become",
+            "became",
+            "seem",
+            "appear",
+            "feel",
+            "look",
+            "sound",
+            "taste",
+            "smell",
+            "remain",
+            "stay",
+        }
+    )
+
+    def validate_triplet_relation(
+        self, triplet: Tuple[str, str, str]
+    ) -> Dict[str, Any]:
+        subj, relation, obj = triplet
+
+        if self.spacy_nlp is None:
+            return {
+                "valid": True,
+                "reason": None,
+                "corrected_triple": None,
+                "action": "accept",
+            }
+
+        # parse all three slots once
+        subj_doc = self.spacy_nlp(subj) if subj else None
+        rel_doc = self.spacy_nlp(relation.strip().lower()) if relation else None
+        obj_doc = self.spacy_nlp(obj) if obj else None
+
+        subj_pos = subj_doc[0].pos_ if subj_doc and len(subj_doc) > 0 else None
+        obj_pos = obj_doc[0].pos_ if obj_doc and len(obj_doc) > 0 else None
+
+        # find the relation's root verb lemma
+        rel_lemma = None
+        rel_has_verb = False
+        if rel_doc:
+            for t in rel_doc:
+                if t.pos_ in {"VERB", "AUX"}:
+                    rel_lemma = t.lemma_.lower()
+                    rel_has_verb = True
+                    break
+            if rel_lemma is None and len(rel_doc) > 0:
+                rel_lemma = rel_doc[0].lemma_.lower()
+
+        # --- structural POS checks (before verb-presence check) ---
+
+        # ADJ-*-ADJ: always reject
+        if subj_pos == "ADJ" and obj_pos == "ADJ":
+            return {
+                "valid": False,
+                "reason": f"both subject '{subj}' and object '{obj}' are adjectives",
+                "corrected_triple": None,
+                "action": "reject",
+            }
+
+        # ADJ-VERB-NOUN with action verb: adjectives can't perform actions
+        if (
+            subj_pos == "ADJ"
+            and obj_pos in {"NOUN", "PROPN"}
+            and rel_has_verb
+            and rel_lemma not in self._COPULAR_VERBS
+        ):
+            return {
+                "valid": False,
+                "reason": (
+                    f"adjective '{subj}' cannot be the subject of "
+                    f"action verb '{relation}'"
+                ),
+                "corrected_triple": None,
+                "action": "reject",
+            }
+
+        # NOUN-VERB-ADJ with non-copular verb: action verbs need noun objects
+        if (
+            subj_pos in {"NOUN", "PROPN"}
+            and obj_pos == "ADJ"
+            and rel_has_verb
+            and rel_lemma not in self._COPULAR_VERBS
+        ):
+            return {
+                "valid": False,
+                "reason": (
+                    f"action verb '{relation}' cannot take adjective "
+                    f"'{obj}' as object — needs a noun"
+                ),
+                "corrected_triple": None,
+                "action": "reject",
+            }
+
+        # --- verb-presence check ---
+        is_valid, reason, corrected = self.validate_relation_is_verb(triplet)
+
+        if is_valid:
+            return {
+                "valid": True,
+                "reason": None,
+                "corrected_triple": None,
+                "action": "accept",
+            }
+
+        # --- correction attempts for missing verb ---
+
+        # verb might be in the object slot (common swap)
+        if obj_doc and any(t.pos_ in {"VERB", "AUX"} for t in obj_doc):
+            return {
+                "valid": False,
+                "reason": f"relation '{relation}' has no verb, but object '{obj}' does",
+                "corrected_triple": (subj, obj, relation),
+                "action": "swap",
+            }
+
+        # single adjective as relation → suggest copula
+        if rel_doc and len(rel_doc) == 1 and rel_doc[0].pos_ == "ADJ":
+            return {
+                "valid": False,
+                "reason": f"relation '{relation}' is an adjective, not a verb",
+                "corrected_triple": (subj, "is", relation),
+                "action": "add_copula",
+            }
+
+        return {
+            "valid": False,
+            "reason": reason,
+            "corrected_triple": None,
+            "action": "reject",
+        }
+
+    def is_likely_verb(self, word: str) -> bool:
+        if self.spacy_nlp is None:
+            return False
+
+        doc = self.spacy_nlp(word)
+        if not doc or len(doc) != 1:
+            return False
+
+        token = doc[0]
+        if token.pos_ in {"VERB", "AUX"}:
+            return True
+
+        morph_str = str(token.morph)
+        return any(f in morph_str for f in ["VerbForm", "Tense", "Mood", "Voice"])
