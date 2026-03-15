@@ -612,16 +612,14 @@ Active relationships in the reader's memory:
 **SCORE 3 - HIGH RELEVANCE (Essential to keep)**
 - Involves main characters (Charlemagne, his family, kingdoms, key figures)
 - Directly describes actions or states in the current sentence
-- **Forms part of a meaningful multi-hop chain - ALL edges in a connected chain should be preserved together, not decayed aggressively**
+- Forms part of a meaningful multi-hop chain - ALL edges in a connected chain should be preserved together, not decayed aggressively
   * Example: (charlemagne, has, court), (court, employs, scholars), (scholars, write, manuscripts) should ALL be scored 3 because they form an explanatory unit
   * Even if individual edges seem less relevant alone, their value is in maintaining the complete chain
-- Bridges inferred concepts to explicit story elements - these bridging edges are CRITICAL to preserve
-- **Multi-hop inference chains are valuable for comprehension - preserve ALL edges in the chain, even if some links seem less central individually**
+- Bridges concepts to explicit story elements - these bridging edges are CRITICAL to preserve
 
 **SCORE 2 - MEDIUM RELEVANCE (Useful context)**
 - Background information about secondary characters
 - Generic but meaningful relations ("lives_in", "travels_to", "works_with")
-- Inferred nodes that are one hop from explicit nodes but not part of longer chains
 - Provides supporting details not central to current events
 
 **SCORE 1 - LOW RELEVANCE (Can be removed if not part of chains)**
@@ -655,15 +653,8 @@ Active relationships in the reader's memory:
    - Do NOT decay individual edges in a chain aggressively - the chain's value is collective
    - When you see a chain like (A) -> (B) -> (C) -> (D), score ALL edges as 3, even if some seem less central
    - Example: (charlemagne, has, court), (court, employs, scholars), (scholars, write, manuscripts) → ALL score 3
-   - **Incomplete triples that are part of a larger meaningful structure should be flagged for correction, not decayed**
-     * If you see (charlemagne, wears, traditional) but also have (charlemagne, wears, attire) and (attire, is, traditional), the incomplete triple should be removed, but the complete chain preserved with score 3
 
-3. **BRIDGING EDGES ARE CRITICAL:**
-   - Edges that connect inferred concepts to explicit text nodes are HIGH VALUE
-   - These bridging edges enable the entire inference chain - protect them from decay
-   - Score these as 3 even if they seem generic
-
-4. **CONNECTIVITY PROTECTION:**
+3. **CONNECTIVITY PROTECTION:**
    - **NEVER assign score 0 to an edge if removing it would disconnect a node from the graph**
    - Score 0 means immediate removal in the current sentence
    - Score 1 means gradual decay over multiple sentences
@@ -683,12 +674,6 @@ Active triplets:
 - (charlemagne, wore, attire) → SCORE 3 (complete, part of valuable chain)
 - (attire, is, traditional) → SCORE 3 (complete property, part of valuable chain)
 - The complete chain (wore, attire) + (attire, is, traditional) is preserved with both edges at score 3
-
-Context: Sentence about Charlemagne's court with inference chain:
-- (charlemagne, has, court) → SCORE 3 (main character, chain start)
-- (court, employs, scholars) → SCORE 3 (inferred, bridges concepts, CRITICAL for chain)
-- (scholars, write, manuscripts) → SCORE 3 (inferred, continues explanatory chain)
-- All three form a meaningful narrative unit - ALL preserved at highest score, even if "employs" seems less central alone
 
 Return a JSON object with:
 {{
@@ -731,7 +716,7 @@ Here are the active relationships in the reader's memory:
      * (court, employs, scholars)
      * (scholars, write, manuscripts)
      → Keep ALL three, even if "employs" seems less central
-   - Chains that connect inferred concepts to explicit text nodes are HIGH VALUE
+   - Chains that connect concepts to explicit text nodes are HIGH VALUE
    - Relationships that explain "how" or "why" things happen should be preserved as complete units
 
 4. **BRIDGING EDGES ARE CRITICAL:**

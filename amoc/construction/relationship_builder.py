@@ -83,11 +83,12 @@ class RelationshipGraphBuilder:
             is_node_allowed_fn=lambda l, t=None, bypass=False: (
                 core._node_ops.is_node_allowed(l, t, bypass=bypass)
             ),
-            admit_node_fn=lambda l, nt, p, s=None: core._node_ops.admit_node(
+            admit_node_fn=lambda l, nt, p, sent=None, is_first_sentence=False: core._node_ops.admit_node(
                 lemma=l,
                 node_type=nt,
                 provenance=p,
-                sent=s,
+                sent=sent,
+                is_first_sentence=is_first_sentence,
             ),
             is_attachable_fn=core.is_attachable_wrapper,
             canonicalize_and_classify_node_text_fn=lambda t: (
@@ -115,6 +116,7 @@ class RelationshipGraphBuilder:
         sent,
         current_sentence_text_based_nodes: List,
         current_sentence_text_based_words: List[str],
+        is_first_sentence: bool = False,
     ) -> None:
         explicit_nodes = (
             self._explicit_nodes_ref() if callable(self._explicit_nodes_ref) else set()
@@ -219,6 +221,8 @@ class RelationshipGraphBuilder:
                     subj,
                     subj_type,
                     "INFERRED_RELATION",
+                    sent=sent,
+                    is_first_sentence=is_first_sentence,
                 ):
                     continue
 
@@ -247,6 +251,8 @@ class RelationshipGraphBuilder:
                     obj,
                     obj_type,
                     "INFERRED_RELATION",
+                    sent=sent,
+                    is_first_sentence=is_first_sentence,
                 ):
                     continue
 
@@ -277,10 +283,20 @@ class RelationshipGraphBuilder:
         curr_sentences_words: List[str],
         active_graph_nodes: List,
         added_edges: List,
+        is_first_sentence: bool = False,
     ) -> None:
         explicit_nodes = (
             self._explicit_nodes_ref() if callable(self._explicit_nodes_ref) else set()
         )
+
+        if is_first_sentence:
+            MAX_NEW_INFERRED = 15  # higher for first sentence
+        else:
+            explicit_count = len(explicit_nodes)
+            active_count = len(self.get_nodes_with_active_edges_fn())
+            base_budget = max(3, explicit_count)
+            bonus = 2 if active_count < explicit_count * 2 else 0
+            MAX_NEW_INFERRED = min(base_budget + bonus, 8)
 
         for relationship in inferred_relationships:
             if len(relationship) != 3:

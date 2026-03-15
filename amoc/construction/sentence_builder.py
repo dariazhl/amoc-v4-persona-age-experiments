@@ -361,10 +361,16 @@ class SentenceGraphBuilder:
             self._infer_new_relationships_step_0_fn(sent)
         )
         self._add_inferred_relationships_to_graph_step_0_fn(
-            inferred_concept_relationships, NodeType.CONCEPT, sent
+            inferred_concept_relationships,
+            NodeType.CONCEPT,
+            sent,
+            is_first_sentence=True,
         )
         self._add_inferred_relationships_to_graph_step_0_fn(
-            inferred_property_relationships, NodeType.PROPERTY, sent
+            inferred_property_relationships,
+            NodeType.PROPERTY,
+            sent,
+            is_first_sentence=True,
         )
         # ensure at least one active edge
         if not any(edge.active for edge in self.graph.edges):

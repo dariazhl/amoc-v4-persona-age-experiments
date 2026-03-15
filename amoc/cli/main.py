@@ -22,7 +22,7 @@ from amoc.config import (
 )
 from amoc.pipeline.runner import process_persona_csv
 from amoc.analysis.statistics import run_statistical_analysis
-from amoc.nlp import load_spacy
+from amoc.utils.spacy_utils import load_spacy
 from amoc.utils.highlights import blue_nodes_from_text
 
 

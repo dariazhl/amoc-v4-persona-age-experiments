@@ -943,6 +943,7 @@ class AMoCv4:
         inferred_relationships: List[Tuple[str, str, str]],
         node_type: NodeType,
         sent: Span,
+        is_first_sentence: bool = False,
     ) -> None:
         current_sentence_text_based_nodes, current_sentence_text_based_words = (
             self.collect_sentence_text_based_nodes_wrapper(
@@ -956,6 +957,7 @@ class AMoCv4:
             sent=sent,
             current_sentence_text_based_nodes=current_sentence_text_based_nodes,
             current_sentence_text_based_words=current_sentence_text_based_words,
+            is_first_sentence=is_first_sentence,
         )
 
     def add_inferred_relationships_to_graph_wrapper(
@@ -1001,6 +1003,7 @@ class AMoCv4:
         curr_sentences_words: List[str],
         node_source: NodeSource,
         create_node: bool,
+        is_first_sentence: bool = False,
     ) -> Optional[Node]:
         return self._node_ops.get_or_create_node_from_relationship(
             text=text,
@@ -1009,6 +1012,7 @@ class AMoCv4:
             curr_sentences_words=curr_sentences_words,
             node_source=node_source,
             create_node=create_node,
+            is_first_sentence=is_first_sentence,
         )
 
     def extract_phrase_level_concepts_wrapper(self, sent):

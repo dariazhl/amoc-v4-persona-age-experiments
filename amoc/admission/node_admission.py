@@ -48,12 +48,26 @@ class NodeAdmission:
         node_type: "NodeType",
         provenance: str = "STORY_EXPLICIT",
         sent: Optional["Span"] = None,
+        is_first_sentence: bool = False,
     ) -> bool:
         lemma = (lemma or "").lower().strip()
         if not lemma:
             return False
 
-        if not self._graph._provenance_ops.passes_length_policy(lemma):
+        if (
+            not is_first_sentence
+            and not self._graph._provenance_ops.passes_length_policy(lemma)
+        ):
+            return False
+
+        # For first sentence, be more permissive with inferred nodes
+        if is_first_sentence and provenance == "INFERRED_RELATION":
+            # Check if the node can attach to explicit nodes
+            if self._has_active_attachment_fn and self._has_active_attachment_fn(lemma):
+                return True
+            # For first sentence, also check if it's grounded in the current sentence
+            if sent and any(tok.lemma_.lower() == lemma for tok in sent):
+                return True
             return False
 
         # reject nodes from internal provenance
@@ -202,6 +216,7 @@ class NodeAdmission:
         curr_sentences_words: List[str],
         node_source: "NodeSource",
         create_node: bool,
+        is_first_sentence: bool = False,
     ) -> Optional["Node"]:
         # 1. Exact sentence match
         if text in curr_sentences_words:
@@ -235,6 +250,7 @@ class NodeAdmission:
             lemma=lemmas[0],
             node_type=inferred_type,
             provenance="INFERRED_RELATION",
+            is_first_sentence=is_first_sentence,
         ):
             return None
 
