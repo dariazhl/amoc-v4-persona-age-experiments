@@ -51,24 +51,32 @@ class NodeAdmission:
         is_first_sentence: bool = False,
     ) -> bool:
         lemma = (lemma or "").lower().strip()
-        if not lemma:
-            return False
+        logging.info(
+            f"ADMIT_NODE: Checking '{lemma}', type={node_type}, provenance={provenance}, first_sentence={is_first_sentence}"
+        )
 
+        if not lemma:
+            logging.info(f"ADMIT_NODE: Rejected - empty lemma")
+            return False
         if (
             not is_first_sentence
             and not self._graph._provenance_ops.passes_length_policy(lemma)
         ):
+
+            logging.info(f"ADMIT_NODE: Rejected - length policy")
             return False
 
         # For first sentence, be more permissive with inferred nodes
         if is_first_sentence and provenance == "INFERRED_RELATION":
-            # Check if the node can attach to explicit nodes
-            if self._has_active_attachment_fn and self._has_active_attachment_fn(lemma):
-                return True
-            # For first sentence, also check if it's grounded in the current sentence
-            if sent and any(tok.lemma_.lower() == lemma for tok in sent):
-                return True
-            return False
+            logging.info(f"ADMIT_NODE: First sentence inference - ALLOWING")
+            # if self._has_active_attachment_fn and self._has_active_attachment_fn(lemma):
+            #     return True
+            # # For first sentence, also check if it's grounded in the current sentence
+            # if sent and any(tok.lemma_.lower() == lemma for tok in sent):
+            #     return True
+            # return False
+
+            return True  # ← Make sure this is uncommented!
 
         # reject nodes from internal provenance
         if provenance in {
@@ -78,6 +86,7 @@ class NodeAdmission:
             "PLOTTING",
             "META",
         }:
+            logging.info(f"ADMIT_NODE: Rejected - internal provenance")
             return False
 
         # explicit nodes
@@ -155,28 +164,35 @@ class NodeAdmission:
         bypass: bool = False,
     ) -> bool:
         lemma_lower = lemma.lower()
+        logging.info(f"NODE_ALLOWED: Checking '{lemma_lower}', bypass={bypass}")
 
         # Reject persona-only lemmas
         if lemma_lower in self._persona_only_lemmas:
+            logging.info(f"NODE_ALLOWED: Rejected - in persona_only_lemmas")
             return False
 
         # Must appear in story text
         if lemma_lower in self._story_lemmas:
+            logging.info(f"NODE_ALLOWED: Allowed - in story_lemmas")
             return True
         if current_sentence_text:
             sent_doc = self._spacy_nlp(current_sentence_text)
             sent_lemmas = {tok.lemma_.lower() for tok in sent_doc if tok.is_alpha}
             if lemma_lower in sent_lemmas:
+                logging.info(f"NODE_ALLOWED: Allowed - in current sentence")
                 return True
 
         # Allow concepts that already exist
         existing_node = self._graph.get_node([lemma_lower])
         if existing_node is not None:
+            logging.info(f"NODE_ALLOWED: Allowed - already exists")
             return True
 
         if bypass:
+            logging.info(f"NODE_ALLOWED: Allowed - bypass=True")
             return True
 
+        logging.info(f"NODE_ALLOWED: Rejected - no conditions met")
         return False
 
     def get_or_create_node_from_text(

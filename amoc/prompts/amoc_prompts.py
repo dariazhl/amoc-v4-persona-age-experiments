@@ -451,148 +451,56 @@ Given the sentence:
 
 Candidate triple: ({subject}, {relation}, {object})
 
-**SEMANTIC COMPLETENESS VALIDATION RULES:**
+VALIDATION RULES (apply in order):
 
-1. **RELATION MUST BE A VERB OR VERB PHRASE:**
-   - The relation must be a verb or contain a verb (e.g., "wrote", "is", "wears", "takes_place_at")
-   - ✓ VALID: "wrote", "is", "wears", "has", "takes_place_at", "prefers", "finds"
-   - ✗ INVALID: "not applicable", "na", "none", adjectives as relations like "traditional", "simple", "interesting"
+1. RELATION MUST BE A VERB:
+   The relation must be a verb or verb phrase.
+   Valid: "wrote", "is", "wears", "takes_place_at"
+   Invalid: "traditional", "simple", "na", "none"
 
-2. **PREPOSITIONS MUST BE INCLUDED WHEN REQUIRED:**
-   - Many verbs require prepositions to complete their meaning
-   - ✓ CORRECT: "related to", "lives in", "travels to", "depends on", "wrote about", "believes in"
-   - ✗ INCORRECT: "related", "lives", "travels", "depends", "wrote", "believes"
-   - If the relation is missing a required preposition, mark as INVALID and provide the corrected version
-   - Example: (charlemagne, related, charles) → INVALID, correct to (charlemagne, related to, charles)
+2. NO CIRCULAR RELATIONSHIPS:
+   Object must not be the nominalized form of the verb.
+   Valid: (charlemagne, unites, tribes)
+   Invalid: (charlemagne, unites, unification)
 
-3. **NO CIRCULAR OR TAUTOLOGICAL RELATIONSHIPS:**
-   - The object must NOT be the nominalized form of the verb (e.g., "unite" -> "unification", "create" -> "creation")
-   - The triple should express an action affecting a separate entity, not the action itself
-   - ✓ VALID: (charlemagne, unites, tribes) - tribes are separate from the act of uniting
-   - ✓ VALID: (charlemagne, seeks, unity) - "unity" is a state, not the action itself
-   - ✗ INVALID: (charlemagne, seeks to unite, unification) - "unification" IS the act of uniting
-   - ✗ INVALID: (charlemagne, creates, creation) - creation IS the act of creating
-   - ✗ INVALID: (charlemagne, governs, governance) - governance IS the act of governing
-   - ✗ INVALID: (charlemagne, rules, rule) - rule IS the act of ruling
-   - ✗ INVALID: (charlemagne, fights, fight) - fight IS the act of fighting
+3. ACTION VERBS REQUIRE NOUN OBJECTS:
+   Verbs like wear, find, prefer need noun objects.
+   Valid: (charlemagne, wears, attire), (charlemagne, prefers, simplicity)
+   Invalid: (charlemagne, wears, traditional), (charlemagne, prefers, simple)
 
-4. **OBJECT MUST COMPLETE THE VERB'S MEANING:**
-   - For transitive verbs (verbs that require an object), the object must be a noun
-   - ✓ VALID: (charlemagne, prefers, simplicity) - noun object completes "prefers"
-   - ✓ VALID: (charlemagne, wears, attire) - noun object
-   - ✓ VALID: (charlemagne, finds, manuscript) - noun object
-   - ✗ INVALID: (charlemagne, prefers, simple) - "simple" is an adjective, doesn't complete the meaning
-   - ✗ INVALID: (charlemagne, wears, traditional) - "wears" needs a noun (what does he wear?)
-   - ✗ INVALID: (charlemagne, finds, interesting) - "finds" needs a noun (what does he find?)
+4. COPULA VERBS CAN TAKE ADJECTIVES:
+   "is", "was", "are", "become", "seem", "look" can link to adjectives.
+   Valid: (charlemagne, is, handsome), (attire, is, traditional)
 
-5. **ACTION VERBS REQUIRE NOUN OBJECTS (CRITICAL RULE):**
-   - Action verbs (wear, find, use, take, make, create, fight, dress, prefer, etc.) MUST have NOUN objects
-   - The object must be a concrete thing that receives the action
-   - ✓ VALID: (knight, wears, armor) - armor is a noun receiving the action
-   - ✓ VALID: (charlemagne, finds, manuscript) - manuscript is a noun receiving the action
-   - ✓ VALID: (charlemagne, prefers, simplicity) - simplicity is a noun (abstract but still noun)
-   - ✗ INVALID: (knight, wears, traditional) - "traditional" is an adjective, not a thing
-   - ✗ INVALID: (charlemagne, finds, interesting) - "interesting" is an adjective
-   - ✗ INVALID: (breech, is part of, famous) - "famous" is an adjective
-   - ✗ INVALID: (charlemagne, dresses in, beautiful) - "beautiful" is an adjective
-   - ✗ INVALID: (he, finds, interesting) - "interesting" is an adjective
-   - The ONLY exception is copular verbs (see Rule 6)
+5. AVOID VAGUE RELATIONS:
+   Prefer specific over "related to", "associated with".
+   Valid: (charlemagne, fought, saxons)
+   Invalid: (charlemagne, related to, saxons)
 
-6. **COPULA VERBS ("is", "was", "are") HANDLE ADJECTIVES CORRECTLY:**
-   - Copular verbs (is, was, are, become, seem, appear, feel, look, sound, taste, smell) can link to adjectives
-   - "is" + adjective is COMPLETE and VALID
-   - ✓ VALID: (charlemagne, is, handsome) - complete property description
-   - ✓ VALID: (charlemagne, is, skilled) - complete
-   - ✓ VALID: (attire, is, traditional) - complete
-   - ✓ VALID: (princess, looks, beautiful) - "looks" is copular-like
-   - This is correct because copular verbs link a subject to a property/state
-
-7. **NO GENERIC SUBJECTS FOR ACTION VERBS:**
-   - Generic words ("thing", "something", "it", "this", "that", "certain", "year") cannot be subjects of action verbs
-   - ✓ VALID: (charlemagne, writes, book)
-   - ✗ INVALID: (thing, writes, book)
-   - ✓ VALID: Generic words can be objects: (charlemagne, writes, something)
-
-8. **REJECT NEGATION RELATIONS:**
-   - Relations that express absence of connection add no semantic value to a knowledge graph
-   - ✗ REJECT: "not connected", "not related", "no connection", "unrelated", "disconnected", "not connected to", "not related to"
-   - ✗ REJECT: (clothing, not connected to, school)
-   - ✗ REJECT: (charlemagne, not related to, shirt)
-   - Any relation starting with "not" or "no" or expressing absence should be rejected
-
-9. **AVOID VAGUE RELATIONS:**
-   - Relations like "related to", "associated with", "connected to", "involves" add little semantic meaning
-   - These should be avoided unless they are the only possible connection
-   - ✓ BETTER: Use specific relations like "fought", "married", "ruled", "wrote"
-   - ✗ AVOID: (charlemagne, related to, pepin) - use (charlemagne, is father of, pepin) if known
-   - ✗ AVOID: (pride, relates_to, ability) - use (pride, enhances, ability) or (pride, comes from, ability)
-   - If the only connection possible is vague, mark as INVALID with suggestion to use more specific relation
-
-
-**DECISION EXAMPLES:**
-
-Input: (breech, is part of, famous)
-Output: {{"valid": false, "reason": "Action verb phrase 'is part of' requires a noun object - 'famous' is an adjective. What is famous? This needs a noun.", "corrected_triple": null}}
+EXAMPLES:
 
 Input: (charlemagne, dresses in, beautiful)
-Output: {{"valid": false, "reason": "Action verb 'dresses in' requires a noun object - what does he dress in? 'beautiful' is an adjective describing the missing noun", "corrected_triple": null}}
-
-Input: (he, finds, interesting)
-Output: {{"valid": false, "reason": "Action verb 'finds' requires a noun object - what does he find interesting? The adjective doesn't complete the meaning", "corrected_triple": null}}
-
-Input: (knight, wears, traditional)
-Output: {{"valid": false, "reason": "'wears' requires a noun object - what does he wear? 'traditional' as an adjective doesn't complete the meaning", "corrected_triple": null}}
-
-Input: (charlemagne, seeks to unite, unification)
-Output: {{"valid": false, "reason": "Circular relationship - 'unification' IS the act of uniting. The object should be what is being united (e.g., tribes, kingdoms)", "corrected_triple": ["charlemagne", "seeks to unite", "tribes"]}}
-
-Input: (charlemagne, unites, tribes)
-Output: {{"valid": true, "reason": "Complete: subject + verb + concrete noun object", "corrected_triple": null}}
+Output: {"valid": false, "reason": "'dresses in' requires a noun object (what does he wear?)", "corrected_triple": null}
 
 Input: (charlemagne, prefers, simple)
-Output: {{"valid": false, "reason": "'prefers' requires a noun object - what does he prefer? 'simple' as an adjective doesn't complete the meaning", "corrected_triple": null}}
+Output: {"valid": false, "reason": "'prefers' needs a noun object (what does he prefer?)", "corrected_triple": null}
 
 Input: (charlemagne, prefers, simplicity)
-Output: {{"valid": true, "reason": "Complete: subject + verb + noun object (abstract noun is acceptable)", "corrected_triple": null}}
+Output: {"valid": true, "reason": "Complete: verb + noun object", "corrected_triple": null}
 
 Input: (charlemagne, is, handsome)
-Output: {{"valid": true, "reason": "'is' + adjective is a complete property description (copular verb)", "corrected_triple": null}}
+Output: {"valid": true, "reason": "Copular verb + adjective is valid", "corrected_triple": null}
 
-Input: (princess, looks, beautiful)
-Output: {{"valid": true, "reason": "'looks' is a copular verb linking subject to adjective", "corrected_triple": null}}
-
-Input: (charlemagne, values, educational)
-Output: {{"valid": false, "reason": "'values' requires a noun object - what does he value? 'educational' is an adjective", "corrected_triple": ["charlemagne", "values", "education"]}}
-
-Input: (charlemagne, wears, attire)
-Output: {{"valid": true, "reason": "Complete: subject + verb + noun object", "corrected_triple": null}}
-
-Input: (pride, relates_to, ability)
-Output: {{"valid": false, "reason": "Vague relation 'relates_to' adds no semantic content - doesn't specify how pride relates to ability", "corrected_triple": null}}
-
-Input: (charlemagne, finds, manuscript)
-Output: {{"valid": true, "reason": "Complete with noun object", "corrected_triple": null}}
-
-Input: (festival, takes_place_at, aachen)
-Output: {{"valid": true, "reason": "Complete: subject + verb phrase + location object", "corrected_triple": null}}
-
-Input: (festival, take place at, aachen)
-Output: {{"valid": false, "reason": "Incorrect verb form - should be 'takes_place_at' for subject 'festival'", "corrected_triple": ["festival", "takes_place_at", "aachen"]}}
-
-Input: (clothing, not connected to, school)
-Output: {{"valid": false, "reason": "Negation relation adds no semantic value - absence of connection is not a valid relation", "corrected_triple": null}}
-
-Input: (charlemagne, not related to, pepin)
-Output: {{"valid": false, "reason": "Negation relation - absence of relation is not valid for a knowledge graph", "corrected_triple": null}}
+Input: (charlemagne, unites, unification)
+Output: {"valid": false, "reason": "Circular - unification IS the act of uniting", "corrected_triple": ["charlemagne", "unites", "tribes"]}
 
 Input: (clothing, relates to, school)
-Output: {{"valid": false, "reason": "Vague relation 'relates to' doesn't specify how clothing relates to school. Consider 'is uniform for', 'is worn at', or other specific relation", "corrected_triple": null}}
+Output: {"valid": false, "reason": "Vague relation - specify how clothing relates to school", "corrected_triple": null}
 
-
-Return a JSON object with:
-1. "valid": true or false
-2. "reason": brief explanation focusing on semantic completeness
-3. "corrected_triple": if you think the triple is almost correct but needs adjustment, provide the corrected (subject, relation, object) as a list. Otherwise, null.
+Return a JSON with:
+1. "valid": true/false
+2. "reason": brief explanation
+3. "corrected_triple": [subject, relation, object] if fixable, else null
 """
 
 # Simplified with 1-3 scale
@@ -607,60 +515,51 @@ Current sentence being processed:
 Active relationships in the reader's memory:
 {active_triplets}
 
-**SCORING GUIDE (0-3):**
+SCORING GUIDE (0-3):
 
-**SCORE 3 - HIGH RELEVANCE (Essential to keep)**
+SCORE 3 - HIGH RELEVANCE (Essential to keep)
 - Involves main characters (Charlemagne, his family, kingdoms, key figures)
 - Directly describes actions or states in the current sentence
-- Forms part of a meaningful multi-hop chain - ALL edges in a connected chain should be preserved together, not decayed aggressively
-  * Example: (charlemagne, has, court), (court, employs, scholars), (scholars, write, manuscripts) should ALL be scored 3 because they form an explanatory unit
-  * Even if individual edges seem less relevant alone, their value is in maintaining the complete chain
 - Bridges concepts to explicit story elements - these bridging edges are CRITICAL to preserve
 
-**SCORE 2 - MEDIUM RELEVANCE (Useful context)**
+SCORE 2 - MEDIUM RELEVANCE (Useful context)
 - Background information about secondary characters
 - Generic but meaningful relations ("lives_in", "travels_to", "works_with")
 - Provides supporting details not central to current events
 
-**SCORE 1 - LOW RELEVANCE (Can be removed if not part of chains)**
+SCORE 1 - LOW RELEVANCE (Can be removed)
 - Semantically incomplete triples (action verb + adjective without noun):
-  * (charlemagne, prefers, simple) - what does he prefer?
-  * (charlemagne, wears, traditional) - wears WHAT?
-  * (charlemagne, finds, interesting) - finds WHAT interesting?
-- Vague relations with no specific meaning that are NOT part of valuable chains:
-  * (pride, relates_to, ability) - how do they relate?
-  * (x, associated_with, y) - in what way?
+  (charlemagne, prefers, simple) - what does he prefer?
+  (charlemagne, wears, traditional) - wears WHAT?
+  (charlemagne, finds, interesting) - finds WHAT interesting?
+- Vague relations with no specific meaning:
+  (pride, relates_to, ability) - how do they relate?
+  (x, associated_with, y) - in what way?
 - Semantic duplicates when a better form exists:
-  * If both (charlemagne, is, skilled) AND (charlemagne, has, skill) exist, the "has" version is score 1
-  * Prefer "is + adjective" (score 3) over "has + noun" (score 1) for the same attribute
+  If both (charlemagne, is, skilled) AND (charlemagne, has, skill) exist, the "has" version is score 1
+  Prefer "is + adjective" (score 3) over "has + noun" (score 1) for the same attribute
 - Minor details from early sentences no longer connected to current narrative
 
-**SCORE 0 - COMPLETELY IRRELEVANT (Remove immediately)**
+SCORE 0 - COMPLETELY IRRELEVANT (Remove immediately)
 - Semantically incoherent or garbage triples
 - Complete non-sequiturs that have no connection to the current narrative
 - Triplets that are clearly errors or hallucinations
-- **Must check connectivity protection** - only remove if node remains connected
+- Must check connectivity protection - only remove if node remains connected
 
-**CRITICAL RULES:**
+CRITICAL RULES:
 
-1. **CONTEXT AWARENESS:**
+1. CONTEXT AWARENESS:
    - A triple's score can CHANGE based on later context
    - Example: (pride, relates_to, ability) in sentence 1 with no context = score 1
    - If sentence 3 discusses how pride affects ability, that same triple becomes score 3
 
-2. **MULTI-HOP CHAIN PROTECTION:**
-   - **ALL edges that are part of a connected multi-hop chain should be preserved together**
-   - Do NOT decay individual edges in a chain aggressively - the chain's value is collective
-   - When you see a chain like (A) -> (B) -> (C) -> (D), score ALL edges as 3, even if some seem less central
-   - Example: (charlemagne, has, court), (court, employs, scholars), (scholars, write, manuscripts) → ALL score 3
-
-3. **CONNECTIVITY PROTECTION:**
-   - **NEVER assign score 0 to an edge if removing it would disconnect a node from the graph**
+2. CONNECTIVITY PROTECTION:
+   - NEVER assign score 0 to an edge if removing it would disconnect a node from the graph
    - Score 0 means immediate removal in the current sentence
    - Score 1 means gradual decay over multiple sentences
    - Check if the node has other connections before marking for removal
 
-**SCORING EXAMPLES:**
+SCORING EXAMPLES:
 
 Context: First sentence "Charlemagne preferred simple living."
 Active triplets:
@@ -670,10 +569,9 @@ Active triplets:
 
 Context: Later sentence "He wore traditional Frankish attire."
 Active triplets:
-- (charlemagne, wore, traditional) → SCORE 1 (incomplete - wore WHAT? - but note this should be replaced by the chain below)
-- (charlemagne, wore, attire) → SCORE 3 (complete, part of valuable chain)
-- (attire, is, traditional) → SCORE 3 (complete property, part of valuable chain)
-- The complete chain (wore, attire) + (attire, is, traditional) is preserved with both edges at score 3
+- (charlemagne, wore, traditional) → SCORE 1 (incomplete - wore WHAT?)
+- (charlemagne, wore, attire) → SCORE 3 (complete, connects to main character)
+- (attire, is, traditional) → SCORE 3 (complete property)
 
 Return a JSON object with:
 {{
@@ -682,11 +580,11 @@ Return a JSON object with:
         "(subject2, relation2, object2)": 1,
         ...
     }},
-    "reasoning": "Brief explanation of scoring strategy, noting multi-hop chains preserved as units, bridging edges protected, and duplicate resolutions"
+    "reasoning": "Brief explanation of scoring strategy, noting bridging edges protected and duplicate resolutions"
 }}
 """
 
-PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE = """You are maintaining a clean knowledge graph of a story. Your task is to identify which relationships are **essential** to keep and which are **irrelevant** and can be removed.
+PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE = """You are maintaining a clean knowledge graph of a story. Your task is to identify which relationships are essential to keep and which are irrelevant and can be removed.
 
 Story so far:
 {story_context}
@@ -697,101 +595,70 @@ Current sentence:
 Here are the active relationships in the reader's memory:
 {active_triplets}
 
-**KEEP (RELEVANT) if:**
+KEEP if:
 
-1. **SEMANTICALLY COMPLETE RELATIONSHIPS:**
+1. SEMANTICALLY COMPLETE RELATIONSHIPS:
    - Subject + action verb + noun object (e.g., "charlemagne - wears - attire")
    - Subject + is + adjective (e.g., "charlemagne - is - powerful")
    - Subject + verb + preposition + noun (e.g., "charlemagne - travels_to - aachen")
 
-2. **MAIN CHARACTER CONNECTIONS:**
+2. MAIN CHARACTER CONNECTIONS:
    - Involves main characters (Charlemagne, his family, kingdoms, key figures)
    - Describes their actions, states, or relationships
 
-3. **MULTI-HOP CHAINS - PRESERVE AS COMPLETE UNITS:**
-   - **ALL edges that are part of a connected multi-hop chain should be kept together**
-   - Do NOT prune individual edges from a chain even if they seem less relevant alone
-   - Example chain to preserve completely:
-     * (charlemagne, has, court)
-     * (court, employs, scholars)
-     * (scholars, write, manuscripts)
-     → Keep ALL three, even if "employs" seems less central
-   - Chains that connect concepts to explicit text nodes are HIGH VALUE
-   - Relationships that explain "how" or "why" things happen should be preserved as complete units
-
-4. **BRIDGING EDGES ARE CRITICAL:**
+3. BRIDGING EDGES ARE CRITICAL:
    - Edges that connect inferred concepts to explicit nodes must be preserved
    - These enable the entire inference structure
-   - Even if a bridging edge seems generic, it enables the chain
 
-5. **CONTEXTUALLY GROUNDED:**
+4. CONTEXTUALLY GROUNDED:
    - Relationships mentioned or clearly implied in recent sentences
    - Provides context needed to understand the current sentence
-   - Bridges important concepts even if inferred
 
-**REMOVE (IRRELEVANT) if:**
+REMOVE if:
 
-1. **SEMANTICALLY INCOMPLETE:**
+1. SEMANTICALLY INCOMPLETE:
    - Action verb + adjective without noun (e.g., "has - regal", "prefers - simple", "wears - traditional", "finds - interesting")
    - These are grammatically incomplete and add confusion, not meaning
-   - **Exception: If an incomplete triple is part of a larger pattern that can be corrected, flag it but don't remove the corrected version**
+   - Exception: If an incomplete triple is part of a larger pattern that can be corrected, flag it but don't remove the corrected version
 
-2. **VAGUE OR GENERIC RELATIONS**
+2. VAGUE OR GENERIC RELATIONS
    - "relates_to", "associated_with", "connected_to" without specific meaning
    - "involves", "concerns", "has" when used generically
   
-3. **SEMANTIC DUPLICATES:**
+3. SEMANTIC DUPLICATES:
    - When both (charlemagne, is, skilled) AND (charlemagne, has, skill) exist → KEEP only "is skilled", REMOVE "has skill"
    - When both (strategy, is, strategic) AND (strategy, has, strategy) exist → KEEP only "is strategic"
    - When both (x, is, adjective) AND (x, has, noun_form) describe the same attribute → KEEP "is + adjective", REMOVE "has + noun"
 
-4. **NO LONGER RELEVANT AND NOT PART OF CHAINS:**
-   - Minor details from earlier sentences no longer connected to current narrative
-   - Background information that has been superseded
-
-5. **STRUCTURALLY DANGEROUS (HANDLE WITH CARE):**
-   - **Never remove a relationship if it's the only connection between a node and the rest of the graph**
-   - Check connectivity before removing!
-
-6. **SEMANTICALLY AMBIGUOUS OR ILLOGICAL:**
+4. SEMANTICALLY AMBIGUOUS OR ILLOGICAL:
    - Taken together, the triplet's subject, relation and object do not make sense logically e.g. "ability" - "enables" - "famous" OR "charlemagne" - "wears at" - "festival"
    - The relation misses a copular verb where needed
    - These add confusion, not meaning
-   - **But if they can be corrected to fit into a chain, note that in reasoning**
+   - But if they can be corrected to fit into a chain, note that in reasoning
 
-**DECISION EXAMPLES:**
+DECISION EXAMPLES:
 
 Sentence 1: "Charlemagne preferred simple living."
 Active triplets after sentence 1:
 - (charlemagne, preferred, simple) - REMOVE (incomplete - what did he prefer?)
 - (charlemagne, is, simple) - KEEP (valid property)
 
-Sentence: "He wore traditional attire."
+Sentence 2: "He wore traditional attire."
 Active triplets:
-- (charlemagne, wore, traditional) - REMOVE (incomplete - replace with chain)
-- (charlemagne, wore, attire) - KEEP (part of valuable chain)
-- (attire, is, traditional) - KEEP (part of valuable chain)
-- The chain (wore, attire) + (attire, is, traditional) is preserved as a unit
+- (charlemagne, wore, traditional) - REMOVE (incomplete - wore WHAT?)
+- (charlemagne, wore, attire) - KEEP (connects to main character)
+- (attire, is, traditional) - KEEP (complete property)
 
-**MULTI-HOP CHAIN EXAMPLE:**
-Consider this complete chain:
-- (charlemagne, has, court)
-- (court, employs, scholars)
-- (scholars, write, manuscripts)
+Sentence 3: "The court employed scholars who wrote manuscripts."
+Active triplets:
+- (charlemagne, has, court) - KEEP (bridges to explicit node)
+- (court, employs, scholars) - KEEP (bridging edge - connects explicit to inferred)
+- (scholars, write, manuscripts) - KEEP (completes the inference chain)
 
-Even if "employs" seems less central alone, KEEP ALL THREE. The chain's value is collective - it explains how Charlemagne's court functions and produces manuscripts. Removing any link breaks the explanatory chain.
-
-**BRIDGING EDGE EXAMPLE:**
-- (charlemagne, has, court) [explicit]
-- (court, employs, scholars) [inferred - BRIDGING EDGE]
-- (scholars, write, manuscripts) [inferred]
-
-The edge (court, employs, scholars) is CRITICAL - it connects the explicit "court" to the inferred "scholars". Keep it even if "employs" seems generic.
-
-**DUPLICATE HANDLING EXAMPLE:**
-If both exist:
-- (charlemagne, is, skilled) - KEEP
-- (charlemagne, has, skill) - REMOVE (duplicate)
+Sentence 4: "Charlemagne was skilled in many things."
+Active triplets (with duplicates):
+- (charlemagne, is, skilled) - KEEP (preferred form)
+- (charlemagne, has, skill) - REMOVE (semantic duplicate)
 
 Return a JSON object with this exact structure:
 {{
@@ -800,6 +667,6 @@ Return a JSON object with this exact structure:
         "(subject2, relation2, object2)",
         ...
     ],
-    "reasoning": "Explain key pruning decisions, noting any multi-hop chains preserved as complete units, bridging edges protected, and semantic duplicates resolved"
+    "reasoning": "Explain key pruning decisions, noting bridging edges protected and semantic duplicates resolved"
 }}
 """

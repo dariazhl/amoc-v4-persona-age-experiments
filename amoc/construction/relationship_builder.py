@@ -162,7 +162,7 @@ class RelationshipGraphBuilder:
             )
 
             # SAFE RELAXATION: Allow if at least one endpoint is already active
-            if not attachment_ok:
+            if not attachment_ok and not is_first_sentence:
                 existing_source = self.graph.get_node(
                     self._get_concept_lemmas_fn(relationship[0])
                 )
@@ -182,23 +182,25 @@ class RelationshipGraphBuilder:
             obj, obj_type = self._canonicalize_and_classify_node_text_fn(
                 relationship[2]
             )
-            if subj_type is None or obj_type is None:
-                continue
-
-            source_node = self._get_node_from_text_fn(
-                norm_subj,
-                current_sentence_text_based_nodes,
-                current_sentence_text_based_words,
-                node_source=NodeSource.INFERENCE_BASED,
-                create_node=False,
-            )
-            dest_node = self._get_node_from_text_fn(
-                norm_obj,
-                current_sentence_text_based_nodes,
-                current_sentence_text_based_words,
-                node_source=NodeSource.INFERENCE_BASED,
-                create_node=False,
-            )
+            if is_first_sentence:
+                # For first sentence, don't try to get from text nodes - they won't exist
+                source_node = None
+                dest_node = None
+            else:
+                source_node = self._get_node_from_text_fn(
+                    norm_subj,
+                    current_sentence_text_based_nodes,
+                    current_sentence_text_based_words,
+                    node_source=NodeSource.INFERENCE_BASED,
+                    create_node=False,
+                )
+                dest_node = self._get_node_from_text_fn(
+                    norm_obj,
+                    current_sentence_text_based_nodes,
+                    current_sentence_text_based_words,
+                    node_source=NodeSource.INFERENCE_BASED,
+                    create_node=False,
+                )
 
             edge_label = relationship[1].replace("(edge)", "").strip()
             edge_label = self._normalize_edge_label_fn(edge_label)
@@ -208,7 +210,8 @@ class RelationshipGraphBuilder:
             if source_node is None:
                 if not self._is_node_allowed_fn(
                     subj,
-                    bypass=(
+                    bypass=is_first_sentence
+                    or (  # Always bypass in first sentence
                         dest_node is not None
                         and (
                             dest_node in explicit_nodes
@@ -236,9 +239,12 @@ class RelationshipGraphBuilder:
                 )
 
             if dest_node is None:
-                bypass = source_node is not None and (
-                    source_node in explicit_nodes
-                    or source_node in self.get_nodes_with_active_edges_fn()
+                bypass = is_first_sentence or (  # Always bypass in first sentence
+                    source_node is not None
+                    and (
+                        source_node in explicit_nodes
+                        or source_node in self.get_nodes_with_active_edges_fn()
+                    )
                 )
 
                 if not self._is_node_allowed_fn(

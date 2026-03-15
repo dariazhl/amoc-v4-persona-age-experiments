@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING, Optional, List, Tuple
+import logging
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
@@ -62,10 +63,16 @@ class Inference:
                         nodes_from_text, sent.text, self._persona
                     )
                 )
-                break
-            except:
+                if object_properties_dict:
+                    logging.info(
+                        f"Inference attempt succeeded: {object_properties_dict}"
+                    )
+                    break
+            except Exception as e:
+                logging.error(f"Inference attempt failed: {e}", exc_info=True)
                 continue
         else:
+            logging.warning("All 3 inference attempts failed for first sentence")
             return [], []
 
         for _ in range(3):
@@ -81,12 +88,21 @@ class Inference:
                         self._persona,
                     )
                 )
+                if new_relationships:
+                    logging.info(f"Relationship generation attempt succeeded")
                 return (
                     new_relationships["concept_relationships"],
                     new_relationships["property_relationships"],
                 )
-            except:
+            except Exception as e:
+                logging.error(
+                    f"Relationship generation attempt failed: {e}",
+                    exc_info=True,
+                )
                 continue
+        logging.warning(
+            "All 3 relationship generation attempts failed for first sentence"
+        )
         return [], []
 
     def infer_new_relationships(
