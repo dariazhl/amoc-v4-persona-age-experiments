@@ -127,7 +127,7 @@ def process_persona_csv(
     force_node: bool = False,
     checkpoint: bool = False,  # deprecated, used to save progress in analysis run
     generate_reverse_plots: bool = False,
-    reverse_plot_mode: str = "cumulative",
+    reverse_plot_mode: str = "paper",
 ) -> None:
     short_filename = os.path.basename(filename)
     print(f"Processing: {short_filename}")
@@ -177,22 +177,18 @@ def process_persona_csv(
     # 3. Process per model
     for model_name, engine in engines.items():
         safe_model_name = model_name.replace(":", "-").replace("/", "-")
-        cumulative_dir = output_dir / "cumulative"
-        cumulative_dir.mkdir(parents=True, exist_ok=True)
-        cumulative_output_filename = (
-            f"model_{safe_model_name}_cumulative_triplets_{short_filename}"
-        )
-        cumulative_output_path = cumulative_dir / cumulative_output_filename
-        active_dir = output_dir / "active"
-        active_dir.mkdir(parents=True, exist_ok=True)
+        paper_sentence_dir = output_dir / "paper_sentence"
+        paper_sentence_dir.mkdir(parents=True, exist_ok=True)
         sentence_output_filename = (
-            f"model_{safe_model_name}_sentence_triplets_{short_filename}"
+            f"model_{safe_model_name}_paper_sentence_triplets_{short_filename}"
         )
-        sentence_output_path = active_dir / sentence_output_filename
+        sentence_output_path = paper_sentence_dir / sentence_output_filename
+        paper_final_dir = output_dir / "paper_final"
+        paper_final_dir.mkdir(parents=True, exist_ok=True)
         final_output_filename = (
-            f"model_{safe_model_name}_final_triplets_{short_filename}"
+            f"model_{safe_model_name}_paper_final_triplets_{short_filename}"
         )
-        final_output_path = output_dir / final_output_filename
+        final_output_path = paper_final_dir / final_output_filename
 
         if checkpoint:
             ckpt_path = get_checkpoint_path(
@@ -213,10 +209,6 @@ def process_persona_csv(
 
         print(f"[{model_name}] out={final_output_path}")
 
-        if not cumulative_output_path.exists():
-            pd.DataFrame([], columns=CSV_HEADERS).to_csv(
-                cumulative_output_path, index=False, encoding="utf-8"
-            )
         if not sentence_output_path.exists():
             pd.DataFrame([], columns=SENTENCE_CSV_HEADERS).to_csv(
                 sentence_output_path, index=False, encoding="utf-8"
@@ -240,7 +232,7 @@ def process_persona_csv(
                 )
 
                 try:
-                    final_triplets, sentence_triplets, cumulative_triplets = engine.run(
+                    final_triplets, sentence_triplets, _ = engine.run(
                         persona_text=persona_text,
                         age_refined=age_refined_int,
                         replace_pronouns=replace_pronouns,
@@ -347,48 +339,6 @@ def process_persona_csv(
                             seen.add(key)
                             deduped.append(rec)
                         records = deduped
-
-                    if cumulative_triplets:
-                        cum_records = []
-                        for trip in cumulative_triplets:
-                            if len(trip) == 4:
-                                s, r, o, introduced_at = trip
-                            else:
-                                continue
-                            s, r, o = repair_triplet(s, r, o)
-                            cum_records.append(
-                                {
-                                    "original_index": row_idx,
-                                    "age_refined": age_refined_int,
-                                    "persona_text": persona_text,
-                                    "story_text": story_excerpt,
-                                    "model_name": model_name,
-                                    "subject": s,
-                                    "relation": r,
-                                    "object": o,
-                                    "sentence_index": -1,
-                                    "introduced_at": int(introduced_at),
-                                    "regime": regime,
-                                    "active": True,
-                                }
-                            )
-                        seen_cum = set()
-                        deduped_cum = []
-                        for rec in cum_records:
-                            key = (rec["subject"], rec["relation"], rec["object"])
-                            if key in seen_cum:
-                                continue
-                            seen_cum.add(key)
-                            deduped_cum.append(rec)
-                        if deduped_cum:
-                            pd.DataFrame(deduped_cum).to_csv(
-                                cumulative_output_path,
-                                mode="a",
-                                header=False,
-                                index=False,
-                                columns=CSV_HEADERS,
-                                encoding="utf-8",
-                            )
 
                     if sentence_records:
                         seen_sent = set()
@@ -516,34 +466,6 @@ def process_persona_csv(
                         ckpt["processed_indices"] = sorted(processed_indices)
                         save_checkpoint(ckpt_path, ckpt)
 
-                    if plot_final_graph and records:
-                        # Use cumulative graph for final plot to show full memory
-                        trips = [
-                            (t[0], t[1], t[2])
-                            for t in cumulative_triplets
-                            if len(t) >= 3
-                        ]
-                        if not trips:
-                            trips = [
-                                (rec["subject"], rec["relation"], rec["object"])
-                                for rec in records
-                                if include_inactive_edges or rec.get("active", True)
-                            ]
-                        if trips:
-                            plot_dir = graphs_output_dir or os.path.join(
-                                OUTPUT_ANALYSIS_DIR, "graphs"
-                            )
-                            plot_amoc_triplets(
-                                triplets=trips,
-                                persona=persona_text,
-                                model_name=model_name,
-                                age=age_refined_int,
-                                blue_nodes=highlight_nodes,
-                                output_dir=plot_dir,
-                                step_tag="cumulative_graph_final",
-                                largest_component_only=plot_largest_component_only,
-                            )
-
                 except Exception as e:
                     logging.error(
                         f"Failure idx={row_idx}, model={model_name}",
@@ -589,28 +511,23 @@ def process_persona_csv(
                                 "show_triplet_overlay": True,
                             }
 
-                            if reverse_plot_mode == "both":
-                                modes = ["cumulative", "paper"]
-                            else:
-                                modes = [reverse_plot_mode]
+                            # Only paper mode is supported for reverse plots
+                            filtered_states = [
+                                s
+                                for s in all_states
+                                if "paper" in s.get("step_tag", "")
+                            ]
 
-                            for mode in modes:
-                                filtered_states = [
-                                    s
-                                    for s in all_states
-                                    if mode in s.get("step_tag", "")
-                                ]
-
-                                if len(filtered_states) >= 2:
-                                    png_paths = reverse_plotter.plot_reverse_sequence(
-                                        filtered_states,
-                                        base_kwargs,
-                                        final_positions,
-                                        mode=mode,
-                                    )
-                                    logging.info(
-                                        f"made {len(png_paths)} reverse plots for {mode} mode"
-                                    )
+                            if len(filtered_states) >= 2:
+                                png_paths = reverse_plotter.plot_reverse_sequence(
+                                    filtered_states,
+                                    base_kwargs,
+                                    final_positions,
+                                    mode="paper",
+                                )
+                                logging.info(
+                                    f"made {len(png_paths)} reverse plots for paper mode"
+                                )
 
                             reverse_dir = os.path.join(
                                 graphs_output_dir or output_dir, "reverse_plots"

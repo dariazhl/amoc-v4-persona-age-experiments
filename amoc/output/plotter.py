@@ -195,17 +195,8 @@ class GraphPlotter:
         if not self._collect_states:
             return
 
-        if mode == "cumulative":
-            state_triplets = (
-                self._graph_edges_to_triplets_fn(only_active=False)
-                if self._graph_edges_to_triplets_fn
-                else []
-            )
-        else:
-            state_triplets = triplets
-
         state = {
-            "triplets": state_triplets,
+            "triplets": triplets,
             "persona": self._persona,
             "model_name": self._model_name,
             "age": self._persona_age if self._persona_age is not None else -1,

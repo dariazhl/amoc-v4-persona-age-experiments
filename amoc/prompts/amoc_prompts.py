@@ -480,22 +480,22 @@ VALIDATION RULES (apply in order):
 EXAMPLES:
 
 Input: (charlemagne, dresses in, beautiful)
-Output: {"valid": false, "reason": "'dresses in' requires a noun object (what does he wear?)", "corrected_triple": null}
+Output: {{"valid": false, "reason": "'dresses in' requires a noun object (what does he wear?)", "corrected_triple": null}}
 
 Input: (charlemagne, prefers, simple)
-Output: {"valid": false, "reason": "'prefers' needs a noun object (what does he prefer?)", "corrected_triple": null}
+Output: {{"valid": false, "reason": "'prefers' needs a noun object (what does he prefer?)", "corrected_triple": null}}
 
 Input: (charlemagne, prefers, simplicity)
-Output: {"valid": true, "reason": "Complete: verb + noun object", "corrected_triple": null}
+Output: {{"valid": true, "reason": "Complete: verb + noun object", "corrected_triple": null}}
 
 Input: (charlemagne, is, handsome)
-Output: {"valid": true, "reason": "Copular verb + adjective is valid", "corrected_triple": null}
+Output: {{"valid": true, "reason": "Copular verb + adjective is valid", "corrected_triple": null}}
 
 Input: (charlemagne, unites, unification)
-Output: {"valid": false, "reason": "Circular - unification IS the act of uniting", "corrected_triple": ["charlemagne", "unites", "tribes"]}
+Output: {{"valid": false, "reason": "Circular - unification IS the act of uniting", "corrected_triple": ["charlemagne", "unites", "tribes"]}}
 
 Input: (clothing, relates to, school)
-Output: {"valid": false, "reason": "Vague relation - specify how clothing relates to school", "corrected_triple": null}
+Output: {{"valid": false, "reason": "Vague relation - specify how clothing relates to school", "corrected_triple": null}}
 
 Return a JSON with:
 1. "valid": true/false

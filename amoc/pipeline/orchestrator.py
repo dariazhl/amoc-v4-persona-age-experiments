@@ -572,42 +572,9 @@ class AMoCv4:
             if node.get_text_representer()
         ]
 
-        inferred_nodes = [
-            n.get_text_representer()
-            for n in self.graph.nodes
-            if n.node_source == NodeSource.INFERENCE_BASED
-        ]
-
-        # Cumulative view state
-        cumulative_active_pairs = {
-            (
-                edge.source_node.get_text_representer(),
-                edge.dest_node.get_text_representer(),
-            )
-            for edge in self.graph.edges
-            if edge.active
-        }
-        cumulative_triplets = self._triplet_ops.reconstruct_semantic_triplets(
-            only_active=True
-        )
-
+        # Update working memory tracking
         active_node_names = set(explicit_nodes_for_plot) | set(salient_nodes_for_plot)
         self._plot_ops._ever_in_working_memory.update(active_node_names)
-        inactive_nodes_recalc = sorted(
-            self._plot_ops._ever_in_working_memory - active_node_names
-        )
-
-        self._plot_ops._capture_state(
-            sentence_idx=i,
-            sentence_text=original_text,
-            mode="cumulative",
-            triplets=cumulative_triplets,
-            explicit_nodes=explicit_nodes_for_plot,
-            inactive_nodes=inactive_nodes_recalc,
-            salient_nodes=salient_nodes_for_plot,
-            inferred_nodes=inferred_nodes,
-            active_edges=cumulative_active_pairs,
-        )
 
         # Paper view state: all triplets (active + inactive), active edges highlighted
         all_triplets = self._triplet_ops.reconstruct_semantic_triplets(
@@ -869,15 +836,6 @@ class AMoCv4:
             )
 
             if plot_after_each_sentence:
-                self.plot_sentence_views_wrapper(
-                    i,
-                    original_text,
-                    graphs_output_dir,
-                    highlight_nodes,
-                    inactive_nodes_for_plot,
-                    salient_nodes_for_plot,
-                    largest_component_only,
-                )
                 self.plot_paper_graph_style_wrapper(
                     i,
                     original_text,

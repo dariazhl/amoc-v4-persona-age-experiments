@@ -36,8 +36,7 @@ class OutputFinalizer:
     # generates final output files:
     # 1. the activation matrix CSV
     # 2. the list of final active triplets
-    # 3. the per‑sentence triplets from active graph
-    # 4. the triplets from cumulative graph
+    # 3. the per-sentence triplets from active graph
     def finalize_outputs(
         self,
         amoc_matrix_records: List[Dict],
@@ -128,9 +127,4 @@ class OutputFinalizer:
                 )
             )
 
-        cumulative_triplets = []
-        for subj, rel, obj in reconstruct_semantic_triplets_fn():
-            intro = triplet_intro.get((subj, rel, obj), -1)
-            cumulative_triplets.append((subj, rel, obj, int(intro)))
-
-        return final_triplets, sentence_triplets, cumulative_triplets
+        return final_triplets, sentence_triplets, []

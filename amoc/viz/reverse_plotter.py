@@ -14,7 +14,7 @@ class ReverseGraphPlotter:
         graph_states: List[Dict[str, Any]],
         base_kwargs: Dict[str, Any],
         positions: Dict[str, Tuple[float, float]],
-        mode: str = "cumulative",
+        mode: str = "paper",
     ) -> List[str]:
 
         if len(graph_states) < 2:
@@ -24,12 +24,8 @@ class ReverseGraphPlotter:
         png_paths = []
         total_states = len(graph_states)
 
-        # Create mode-specific subdirectory
-        folder_names = {
-            "cumulative": "cumulative",
-            "paper": "paper",
-        }
-        mode_dir = os.path.join(self.output_dir, folder_names.get(mode, mode))
+        # Create mode-specific subdirectory (only paper mode supported)
+        mode_dir = os.path.join(self.output_dir, "paper")
         os.makedirs(mode_dir, exist_ok=True)
 
         # Plot in reverse order (from last to first)
