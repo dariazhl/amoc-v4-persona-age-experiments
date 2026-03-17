@@ -39,7 +39,7 @@ class TextNormalizer:
             if re.search(r"\b(like|likes?)\b", text):
                 return "enjoys"
 
-            # Is patterns
+            # Is patterns - prevents triplets such as: charlegmagne - is_type_of - king
             if re.search(r"\b(is|are|was|were|be|being|been)\b", text):
                 if re.search(r"kind|type|sort|form|variant|example|instance", text):
                     return "is"

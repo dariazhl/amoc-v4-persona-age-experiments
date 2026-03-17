@@ -182,9 +182,7 @@ class Decay:
                         edge.visibility_score = 0
                         edge.active = False
                     stats["decay"] += 1
-                    logging.info(
-                        f"decayed edge {triplet_str} (score=1)"
-                    )
+                    logging.info(f"decayed edge {triplet_str} (score=1)")
 
             elif score == 2:  # MEDIUM RELEVANCE - maintain
                 # Decay faster
@@ -345,39 +343,38 @@ class Decay:
             reinforced_count += 1
 
         if reinforced_count > 0:
-            logging.info(
-                f"reinforced {reinforced_count} edges in inference chains"
-            )
+            logging.info(f"reinforced {reinforced_count} edges in inference chains")
 
     def enforce_node_limit(self, max_nodes: int = 20) -> None:
         # Only count ACTIVE nodes toward the limit — inactive nodes are
         # retained in memory and should not trigger further deactivation
-        active_count = sum(1 for n in self._graph.nodes if n.active)
-        if active_count <= max_nodes:
-            return
+        # active_count = sum(1 for n in self._graph.nodes if n.active)
+        # if active_count <= max_nodes:
+        #     return
 
-        # Protect explicit and carryover nodes from deactivation
-        protected_nodes = set()
-        if self._get_explicit_nodes:
-            protected_nodes.update(self._get_explicit_nodes())
+        # # Protect explicit and carryover nodes from deactivation
+        # protected_nodes = set()
+        # if self._get_explicit_nodes:
+        #     protected_nodes.update(self._get_explicit_nodes())
 
-        G_active, active_nodes, critical_nodes = self.identify_critical_nodes()
-        # Add protected nodes to critical so they are never candidates
-        critical_nodes = critical_nodes | protected_nodes
-        current_sentence = getattr(self, "_current_sentence_idx", 0)
-        node_scores = self.score_nodes(
-            G_active, active_nodes, current_sentence, critical_nodes
-        )
-        candidates, excess = self.select_removal_candidates(
-            node_scores, max_nodes, critical_nodes, active_only=True
-        )
+        # G_active, active_nodes, critical_nodes = self.identify_critical_nodes()
+        # # Add protected nodes to critical so they are never candidates
+        # critical_nodes = critical_nodes | protected_nodes
+        # current_sentence = getattr(self, "_current_sentence_idx", 0)
+        # node_scores = self.score_nodes(
+        #     G_active, active_nodes, current_sentence, critical_nodes
+        # )
+        # candidates, excess = self.select_removal_candidates(
+        #     node_scores, max_nodes, critical_nodes, active_only=True
+        # )
 
-        if not candidates:
-            return
+        # if not candidates:
+        #     return
 
-        safe_to_remove, would_fragment = self.simulate_removals(G_active, candidates)
-        removed = self.deactivate_nodes(safe_to_remove, would_fragment, excess)
-        self.log_removal_results(removed, excess, candidates)
+        # safe_to_remove, would_fragment = self.simulate_removals(G_active, candidates)
+        # removed = self.deactivate_nodes(safe_to_remove, would_fragment, excess)
+        # self.log_removal_results(removed, excess, candidates)
+        pass
 
     def identify_critical_nodes(self):
         G = nx.Graph()
@@ -497,9 +494,7 @@ class Decay:
         # Take from text-based first, then inference-based only if needed
         if len(sorted_text) >= excess:
             candidates = sorted_text[:excess]
-            logging.info(
-                f"selecting {excess} text-based nodes for potential removal"
-            )
+            logging.info(f"selecting {excess} text-based nodes for potential removal")
         else:
             candidates = sorted_text.copy()
             remaining = excess - len(sorted_text)

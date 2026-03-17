@@ -69,8 +69,8 @@ class NodeAdmission:
         # For first sentence, be more permissive with inferred nodes
         if is_first_sentence and provenance == "INFERRED_RELATION":
             logging.info(f"ADMIT_NODE: First sentence inference - ALLOWING")
-            # if self._has_active_attachment_fn and self._has_active_attachment_fn(lemma):
-            #     return True
+            if self._has_active_attachment_fn and self._has_active_attachment_fn(lemma):
+                return True
             # # For first sentence, also check if it's grounded in the current sentence
             # if sent and any(tok.lemma_.lower() == lemma for tok in sent):
             #     return True
