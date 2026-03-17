@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-Correlation analysis for AMoC structural and lexical metrics
-"""
-
-
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt

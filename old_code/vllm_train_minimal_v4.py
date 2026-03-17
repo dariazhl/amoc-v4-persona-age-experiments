@@ -1,6 +1,8 @@
 import multiprocessing
+
 multiprocessing.set_start_method("spawn", force=True)
 import os
+
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 os.environ["HF_HOME"] = "/export/projects/nlp/.cache"
 import logging
@@ -604,9 +606,6 @@ class VLLMClient:
             )
 
     def generate(self, messages: List[Dict[str, str]]) -> str:
-        """
-        messages: list of {role: 'system'|'user'|'assistant', content: str}
-        """
         if self.llm is None:
             logging.error("VLLM not initialized.")
             return "[]"
@@ -834,10 +833,6 @@ class AMoCv4:
         # - methods to infer relationships, properties, etc.
 
     def analyze(self, text: str, replace_prononuns: bool) -> List[Tuple[str, str, str]]:
-        """
-        Runs the full AMoC cycle and returns a list of extracted triplets
-        (Source, Relation, Target) for external saving.
-        """
         if replace_prononuns:
             text = self.resolve_pronouns(text)
         doc = self.spacy_nlp(text)
@@ -1077,9 +1072,10 @@ class AMoCv4:
                         self.persona,
                     )
                 )
-                return new_relationships["concept_relationships"], new_relationships[
-                    "property_relationships"
-                ]
+                return (
+                    new_relationships["concept_relationships"],
+                    new_relationships["property_relationships"],
+                )
             except:
                 continue
         return [], []
@@ -1122,9 +1118,10 @@ class AMoCv4:
                     text,
                     self.persona,
                 )
-                return new_relationships["concept_relationships"], new_relationships[
-                    "property_relationships"
-                ]
+                return (
+                    new_relationships["concept_relationships"],
+                    new_relationships["property_relationships"],
+                )
             except:
                 continue
         return [], []
@@ -1429,13 +1426,6 @@ class AMoCv4:
 
 
 class AgeAwareAMoCEngine:
-    """
-    Small helper/adapter that:
-      - Combines persona_text + age into a persona_description string
-      - Instantiates AMoCv4 with the shared VLLMClient and GLOBAL_NLP
-      - Calls analyze() and returns (subject, relation, object) triplets
-    """
-
     def __init__(self, vllm_client: VLLMClient):
         self.vllm_client = vllm_client
 
@@ -1857,8 +1847,6 @@ def process_persona_csv(
             )
 
 
-
-
 # --- Sentiment + lexical helpers --------------------------------------------
 
 _POSITIVE_WORDS: List[str] = [
@@ -1899,11 +1887,6 @@ _NEGATIVE_WORDS: List[str] = [
 
 
 def simple_sentiment_score(text: str) -> float:
-    """
-    Very simple lexicon-based sentiment:
-    (num_positive - num_negative) / max(total_tokens, 1)
-    Returns a value roughly in [-1, 1].
-    """
     if not text:
         return 0.0
 
@@ -1917,11 +1900,6 @@ def simple_sentiment_score(text: str) -> float:
 
 
 def compute_lexical_metrics(text: str) -> Dict[str, float]:
-    """
-    Compute simple lexical complexity metrics:
-      - lexical_ttr: type-token ratio
-      - lexical_avg_word_len: average word length (chars)
-    """
     if not text:
         return {"lexical_ttr": 0.0, "lexical_avg_word_len": 0.0}
 
@@ -1943,18 +1921,6 @@ def compute_lexical_metrics(text: str) -> Dict[str, float]:
 
 
 def compute_graph_metrics(edges: List[Tuple[str, str]]) -> Dict[str, float]:
-    """
-    Compute simple undirected graph metrics from edges = [(u, v), ...].
-
-    Returns:
-      - graph_num_nodes
-      - graph_num_edges
-      - graph_avg_degree
-      - graph_density
-      - graph_num_components
-      - graph_largest_component_size
-      - graph_largest_component_ratio
-    """
     # Collect nodes and adjacency (undirected)
     nodes = set()
     adj = {}
@@ -2031,13 +1997,6 @@ def compute_graph_metrics(edges: List[Tuple[str, str]]) -> Dict[str, float]:
 
 
 def process_triplets_file(path: str) -> pd.DataFrame:
-    """
-    Read one triplets CSV and compute persona-level metrics.
-    ALSO include raw columns:
-        original_index, age, persona_text, model_name, subject, relation, object
-    so that downstream analyses can join or inspect triplet-level data.
-    """
-
     df = pd.read_csv(path)
 
     if df.empty:
@@ -2146,13 +2105,7 @@ def process_triplets_file(path: str) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-# ==========================================
-# MAIN STATISTICAL ANALYSIS
-# ==========================================
-
-
 def annotate_stats(ax, pearson_r, pearson_p, spearman_r, spearman_p):
-    """Places Pearson and Spearman stats as a text box inside the given axis."""
     text = (
         f"Pearson r = {pearson_r:.3f} (p={pearson_p:.3g})\n"
         f"Spearman r = {spearman_r:.3f} (p={spearman_p:.3g})"
@@ -2167,6 +2120,7 @@ def annotate_stats(ax, pearson_r, pearson_p, spearman_r, spearman_p):
         bbox=dict(facecolor="white", alpha=0.7, edgecolor="black"),
     )
 
+
 def canonicalize_model_name(name: str) -> str:
     name = name.lower().strip()
 
@@ -2179,15 +2133,8 @@ def canonicalize_model_name(name: str) -> str:
 
     return name
 
-def run_statistical_analysis(model_name: str):
-    """
-    Statistical analysis for AMoC triplet datasets.
 
-    Produces:
-      - 3 correlation stats (age vs num_triplets, num_unique_concepts, graph_density)
-      - 3 scatter/regression plots
-      - A combined CSV output
-    """
+def run_statistical_analysis(model_name: str):
     print("\n" + "=" * 60)
     print(f"AMoC AGE STATISTICAL ANALYSIS — MODEL: {model_name}")
     print("=" * 60)
@@ -2331,10 +2278,6 @@ def run_statistical_analysis(model_name: str):
 
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
-    """
-    Minimal CLI: only model selection + a few knobs.
-    Input and output folders are fixed by INPUT_DIR and OUTPUT_DIR.
-    """
     p = argparse.ArgumentParser(
         description=(
             "Run AMoCv4 over all persona CSVs in INPUT_DIR using one or more vLLM models "

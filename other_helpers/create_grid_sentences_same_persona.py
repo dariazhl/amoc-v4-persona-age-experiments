@@ -18,11 +18,6 @@ GRID_COLS = 5  # e.g. 5 columns x 3 rows for 15 sentences
 
 
 def extract_prefix_and_sentence(filename):
-    """
-    Extract:
-      - prefix (everything before _sentX)
-      - sentence index X
-    """
     match = re.search(r"^(.*)_sent(\d+)\.\w+$", filename)
     if not match:
         return None, None
@@ -33,10 +28,6 @@ def extract_prefix_and_sentence(filename):
 
 
 def collect_by_prefix(root_dir):
-    """
-    Returns:
-      { prefix: { sent_id: image_path } }
-    """
     groups = defaultdict(dict)
 
     for fname in sorted(os.listdir(root_dir)):
@@ -53,9 +44,6 @@ def collect_by_prefix(root_dir):
 
 
 def infer_cell_size(groups):
-    """
-    Infer cell size from the first available image.
-    """
     for sent_map in groups.values():
         for path in sent_map.values():
             with Image.open(path) as img:
@@ -64,9 +52,6 @@ def infer_cell_size(groups):
 
 
 def create_sentence_grid(sent_map, cell_w, cell_h):
-    """
-    Create a fixed-position grid where each cell corresponds to a sentence.
-    """
     n_sent = len(SENTENCES)
     rows = math.ceil(n_sent / GRID_COLS)
 

@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""
-Regime-level statistical summary
-
-- Loads persona statistics
-- Validates required columns
-- Groups by regime
-- Computes mean, median, std, IQR
-- Outputs ONE tidy CSV with a `stat` column
-"""
-
 from __future__ import annotations
 
 import sys
@@ -73,14 +63,10 @@ def validate_columns(df: pd.DataFrame, required: List[str]) -> None:
 
 
 def iqr(series: pd.Series) -> float:
-    """Interquartile range."""
     return series.quantile(0.75) - series.quantile(0.25)
 
 
 def with_stat(df_stat: pd.DataFrame, stat_name: str) -> pd.DataFrame:
-    """
-    Add a `stat` column and reset index so we can stack tables row-wise.
-    """
     out = df_stat.copy()
     out["stat"] = stat_name
     return out.reset_index()
