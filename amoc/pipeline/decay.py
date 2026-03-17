@@ -63,66 +63,26 @@ class Decay:
                     edge.active = False
 
     def apply_semantic_edge_decay(self) -> None:
-        # Get all active edges that are candidates for decay
-        decay_candidates = []
-        candidate_strings = []
-        edge_to_triplet = {}
-
-        for edge in self._graph.edges:
-            if edge.created_at_sentence == self._current_sentence_index:
-                continue
-            if edge.asserted_this_sentence or edge.reactivated_this_sentence:
-                continue
-
-            # Format for LLM
-            triplet = f"({edge.source_node.get_text_representer()}, {edge.label}, {edge.dest_node.get_text_representer()})"
-            candidate_strings.append(triplet)
-            decay_candidates.append(edge)
-            edge_to_triplet[edge] = triplet
-
+        # Step 1: Collect candidates
+        decay_candidates, edge_to_triplet, candidate_strings = (
+            self.collect_decay_candidates()
+        )
         if not decay_candidates:
             return
 
-        # Build story context (last few sentences)
-        story_context = self._get_story_context() if self._get_story_context else ""
-
-        # Get current sentence text
-        current_sentence = self._current_sentence_text
-
-        if not current_sentence:
-            logging.warning("SEMANTIC_DECAY: No current sentence text, skipping")
+        # Step 2: Get LLM scores
+        scores, reasoning = self.get_decay_scores(candidate_strings)
+        if scores is None:
             self.apply_fallback_decay(decay_candidates)
             return
-
-        # Call LLM to evaluate narrative relevance
-        try:
-            result = self._llm.check_narrative_relevance(
-                story_context=story_context,
-                current_sentence=current_sentence,
-                active_triplets="\n".join(candidate_strings),
-                persona=self._persona,
-            )
-        except Exception as e:
-            logging.error(f"SEMANTIC_DECAY: LLM call failed: {e}")
-            self.apply_fallback_decay(decay_candidates)
-            return
-
-        if not result or "scores" not in result:
-            # Fallback to simple decay
-            self.apply_fallback_decay(decay_candidates)
-            return
-
-        # Get scores from LLM response
-        scores = result.get("scores", {})
-        reasoning = result.get("reasoning", "")
 
         if reasoning:
             logging.info(f"llm reasoning for decay: {reasoning}")
 
-        # Build connectivity map to check critical edges
+        # Step 3: Build connectivity map
         connectivity_map = self.build_connectivity_map()
 
-        # Track stats for logging
+        # Step 4: Process each edge
         stats = {
             "reinforce": 0,
             "maintain": 0,
@@ -133,50 +93,24 @@ class Decay:
 
         for edge in decay_candidates:
             triplet_str = edge_to_triplet[edge]
-            score = scores.get(triplet_str, 2)  # Default to maintain (2)
-
-            # Ensure score is within 0-3 range
-            try:
-                score = int(score)
-                if score < 0:
-                    score = 0
-                elif score > 3:
-                    score = 3
-            except:
-                score = 2
-
-            # Check if this edge is critical for connectivity
+            score = self.normalize_score(scores.get(triplet_str, 2))
             is_critical = not self.can_remove_edge(edge, connectivity_map)
 
-            if score == 0:  # COMPLETELY IRRELEVANT - immediate removal
+            if score == 0:
                 if is_critical:
-                    # Can't remove — treat as score 1 instead
                     edge.reduce_visibility()
                     stats["protected"] += 1
-                    # logging.info(
-                    #     f"SEMANTIC_DECAY: Protected connectivity-critical edge {triplet_str} "
-                    #     f"(score=0 but would break graph, treating as score 1)"
-                    # )
                 else:
-                    # Immediate deactivation
                     edge.visibility_score = 0
                     edge.active = False
                     stats["decay_immediate"] += 1
-                    # logging.info(
-                    #     f"SEMANTIC_DECAY: Immediately removed edge {triplet_str} (score=0)"
-                    # )
 
-            elif score == 1:  # LOW RELEVANCE - gradual decay
+            elif score == 1:
                 if is_critical:
-                    # Double decay but keep
                     edge.reduce_visibility()
                     edge.reduce_visibility()
                     stats["protected"] += 1
-                    # logging.info(
-                    #     f"SEMANTIC_DECAY: Kept connectivity-critical edge {triplet_str} (would break graph)"
-                    # )
                 else:
-                    # Safe to decay fully
                     edge.reduce_visibility()
                     if edge.visibility_score <= 0:
                         edge.visibility_score = 0
@@ -184,30 +118,24 @@ class Decay:
                     stats["decay"] += 1
                     logging.info(f"decayed edge {triplet_str} (score=1)")
 
-            elif score == 2:  # MEDIUM RELEVANCE - maintain
-                # Decay faster
+            elif score == 2:
                 edge.visibility_score = max(0, edge.visibility_score - 1)
                 stats["maintain"] += 1
-                logging.info(f"maintained edge {triplet_str} (score=2)")
 
-            elif score == 3:  # HIGH RELEVANCE - reinforce
-                # Reactivate to full visibility
+            elif score == 3:
                 edge.visibility_score = min(
                     edge.visibility_score + 1, self._edge_visibility
                 )
                 edge.mark_as_reactivated(reset_score=False)
                 stats["reinforce"] += 1
-                logging.info(
-                    f"reactivated edge {triplet_str} to full visibility (score=3)"
-                )
 
             else:
-                # Fallback for any other values
                 edge.reduce_visibility()
                 logging.info(
                     f"fallback decay for edge {triplet_str} (unexpected score={score})"
                 )
 
+        # Step 5: Log stats
         logging.info(
             f"decay stats - reinforce: {stats['reinforce']}, "
             f"maintain: {stats['maintain']}, gradual decay: {stats['decay']}, "
@@ -215,7 +143,126 @@ class Decay:
         )
 
         self.reinforce_multi_hop_chains()
-        self.prune_inactive_edgeless_nodes()
+
+    def collect_decay_candidates(self):
+        decay_candidates = []
+        candidate_strings = []
+        edge_to_triplet = {}
+
+        for edge in self._graph.edges:
+            if edge.created_at_sentence == self._current_sentence_index:
+                continue
+            if edge.asserted_this_sentence or edge.reactivated_this_sentence:
+                continue
+
+            triplet = f"({edge.source_node.get_text_representer()}, {edge.label}, {edge.dest_node.get_text_representer()})"
+            candidate_strings.append(triplet)
+            decay_candidates.append(edge)
+            edge_to_triplet[edge] = triplet
+
+        return decay_candidates, edge_to_triplet, candidate_strings
+
+    def get_decay_scores(self, candidate_strings):
+        story_context = self._get_story_context() if self._get_story_context else ""
+        current_sentence = self._current_sentence_text
+
+        if not current_sentence:
+            logging.warning("SEMANTIC_DECAY: No current sentence text, skipping")
+            return None, None
+
+        try:
+            result = self._llm.check_narrative_relevance(
+                story_context=story_context,
+                current_sentence=current_sentence,
+                active_triplets="\n".join(candidate_strings),
+                persona=self._persona,
+            )
+        except Exception as e:
+            logging.error(f"SEMANTIC_DECAY: LLM call failed: {e}")
+            return None, None
+
+        if not result or "scores" not in result:
+            return None, None
+
+        return result.get("scores", {}), result.get("reasoning", "")
+
+    def normalize_score(self, score):
+        try:
+            score = int(score)
+            if score < 0:
+                return 0
+            if score > 3:
+                return 3
+            return score
+        except:
+            return 2
+
+    def apply_pruning(self, prev_sentences, target_size=5):
+        # Get all active edges
+        all_active_triplets = []
+        edge_to_obj = {}
+
+        for edge in self._graph.edges:
+            if edge.active:
+                triplet = (
+                    edge.source_node.get_text_representer(),
+                    edge.label,
+                    edge.dest_node.get_text_representer(),
+                )
+                triplet_str = f"({triplet[0]}, {triplet[1]}, {triplet[2]})"
+                all_active_triplets.append(triplet)
+                edge_to_obj[triplet_str] = edge
+
+        # Don't prune if already small enough
+        if len(all_active_triplets) <= target_size:
+            return
+
+        logging.info(f"current size {len(all_active_triplets)}, target {target_size}")
+
+        # Get story context
+        story_context = self._get_story_context() if self._get_story_context else ""
+        current_sentence = self._current_sentence_text
+
+        # Format for LLM
+        triplet_strings = [f"({s}, {r}, {o})" for s, r, o in all_active_triplets]
+
+        # Call LLM pruner (reuse your existing prompt)
+        result = self._llm.prune_irrelevant_triplets_by_narrative(
+            story_context=story_context,
+            current_sentence=current_sentence,
+            active_triplets="\n".join(triplet_strings),
+            persona=self._persona,
+        )
+
+        if not result or "to_keep" not in result:
+            logging.warning("pruning failed, keep current graph")
+            return
+
+        # Get kept triplets
+        keep_set = set(result["to_keep"])
+
+        # Build connectivity map for protection
+        connectivity_map = self.build_connectivity_map()
+
+        # Deactivate pruned edges (with connectivity protection)
+        deactivated = 0
+        protected = 0
+
+        for triplet_str, edge in edge_to_obj.items():
+            if triplet_str not in keep_set:
+                # Check if removing would break connectivity
+                if self.can_remove_edge(edge, connectivity_map):
+                    edge.active = False
+                    edge.visibility_score = 0
+                    deactivated += 1
+                else:
+                    protected += 1
+                    # Still decay it a bit
+                    edge.reduce_visibility()
+
+        logging.info(
+            f"pruning deactivated {deactivated} edges, protected {protected} critical edges"
+        )
 
     def prune_inactive_edgeless_nodes(self) -> List["Node"]:
         newly_dangling = []
@@ -846,3 +893,13 @@ class Decay:
         active_nodes = {n for n in self._graph.nodes if n.active}
         active_nodes |= self._get_explicit_nodes()
         return any(lemma in n.lemmas for n in active_nodes)
+
+    def post_sentence_cleanup(self, prev_sentences):
+        # First run semantic decay
+        self.apply_semantic_edge_decay()
+
+        # Then aggressive pruning
+        self.apply_pruning(prev_sentences, target_size=15)
+
+        # Finally node cleanup
+        self.prune_inactive_edgeless_nodes()

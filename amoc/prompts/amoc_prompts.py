@@ -591,39 +591,19 @@ Current sentence:
 Active relationships:
 {active_triplets}
 
-KEEP ONLY relationships that meet ALL these criteria:
-1. DIRECT NARRATIVE RELEVANCE:
-   - Directly involves main characters (Charlemagne, his family, kingdoms, key figures)
-   - Directly mentioned or clearly implied in the CURRENT sentence
-   - Forms a critical bridge that would disconnect the graph if removed
+KEEP ONLY relationships that are ABSOLUTELY NECESSARY:
+1. Directly involves main characters in the CURRENT sentence
+2. Forms a CRITICAL BRIDGE that connects important concepts
+3. Is semantically complete (subject + verb + noun object)
 
-2. SEMANTICALLY COMPLETE:
-   - Subject + action verb + specific noun object (e.g., "charlemagne - conquers - saxons")
-   - Subject + is + adjective describing a key attribute (e.g., "charlemagne - is - powerful")
-   - Must have both subject and object as NOUNS or PROPER NOUNS (not vague concepts)
+IMPORTANT - CONNECTIVITY RULE:
+If removing a relationship would leave a concept COMPLETELY ISOLATED (no other connections), you MUST keep at least one relationship for that concept, even if it's not ideal.
 
-REMOVE if ANY of these apply:
-1. SEMANTICALLY INCOMPLETE:
-   - Action verb + adjective without noun (e.g., "has - regal", "prefers - simple", "wears - traditional")
-   - Any triplet where the object is an adjective and the verb is not a copula (is/was/are)
-
-2. VAGUE OR GENERIC RELATIONS:
-   - "relates_to", "associated_with", "connected_to", "involves", "concerns", "has"
-   - Any relation that doesn't specify HOW two concepts are connected
-
-3. SEMANTIC DUPLICATES:
-   - When multiple triplets express the same meaning, KEEP ONLY ONE
-   - Prefer "is + adjective" over "has + noun" (e.g., keep "is skilled", remove "has skill")
-   - Remove any triplet that is redundant with another
-
-4. WEAKLY CONNECTED:
-   - Triplets where neither subject nor object appears in the current sentence
-   - Minor details about secondary characters not relevant to current plot
-
-5. AMBIGUOUS OR ILLOGICAL:
-   - Triplets that don't make logical sense (e.g., "ability - enables - famous")
-   - Relations missing required prepositions
-   - Generic subjects like "thing", "something", "it" performing actions
+REMOVE everything else, including:
+- Background information not relevant to current events
+- Inferred attributes that aren't essential
+- Redundant or duplicate relationships
+- Vague or incomplete triples
 
 DECISION EXAMPLES:
 Sentence 1: "Charlemagne conquered the Saxons."

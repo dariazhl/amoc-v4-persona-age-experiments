@@ -425,7 +425,9 @@ class AMoCv4:
                 self._sentence_processing_ops.run_post_processing(
                     explicit_nodes=self._explicit_nodes_current_sentence,
                     carryover_nodes=self._carryover_nodes_current_sentence,
-                    apply_edge_decay_fn=lambda: self._activation_ops.apply_semantic_edge_decay(),
+                    apply_edge_decay_fn=lambda: self._activation_ops.post_sentence_cleanup(
+                        prev_sentences
+                    ),
                     enforce_node_limit_fn=lambda: self._activation_ops.enforce_node_limit(),
                 )
 
@@ -455,6 +457,7 @@ class AMoCv4:
             )
             return True
 
+        # TODO: revert repair pipeline if it breaks
         # Run repair pipeline before checking for dangling nodes
         if self._per_sentence_view is not None:
             self._connectivity_ops.run_repair_pipeline(

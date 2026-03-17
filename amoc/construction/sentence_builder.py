@@ -379,7 +379,6 @@ class SentenceGraphBuilder:
                 edge.mark_as_current_sentence(reset_score=True)
 
         self._restrict_active_nodes_fn(list(explicit_nodes_current_sentence))
-
         return (
             nodes_before_sentence,
             False,
@@ -575,7 +574,6 @@ class SentenceGraphBuilder:
             added_edges,
         )
         self._propagate_activation_from_edges_fn()
-        # deactivate nodes that are not connected to the active graph and are not explicit
         self._restrict_active_nodes_fn(list(explicit_nodes_current_sentence))
 
         return (nodes_before_sentence, False)
@@ -680,49 +678,6 @@ class SentenceGraphBuilder:
 
         return None
 
-    # Check if a triple is narratively relevant to the story using LLM only
-    def prune_irrelevant_triplets_wrapper(self, active_triplets, prev_sentences):
-        if len(active_triplets) <= 3:
-            return active_triplets
-
-        # Format triplets for the prompt
-        triplet_strings = [f"({s}, {r}, {o})" for s, r, o in active_triplets]
-
-        # Get story context from last 3 sent
-        story_context = " ".join(prev_sentences[-3:]) if prev_sentences else ""
-
-        result = self.llm.prune_irrelevant_triplets_by_narrative(
-            story_context=story_context,
-            current_sentence=self._current_sentence_text,
-            active_triplets="\n".join(triplet_strings),
-            persona=self.persona,
-        )
-
-        if not result or "to_remove" not in result:
-            return active_triplets
-
-        # Build connectivity map before removing
-        node_connections = {}
-        for s, r, o in active_triplets:
-            node_connections[s] = node_connections.get(s, 0) + 1
-            node_connections[o] = node_connections.get(o, 0) + 1
-
-        # Only remove edges that won't isolate nodes
-        to_keep = []
-        removal_set = set(result["to_remove"])
-
-        for triplet in active_triplets:
-            triplet_str = f"({triplet[0]}, {triplet[1]}, {triplet[2]})"
-            if triplet_str in removal_set:
-                s, r, o = triplet
-                # Check if removing would isolate a node
-                if node_connections.get(s, 0) <= 1 or node_connections.get(o, 0) <= 1:
-                    to_keep.append(triplet)
-            else:
-                to_keep.append(triplet)
-
-        return to_keep
-
     # Take the raw list of triples returned by the LLM, process them and add edges to graph
     def add_edges_from_llm(
         self,
@@ -800,7 +755,7 @@ class SentenceGraphBuilder:
             validated_triples, explicit_node_texts
         )
 
-        # step 4: process each triple
+        # step 5: process each triple
         for subj, rel, obj in prioritized_triples:
             # Use raw strings directly – node lookup will handle them
             subj_final, obj_final = subj, obj
@@ -899,42 +854,6 @@ class SentenceGraphBuilder:
                 logging.warning(
                     f"FS_DEBUG: edge NOT added: {source_node} --{edge_label}--> {dest_node}"
                 )
-
-        # check for narrative flow and remove irrelevant edges
-        if added_edges and len(added_edges) > 3:
-            # Get ALL active edges (not just newly added ones)
-            all_active_triplets = []
-            for edge in self.graph.edges:
-                if edge.active:
-                    all_active_triplets.append(
-                        (
-                            edge.source_node.get_text_representer(),
-                            edge.label,
-                            edge.dest_node.get_text_representer(),
-                        )
-                    )
-
-            if all_active_triplets:
-                # Get pruned list from LLM
-                pruned_triplets = self.prune_irrelevant_triplets_wrapper(
-                    all_active_triplets, prev_sentences
-                )
-
-                # Convert to set for O(1) lookup
-                pruned_set = set(pruned_triplets)
-
-                # Deactivate edges that were pruned
-                for edge in self.graph.edges:
-                    if edge.active:
-                        triplet = (
-                            edge.source_node.get_text_representer(),
-                            edge.label,
-                            edge.dest_node.get_text_representer(),
-                        )
-                        if triplet not in pruned_set:
-                            edge.active = False
-                            edge.visibility_score = 0
-                            logging.info(f"pruned edge: {triplet}")
 
         return added_edges
 
