@@ -595,70 +595,61 @@ Current sentence:
 Here are the active relationships in the reader's memory:
 {active_triplets}
 
-KEEP if:
+KEEP ONLY if they meet MULTIPLE of these criteria:
 
-1. SEMANTICALLY COMPLETE RELATIONSHIPS:
-   - Subject + action verb + noun object (e.g., "charlemagne - wears - attire")
-   - Subject + is + adjective (e.g., "charlemagne - is - powerful")
-   - Subject + verb + preposition + noun (e.g., "charlemagne - travels_to - aachen")
+1. DIRECT NARRATIVE RELEVANCE:
+   - Directly involves main characters (Charlemagne, his family, kingdoms, key figures)
+   - Directly mentioned or clearly implied in the CURRENT sentence
+   - Forms a critical bridge that would disconnect the graph if removed
 
-2. MAIN CHARACTER CONNECTIONS:
-   - Involves main characters (Charlemagne, his family, kingdoms, key figures)
-   - Describes their actions, states, or relationships
+2. SEMANTICALLY COMPLETE:
+   - Subject + action verb + specific noun object (e.g., "charlemagne - conquers - saxons")
+   - Subject + is + adjective describing a key attribute (e.g., "charlemagne - is - powerful")
+   - Must have both subject and object as NOUNS or PROPER NOUNS (not vague concepts)
 
-3. BRIDGING EDGES ARE CRITICAL:
-   - Edges that connect inferred concepts to explicit nodes must be preserved
-   - These enable the entire inference structure
-
-4. CONTEXTUALLY GROUNDED:
-   - Relationships mentioned or clearly implied in recent sentences
-   - Provides context needed to understand the current sentence
-
-REMOVE if:
+REMOVE if ANY of these apply:
 
 1. SEMANTICALLY INCOMPLETE:
-   - Action verb + adjective without noun (e.g., "has - regal", "prefers - simple", "wears - traditional", "finds - interesting")
-   - These are grammatically incomplete and add confusion, not meaning
-   - Exception: If an incomplete triple is part of a larger pattern that can be corrected, flag it but don't remove the corrected version
+   - Action verb + adjective without noun (e.g., "has - regal", "prefers - simple", "wears - traditional")
+   - Any triplet where the object is an adjective and the verb is not a copula (is/was/are)
 
-2. VAGUE OR GENERIC RELATIONS
-   - "relates_to", "associated_with", "connected_to" without specific meaning
-   - "involves", "concerns", "has" when used generically
-  
+2. VAGUE OR GENERIC RELATIONS:
+   - "relates_to", "associated_with", "connected_to", "involves", "concerns", "has"
+   - Any relation that doesn't specify HOW two concepts are connected
+
 3. SEMANTIC DUPLICATES:
-   - When both (charlemagne, is, skilled) AND (charlemagne, has, skill) exist → KEEP only "is skilled", REMOVE "has skill"
-   - When both (strategy, is, strategic) AND (strategy, has, strategy) exist → KEEP only "is strategic"
-   - When both (x, is, adjective) AND (x, has, noun_form) describe the same attribute → KEEP "is + adjective", REMOVE "has + noun"
+   - When multiple triplets express the same meaning, KEEP ONLY ONE
+   - Prefer "is + adjective" over "has + noun" (e.g., keep "is skilled", remove "has skill")
+   - Remove any triplet that is redundant with another
 
-4. SEMANTICALLY AMBIGUOUS OR ILLOGICAL:
-   - Taken together, the triplet's subject, relation and object do not make sense logically e.g. "ability" - "enables" - "famous" OR "charlemagne" - "wears at" - "festival"
-   - The relation misses a copular verb where needed
-   - These add confusion, not meaning
-   - But if they can be corrected to fit into a chain, note that in reasoning
+4. WEAKLY CONNECTED:
+   - Triplets where neither subject nor object appears in the current sentence
+   - Minor details about secondary characters not relevant to current plot
+
+5. AMBIGUOUS OR ILLOGICAL:
+   - Triplets that don't make logical sense (e.g., "ability - enables - famous")
+   - Relations missing required prepositions
+   - Generic subjects like "thing", "something", "it" performing actions
 
 DECISION EXAMPLES:
 
-Sentence 1: "Charlemagne preferred simple living."
-Active triplets after sentence 1:
-- (charlemagne, preferred, simple) - REMOVE (incomplete - what did he prefer?)
-- (charlemagne, is, simple) - KEEP (valid property)
-
-Sentence 2: "He wore traditional attire."
+Sentence 1: "Charlemagne conquered the Saxons."
 Active triplets:
-- (charlemagne, wore, traditional) - REMOVE (incomplete - wore WHAT?)
-- (charlemagne, wore, attire) - KEEP (connects to main character)
-- (attire, is, traditional) - KEEP (complete property)
+- (charlemagne, conquered, saxons) - KEEP (directly in current sentence)
+- (charlemagne, is, king) - REMOVE (background, not in current sentence)
+- (saxons, are, fierce) - REMOVE (inferred, not in current sentence)
 
-Sentence 3: "The court employed scholars who wrote manuscripts."
+Sentence 2: "He was a powerful ruler."
 Active triplets:
-- (charlemagne, has, court) - KEEP (bridges to explicit node)
-- (court, employs, scholars) - KEEP (bridging edge - connects explicit to inferred)
-- (scholars, write, manuscripts) - KEEP (completes the inference chain)
+- (charlemagne, is, powerful) - KEEP (directly in current sentence)
+- (charlemagne, conquered, saxons) - REMOVE (not in current sentence)
+- (charlemagne, has, army) - REMOVE (not mentioned, inferred)
 
-Sentence 4: "Charlemagne was skilled in many things."
-Active triplets (with duplicates):
-- (charlemagne, is, skilled) - KEEP (preferred form)
-- (charlemagne, has, skill) - REMOVE (semantic duplicate)
+Sentence 3: "The court scholars wrote manuscripts."
+Active triplets:
+- (court, employs, scholars) - KEEP (bridges to current)
+- (scholars, write, manuscripts) - KEEP (directly in current sentence)
+- (charlemagne, has, court) - REMOVE (not mentioned in current sentence)
 
 Return a JSON object with this exact structure:
 {{
@@ -667,6 +658,6 @@ Return a JSON object with this exact structure:
         "(subject2, relation2, object2)",
         ...
     ],
-    "reasoning": "Explain key pruning decisions, noting bridging edges protected and semantic duplicates resolved"
+    "reasoning": "Explain pruning decisions, noting what was removed and why"
 }}
 """
