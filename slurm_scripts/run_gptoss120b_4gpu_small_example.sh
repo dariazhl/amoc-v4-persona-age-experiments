@@ -36,7 +36,7 @@ fi
 
 INPUT_FILE="${CHUNK_FILES[$SLURM_ARRAY_TASK_ID]}"
 
-echo "Running GPT-OSS 12OB for a small example""
+echo "Running GPT-OSS 12OB for a small example"
 echo "SLURM ARRAY TASK ID: ${SLURM_ARRAY_TASK_ID}"
 echo "Processing chunk file: ${INPUT_FILE}"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
