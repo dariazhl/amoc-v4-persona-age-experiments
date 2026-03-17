@@ -452,7 +452,6 @@ Given the sentence:
 Candidate triple: ({subject}, {relation}, {object})
 
 VALIDATION RULES (apply in order):
-
 1. RELATION MUST BE A VERB:
    The relation must be a verb or verb phrase.
    Valid: "wrote", "is", "wears", "takes_place_at"
@@ -478,7 +477,6 @@ VALIDATION RULES (apply in order):
    Invalid: (charlemagne, related to, saxons)
 
 EXAMPLES:
-
 Input: (charlemagne, dresses in, beautiful)
 Output: {{"valid": false, "reason": "'dresses in' requires a noun object (what does he wear?)", "corrected_triple": null}}
 
@@ -547,7 +545,6 @@ SCORE 0 - COMPLETELY IRRELEVANT (Remove immediately)
 - Must check connectivity protection - only remove if node remains connected
 
 CRITICAL RULES:
-
 1. CONTEXT AWARENESS:
    - A triple's score can CHANGE based on later context
    - Example: (pride, relates_to, ability) in sentence 1 with no context = score 1
@@ -560,7 +557,6 @@ CRITICAL RULES:
    - Check if the node has other connections before marking for removal
 
 SCORING EXAMPLES:
-
 Context: First sentence "Charlemagne preferred simple living."
 Active triplets:
 - (charlemagne, preferred, simple) → SCORE 1 (incomplete - preferred WHAT?)
@@ -584,7 +580,7 @@ Return a JSON object with:
 }}
 """
 
-PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE = """You are maintaining a clean knowledge graph of a story. Your task is to identify which relationships are essential to keep and which are irrelevant and can be removed.
+PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE = """You are maintaining a clean knowledge graph of a story. Your task is to identify ONLY the MOST ESSENTIAL relationships.
 
 Story so far:
 {story_context}
@@ -592,11 +588,10 @@ Story so far:
 Current sentence:
 {current_sentence}
 
-Here are the active relationships in the reader's memory:
+Active relationships:
 {active_triplets}
 
-KEEP ONLY if they meet MULTIPLE of these criteria:
-
+KEEP ONLY relationships that meet ALL these criteria:
 1. DIRECT NARRATIVE RELEVANCE:
    - Directly involves main characters (Charlemagne, his family, kingdoms, key figures)
    - Directly mentioned or clearly implied in the CURRENT sentence
@@ -608,7 +603,6 @@ KEEP ONLY if they meet MULTIPLE of these criteria:
    - Must have both subject and object as NOUNS or PROPER NOUNS (not vague concepts)
 
 REMOVE if ANY of these apply:
-
 1. SEMANTICALLY INCOMPLETE:
    - Action verb + adjective without noun (e.g., "has - regal", "prefers - simple", "wears - traditional")
    - Any triplet where the object is an adjective and the verb is not a copula (is/was/are)
@@ -632,7 +626,6 @@ REMOVE if ANY of these apply:
    - Generic subjects like "thing", "something", "it" performing actions
 
 DECISION EXAMPLES:
-
 Sentence 1: "Charlemagne conquered the Saxons."
 Active triplets:
 - (charlemagne, conquered, saxons) - KEEP (directly in current sentence)

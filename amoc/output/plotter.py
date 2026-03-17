@@ -657,7 +657,7 @@ class GraphPlotter:
         if not all_triplets:  # Need at least some triplets to show
             return None
 
-        paper_dir = os.path.join(output_dir, "amoc_paper") if output_dir else None
+        paper_dir = os.path.join(output_dir, "cumulative_graph") if output_dir else None
         if paper_dir:
             os.makedirs(paper_dir, exist_ok=True)
 

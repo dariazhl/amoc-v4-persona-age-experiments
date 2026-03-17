@@ -24,9 +24,7 @@ class ReverseGraphPlotter:
         png_paths = []
         total_states = len(graph_states)
 
-        # Create mode-specific subdirectory (only paper mode supported)
-        mode_dir = os.path.join(self.output_dir, "paper")
-        os.makedirs(mode_dir, exist_ok=True)
+        mode_dir = self.output_dir
 
         # Plot in reverse order (from last to first)
         for idx, state in enumerate(reversed(graph_states)):
@@ -52,16 +50,14 @@ class ReverseGraphPlotter:
             if "salient_nodes" in state:
                 state_nodes.update(state["salient_nodes"])
             if "inactive_nodes" in state:
-                # Filter inactive nodes to only those that were ever in working memory
-                # to prevent nodes from inactive edges (never in WM) appearing as danglers
-                ever_in_wm = set(state.get("ever_in_wm", []))
-                if ever_in_wm:
-                    filtered_inactive = [
-                        n for n in state["inactive_nodes"] if n in ever_in_wm
-                    ]
-                    state_nodes.update(filtered_inactive)
-                else:
-                    state_nodes.update(state["inactive_nodes"])
+                # TODO: REVERT IF IT BREAKS
+                state_nodes.update(state["inactive_nodes"])
+
+            # Filter out nodes that were never in working memory to prevent
+            # dangling nodes from inactive edges appearing in reverse plots
+            ever_in_wm = set(state.get("ever_in_wm", []))
+            if ever_in_wm:
+                state_nodes = {n for n in state_nodes if n in ever_in_wm}
 
             # Filter positions to only include nodes that exist in this state
             filtered_positions = {

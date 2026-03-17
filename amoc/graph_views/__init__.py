@@ -7,7 +7,6 @@ from amoc.graph_views.per_sentence import (
     PerSentenceGraphBuilder,
     build_per_sentence_graph,
 )
-from amoc.graph_views.plot_filtering import PlotFiltering
 
 __all__ = [
     "ActiveGraph",
@@ -17,5 +16,4 @@ __all__ = [
     "PerSentenceGraph",
     "PerSentenceGraphBuilder",
     "build_per_sentence_graph",
-    "PlotFiltering",
 ]

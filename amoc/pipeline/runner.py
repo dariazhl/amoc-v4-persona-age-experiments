@@ -177,18 +177,19 @@ def process_persona_csv(
     # 3. Process per model
     for model_name, engine in engines.items():
         safe_model_name = model_name.replace(":", "-").replace("/", "-")
-        paper_sentence_dir = output_dir / "paper_sentence"
-        paper_sentence_dir.mkdir(parents=True, exist_ok=True)
+        triplets_base = output_dir / "triplets"
+        triplets_per_sentence_dir = triplets_base / "triplets_per_sentence"
+        triplets_per_sentence_dir.mkdir(parents=True, exist_ok=True)
         sentence_output_filename = (
             f"model_{safe_model_name}_paper_sentence_triplets_{short_filename}"
         )
-        sentence_output_path = paper_sentence_dir / sentence_output_filename
-        paper_final_dir = output_dir / "paper_final"
-        paper_final_dir.mkdir(parents=True, exist_ok=True)
+        sentence_output_path = triplets_per_sentence_dir / sentence_output_filename
+        triplet_final_state_dir = triplets_base / "triplets_final_state"
+        triplet_final_state_dir.mkdir(parents=True, exist_ok=True)
         final_output_filename = (
             f"model_{safe_model_name}_paper_final_triplets_{short_filename}"
         )
-        final_output_path = paper_final_dir / final_output_filename
+        final_output_path = triplet_final_state_dir / final_output_filename
 
         if checkpoint:
             ckpt_path = get_checkpoint_path(
