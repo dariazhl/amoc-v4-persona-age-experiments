@@ -43,8 +43,6 @@ def wire_core_dependencies(core) -> None:
 
     core._triplet_ops = TripletRecorder(
         graph_ref=core.graph,
-        cumulative_graph_ref=core.cumulative_graph,
-        active_graph_ref=core.active_graph,
         triplet_intro_ref=core._triplet_intro,
     )
     core._edge_ops = EdgeAdmission(
@@ -146,11 +144,6 @@ def wire_core_dependencies(core) -> None:
         record_edge_fn=lambda e, i: core._edge_ops.record_edge_in_graphs(
             edge=e,
             sentence_idx=i,
-            cumulative_graph=core.cumulative_graph,
-            active_graph=core.active_graph,
-            cumulative_triplet_records=core._cumulative_triplet_records,
-            cumulative_graph_builder=core.cumulative_graph_builder,
-            active_graph_builder=core.active_graph_builder,
         ),
         persona=core.persona,
     )

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from amoc.core.graph import Graph
     from amoc.core.node import Node
     from amoc.core.edge import Edge
-    from amoc.graph_views.per_sentence import PerSentenceGraph
+    from amoc.runtime.per_sentence import PerSentenceGraph
     from spacy.tokens import Span
 
 

@@ -7,14 +7,10 @@ from spacy.tokens import Span
 
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
 from amoc.core import Graph, Node, Edge, NodeType, NodeSource
-from amoc.graph_views.per_sentence import (
+from amoc.runtime.per_sentence import (
     PerSentenceGraph,
     build_per_sentence_graph,
 )
-from amoc.graph_views.active import ActiveGraph
-from amoc.graph_views.cumulative import CumulativeGraph
-from amoc.graph_views.active import ActiveGraphBuilder
-from amoc.graph_views.cumulative import CumulativeGraphBuilder
 from amoc.llm.vllm_client import VLLMClient
 from amoc.pipeline.wiring import wire_core_dependencies
 from amoc.config.constants import MAX_DISTANCE_FROM_ACTIVE_NODES
@@ -84,12 +80,7 @@ class AMoCv4:
         self.checkpoint = checkpoint
         self._current_sentence_text = ""
         self._current_sentence_index = None
-        self.cumulative_graph = CumulativeGraph()
-        self.active_graph = ActiveGraph()
-        self.cumulative_graph_builder = CumulativeGraphBuilder(self.cumulative_graph)
-        self.active_graph_builder = ActiveGraphBuilder(self.active_graph)
         self._triplet_intro = {}
-        self._cumulative_triplet_records = []
         self._per_sentence_view = None
         self._ever_admitted_nodes = set()
         self._layout_depth = 3
@@ -282,11 +273,6 @@ class AMoCv4:
         self._edge_ops.record_edge_in_graphs(
             edge=edge,
             sentence_idx=sentence_idx,
-            cumulative_graph=self.cumulative_graph,
-            active_graph=self.active_graph,
-            cumulative_triplet_records=self._cumulative_triplet_records,
-            cumulative_graph_builder=self.cumulative_graph_builder,
-            active_graph_builder=self.active_graph_builder,
         )
 
     def plot_graph_snapshot_wrapper(
@@ -727,7 +713,6 @@ class AMoCv4:
             sentence_counter += 1
             original_text = text_prefix_pattern.sub("", original_text)
             resolved_text = text_prefix_pattern.sub("", resolved_text)
-            self.active_graph.reset()
             self._current_sentence_index = sentence_counter
 
             logging.info(

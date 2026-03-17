@@ -197,23 +197,29 @@ class Decay:
         except:
             return 2
 
+    # prune carryover nodes and inferred nodes
     def apply_pruning(self, prev_sentences, target_size=5):
         # Get all active edges
         all_active_triplets = []
         edge_to_obj = {}
 
+        # Track which nodes are explicit in current sentence
+        explicit_nodes = (
+            self._get_explicit_nodes()
+            if hasattr(self, "_get_explicit_nodes")
+            else set()
+        )
+        explicit_node_names = {node.get_text_representer() for node in explicit_nodes}
+
         for edge in self._graph.edges:
             if edge.active:
-                triplet = (
-                    edge.source_node.get_text_representer(),
-                    edge.label,
-                    edge.dest_node.get_text_representer(),
-                )
-                triplet_str = f"({triplet[0]}, {triplet[1]}, {triplet[2]})"
+                source_name = edge.source_node.get_text_representer()
+                dest_name = edge.dest_node.get_text_representer()
+                triplet = (source_name, edge.label, dest_name)
+                triplet_str = f"({source_name}, {edge.label}, {dest_name})"
                 all_active_triplets.append(triplet)
                 edge_to_obj[triplet_str] = edge
 
-        # Don't prune if already small enough
         if len(all_active_triplets) <= target_size:
             return
 
@@ -226,7 +232,7 @@ class Decay:
         # Format for LLM
         triplet_strings = [f"({s}, {r}, {o})" for s, r, o in all_active_triplets]
 
-        # Call LLM pruner (reuse your existing prompt)
+        # Call LLM
         result = self._llm.prune_irrelevant_triplets_by_narrative(
             story_context=story_context,
             current_sentence=current_sentence,
@@ -244,12 +250,26 @@ class Decay:
         # Build connectivity map for protection
         connectivity_map = self.build_connectivity_map()
 
-        # Deactivate pruned edges (with connectivity protection)
+        # Deactivate pruned edges with connectivity protection
         deactivated = 0
         protected = 0
+        explicit_protected = 0
 
         for triplet_str, edge in edge_to_obj.items():
             if triplet_str not in keep_set:
+                source_name = edge.source_node.get_text_representer()
+                dest_name = edge.dest_node.get_text_representer()
+
+                # Never prune edges involving explicit nodes
+                if (
+                    source_name in explicit_node_names
+                    or dest_name in explicit_node_names
+                ):
+                    explicit_protected += 1
+                    # Still decay it a bit
+                    edge.reduce_visibility()
+                    continue
+
                 # Check if removing would break connectivity
                 if self.can_remove_edge(edge, connectivity_map):
                     edge.active = False
@@ -261,7 +281,9 @@ class Decay:
                     edge.reduce_visibility()
 
         logging.info(
-            f"pruning deactivated {deactivated} edges, protected {protected} critical edges"
+            f"pruning deactivated {deactivated} edges, "
+            f"protected {protected} critical edges, "
+            f"protected {explicit_protected} explicit edges"
         )
 
     def prune_inactive_edgeless_nodes(self) -> List["Node"]:
@@ -297,39 +319,61 @@ class Decay:
                 connectivity.setdefault(edge.dest_node, set()).add(edge.source_node)
         return connectivity
 
+    # Check if edge can be removed without disconnecting the graph using BFS
     def can_remove_edge(self, edge, connectivity_map) -> bool:
         source = edge.source_node
         dest = edge.dest_node
 
-        # If either node has multiple connections, safe to remove
-        if (
-            len(connectivity_map.get(source, set())) > 1
-            and len(connectivity_map.get(dest, set())) > 1
-        ):
-            return True
+        # Fast path: if either node would become isolated, definitely can't remove
+        source_neighbors = connectivity_map.get(source, set())
+        dest_neighbors = connectivity_map.get(dest, set())
 
-        # If this is the only connection for either node, check if there's an alternative path
-        if (
-            len(connectivity_map.get(source, set())) == 1
-            or len(connectivity_map.get(dest, set())) == 1
-        ):
+        if len(source_neighbors) == 0 or len(dest_neighbors) == 0:
+            return False  # Should never happen with active edges
 
-            # Temporarily remove edge and check if still connected
-            # This is a simplified check - you might want to use BFS
-            source_has_other = len(connectivity_map.get(source, set()) - {dest}) > 0
-            dest_has_other = len(connectivity_map.get(dest, set()) - {source}) > 0
+        # If both nodes have multiple connections, check if there's an alternative path
+        if len(source_neighbors) > 1 and len(dest_neighbors) > 1:
+            # Do BFS to see if source can reach dest without this edge
+            return self.has_alternative_path(source, dest, edge, connectivity_map)
 
-            return source_has_other and dest_has_other
+        # If one node has only this connection, check if removing would isolate it
+        if len(source_neighbors) == 1 and dest not in source_neighbors:
+            return False  # This edge IS the only connection for source
+        if len(dest_neighbors) == 1 and source not in dest_neighbors:
+            return False  # This edge IS the only connection for dest
 
-        return False
+        # For other cases, do BFS to be sure
+        return self.has_alternative_path(source, dest, edge, connectivity_map)
 
-    def calculate_inference_boost(self, edge) -> int:
-        # deprecated
-        return 0
+    def has_alternative_path(
+        self, source, dest, edge_to_remove, connectivity_map
+    ) -> bool:
+        # Build a temporary connectivity map without this edge
+        temp_map = {}
+        for node, neighbors in connectivity_map.items():
+            if node == source:
+                temp_map[node] = {n for n in neighbors if n != dest}
+            elif node == dest:
+                temp_map[node] = {n for n in neighbors if n != source}
+            else:
+                temp_map[node] = set(neighbors)
 
-    def identify_hub_nodes(self) -> Set:
-        # deprecated
-        return set()
+        # BFS from source to dest
+        visited = set()
+        queue = deque([source])
+        visited.add(source)
+
+        while queue:
+            current = queue.popleft()
+            if current == dest:
+                return True  # Found alternative path - safe to remove
+
+            for neighbor in temp_map.get(current, set()):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+
+        return False  # No alternative path - edge is critical
 
     def apply_fallback_decay(self, edges):
         for edge in edges:

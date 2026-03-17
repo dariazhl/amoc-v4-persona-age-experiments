@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Optional, List, Tuple, Any
+from typing import TYPE_CHECKING, Optional, List, Tuple
 import logging
 
 from amoc.core.graph import Graph
@@ -410,18 +410,12 @@ class EdgeAdmission:
 
         return forced_edges
 
-    # helps maintain active graph + cumulative graph
-    # and is used for the final triplet.csv file
     def record_edge_in_graphs(
         self,
         edge: "Edge",
         sentence_idx: Optional[int],
-        cumulative_graph: Any,
-        active_graph: Any,
-        cumulative_triplet_records: list,
-        cumulative_graph_builder: Any = None,
-        active_graph_builder: Any = None,
     ) -> None:
+        """Track when each triplet was first introduced."""
         u, v, lbl = self.build_edge_triplet_key(edge)
 
         if not lbl or not lbl.strip():
@@ -433,36 +427,6 @@ class EdgeAdmission:
                 edge.created_at_sentence if edge.created_at_sentence is not None else -1
             )
         self._triplet_intro[(u, lbl, v)] = int(introduced)
-        edge_key = f"{lbl}__introduced_{introduced}"
-
-        if sentence_idx is not None:
-            cumulative_triplet_records.append(
-                {
-                    "subject": u,
-                    "relation": lbl,
-                    "object": v,
-                    "sentence_idx": sentence_idx,
-                    "introduced_at": introduced,
-                    "active": edge.active,
-                    "visibility_score": edge.visibility_score,
-                }
-            )
-
-        if cumulative_graph_builder is not None:
-            cumulative_graph_builder.sync_edge(edge=edge, introduced_at=int(introduced))
-        else:
-            if not cumulative_graph.has_edge(u, v, key=edge_key):
-                cumulative_graph.add_edge(u, v, key=edge_key, label=lbl)
-
-        if active_graph_builder is not None:
-            active_graph_builder.sync_edge(edge=edge, introduced_at=int(introduced))
-        else:
-            if edge.active:
-                if not active_graph.has_edge(u, v, key=edge_key):
-                    active_graph.add_edge(u, v, key=edge_key, label=lbl)
-            else:
-                if active_graph.has_edge(u, v, key=edge_key):
-                    active_graph.remove_edge(u, v, key=edge_key)
 
     def llm_attach_explicit_to_carryover(
         self,

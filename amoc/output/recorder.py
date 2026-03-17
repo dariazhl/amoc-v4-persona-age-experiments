@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING, List, Tuple, Set, Optional, Dict, Any
+from typing import TYPE_CHECKING, List, Tuple, Set, Optional, Dict
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
@@ -11,13 +11,9 @@ class TripletRecorder:
     def __init__(
         self,
         graph_ref: "Graph",
-        cumulative_graph_ref: Any,
-        active_graph_ref: Any,
         triplet_intro_ref: Dict[Tuple[str, str, str], int],
     ):
         self._graph = graph_ref
-        self._cumulative_graph = cumulative_graph_ref
-        self._active_graph = active_graph_ref
         self._triplet_intro = triplet_intro_ref
 
     def graph_edges_to_triplets(
