@@ -1,8 +1,10 @@
 import logging
 from typing import TYPE_CHECKING, List, Optional, Tuple
+from collections import defaultdict
 
 from amoc.core.node import NodeType, NodeSource, NodeProvenance
 from amoc.utils.spacy_utils import get_concept_lemmas
+from amoc.config.constants import MAX_NEW_CONCEPTS, MAX_NEW_PROPERTIES
 
 if TYPE_CHECKING:
     from amoc.pipeline.orchestrator import AMoCv4
@@ -38,7 +40,6 @@ class RelationshipGraphBuilder:
 
         self._explicit_nodes_ref = None
         self._current_sentence_index = 0
-        self._new_inferred_nodes_count = 0
 
     def set_callbacks(
         self,
@@ -122,16 +123,16 @@ class RelationshipGraphBuilder:
             self._explicit_nodes_ref() if callable(self._explicit_nodes_ref) else set()
         )
 
+        # Per-node counters for first sentence
+        concepts_per_node = defaultdict(int)
+        properties_per_node = defaultdict(int)
+
         for relationship in inferred_relationships:
             if len(relationship) != 3:
                 continue
             if not relationship[0] or not relationship[2]:
                 continue
             if relationship[0] == relationship[2]:
-                continue
-            if not isinstance(relationship[0], str) or not isinstance(
-                relationship[2], str
-            ):
                 continue
 
             norm_subj = self._normalize_endpoint_text_fn(
@@ -142,13 +143,6 @@ class RelationshipGraphBuilder:
             )
             if norm_subj is None or norm_obj is None:
                 continue
-
-            subj_node_existing = self.graph.get_node(
-                self._get_concept_lemmas_fn(relationship[0])
-            )
-            obj_node_existing = self.graph.get_node(
-                self._get_concept_lemmas_fn(relationship[2])
-            )
 
             active_nodes_set = set(self.get_nodes_with_active_edges_fn())
 
@@ -161,7 +155,6 @@ class RelationshipGraphBuilder:
                 self.get_nodes_with_active_edges_fn(),
             )
 
-            # SAFE RELAXATION: Allow if at least one endpoint is already active
             if not attachment_ok and not is_first_sentence:
                 existing_source = self.graph.get_node(
                     self._get_concept_lemmas_fn(relationship[0])
@@ -182,8 +175,27 @@ class RelationshipGraphBuilder:
             obj, obj_type = self._canonicalize_and_classify_node_text_fn(
                 relationship[2]
             )
+
+            # Check per-node limits before proceeding
+            if subj_type == NodeType.CONCEPT:
+                if concepts_per_node[subj] >= MAX_NEW_CONCEPTS:
+                    logging.debug(f"Skipping - too many concepts for {subj}")
+                    continue
+            elif subj_type == NodeType.PROPERTY:
+                if properties_per_node[subj] >= MAX_NEW_PROPERTIES:
+                    logging.debug(f"Skipping - too many properties for {subj}")
+                    continue
+
+            if obj_type == NodeType.CONCEPT:
+                if concepts_per_node[obj] >= MAX_NEW_CONCEPTS:
+                    logging.debug(f"Skipping - too many concepts for {obj}")
+                    continue
+            elif obj_type == NodeType.PROPERTY:
+                if properties_per_node[obj] >= MAX_NEW_PROPERTIES:
+                    logging.debug(f"Skipping - too many properties for {obj}")
+                    continue
+
             if is_first_sentence:
-                # For first sentence, don't try to get from text nodes - they won't exist
                 source_node = None
                 dest_node = None
             else:
@@ -211,7 +223,7 @@ class RelationshipGraphBuilder:
                 if not self._is_node_allowed_fn(
                     subj,
                     bypass=is_first_sentence
-                    or (  # Always bypass in first sentence
+                    or (
                         dest_node is not None
                         and (
                             dest_node in explicit_nodes
@@ -239,7 +251,7 @@ class RelationshipGraphBuilder:
                 )
 
             if dest_node is None:
-                bypass = is_first_sentence or (  # Always bypass in first sentence
+                bypass = is_first_sentence or (
                     source_node is not None
                     and (
                         source_node in explicit_nodes
@@ -274,6 +286,17 @@ class RelationshipGraphBuilder:
             if source_node is None or dest_node is None:
                 continue
 
+            # Increment counters after successful node creation
+            if subj_type == NodeType.CONCEPT:
+                concepts_per_node[subj] += 1
+            else:
+                properties_per_node[subj] += 1
+
+            if obj_type == NodeType.CONCEPT:
+                concepts_per_node[obj] += 1
+            else:
+                properties_per_node[obj] += 1
+
             self.add_edge_wrapper_fn(
                 source_node,
                 dest_node,
@@ -295,14 +318,9 @@ class RelationshipGraphBuilder:
             self._explicit_nodes_ref() if callable(self._explicit_nodes_ref) else set()
         )
 
-        if is_first_sentence:
-            MAX_NEW_INFERRED = 15  # higher for first sentence
-        else:
-            explicit_count = len(explicit_nodes)
-            active_count = len(self.get_nodes_with_active_edges_fn())
-            base_budget = max(3, explicit_count)
-            bonus = 2 if active_count < explicit_count * 2 else 0
-            MAX_NEW_INFERRED = min(base_budget + bonus, 8)
+        # Per-node counters
+        concepts_per_node = defaultdict(int)
+        properties_per_node = defaultdict(int)
 
         for relationship in inferred_relationships:
             if len(relationship) != 3:
@@ -310,10 +328,6 @@ class RelationshipGraphBuilder:
             if not relationship[0] or not relationship[2]:
                 continue
             if relationship[0] == relationship[2]:
-                continue
-            if not isinstance(relationship[0], str) or not isinstance(
-                relationship[2], str
-            ):
                 continue
 
             norm_subj = self._normalize_endpoint_text_fn(
@@ -345,6 +359,25 @@ class RelationshipGraphBuilder:
 
             if subj_type is None or obj_type is None:
                 continue
+
+            # Check per-node limits before proceeding
+            if subj_type == NodeType.CONCEPT:
+                if concepts_per_node[subj] >= MAX_NEW_CONCEPTS:
+                    logging.debug(f"Skipping - too many concepts for {subj}")
+                    continue
+            elif subj_type == NodeType.PROPERTY:
+                if properties_per_node[subj] >= MAX_NEW_PROPERTIES:
+                    logging.debug(f"Skipping - too many properties for {subj}")
+                    continue
+
+            if obj_type == NodeType.CONCEPT:
+                if concepts_per_node[obj] >= MAX_NEW_CONCEPTS:
+                    logging.debug(f"Skipping - too many concepts for {obj}")
+                    continue
+            elif obj_type == NodeType.PROPERTY:
+                if properties_per_node[obj] >= MAX_NEW_PROPERTIES:
+                    logging.debug(f"Skipping - too many properties for {obj}")
+                    continue
 
             source_node = self._get_node_from_new_relationship_fn(
                 norm_subj,
@@ -402,58 +435,16 @@ class RelationshipGraphBuilder:
             if source_node is None or dest_node is None:
                 continue
 
-            source_active = source_node.active
-            dest_active = dest_node.active
+            # Increment counters after successful node creation
+            if subj_type == NodeType.CONCEPT:
+                concepts_per_node[subj] += 1
+            else:
+                properties_per_node[subj] += 1
 
-            if not (
-                source_active
-                or dest_active
-                or self._appears_in_story_fn(relationship[0], check_graph=False)
-                or self._appears_in_story_fn(relationship[2], check_graph=False)
-            ):
-                continue
-
-            explicit_count = len(explicit_nodes)
-            active_count = len(self.get_nodes_with_active_edges_fn())
-
-            base_budget = max(3, explicit_count)
-            bonus = 2 if active_count < explicit_count * 2 else 0
-            MAX_NEW_INFERRED = min(base_budget + bonus, 8)
-
-            explicit_keys = {tuple(n.lemmas) for n in explicit_nodes}
-
-            new_node_created = False
-            source_created_at_sentence = source_node.__dict__.get("created_at_sentence")
-            dest_created_at_sentence = dest_node.__dict__.get("created_at_sentence")
-
-            if (
-                source_node.node_source == NodeSource.INFERENCE_BASED
-                and source_created_at_sentence == self._current_sentence_index
-                and tuple(source_node.lemmas) not in explicit_keys
-            ):
-                new_node_created = True
-
-            if (
-                dest_node.node_source == NodeSource.INFERENCE_BASED
-                and dest_created_at_sentence == self._current_sentence_index
-                and tuple(dest_node.lemmas) not in explicit_keys
-            ):
-                new_node_created = True
-
-            if new_node_created:
-                if self._new_inferred_nodes_count >= MAX_NEW_INFERRED:
-                    continue
-                self._new_inferred_nodes_count += 1
-
-            explicit_set = set(explicit_nodes)
-
-            if not (
-                source_node.active
-                or dest_node.active
-                or source_node in explicit_set
-                or dest_node in explicit_set
-            ):
-                continue
+            if obj_type == NodeType.CONCEPT:
+                concepts_per_node[obj] += 1
+            else:
+                properties_per_node[obj] += 1
 
             potential_edge = self.add_edge_wrapper_fn(
                 source_node,
