@@ -66,10 +66,6 @@ def abstract_relation_ratio(relations) -> float:
 
 
 def abstract_concept_ratio(concepts) -> float:
-    """
-    Proxy for conceptual abstraction:
-    nouns without named-entity grounding.
-    """
     if not concepts:
         return 0.0
 

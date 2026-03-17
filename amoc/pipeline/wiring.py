@@ -10,7 +10,7 @@ from amoc.output.finalizer import OutputFinalizer
 from amoc.output.recorder import TripletRecorder
 from amoc.runtime.state_manager import ProjectionStateManager
 from amoc.runtime.sentence_runtime import SentenceRuntime
-from amoc.memory.decay import Decay
+from amoc.pipeline.decay import Decay
 from amoc.connectivity.stabilizer import ConnectivityStabilizer
 
 

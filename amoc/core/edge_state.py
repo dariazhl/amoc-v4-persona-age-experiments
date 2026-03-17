@@ -1,7 +1,6 @@
 import logging
-from typing import TYPE_CHECKING, Set, Dict, List, Tuple, Optional
-from collections import deque
-from amoc.core.node import NodeType, NodeSource
+from typing import TYPE_CHECKING, Set, List, Tuple, Optional
+from amoc.core.node import NodeSource
 
 
 if TYPE_CHECKING:
@@ -57,60 +56,6 @@ class NodeActivationEngine:
             f"active after: {active_after} | "
             f"total edges: {len(self._graph.edges)}"
         )
-
-    def decay_inactive_edges(self) -> None:
-        for edge in list(self._graph.edges):
-            if not edge.active:
-                edge.reduce_visibility()
-
-    def bfs_from_activated_nodes(
-        self,
-        activated_nodes: List["Node"],
-        direction: str = "both",
-    ) -> Dict["Node", int]:
-        distances = {}
-        queue = deque(
-            (node, 0) for node in activated_nodes if node.node_type != NodeType.PROPERTY
-        )
-
-        while queue:
-            curr_node, curr_distance = queue.popleft()
-            if curr_node in distances:
-                continue
-            distances[curr_node] = curr_distance
-            for edge in curr_node.edges:
-                # Only traverse edges that are active AND have positive visibility
-                if not (edge.active and edge.visibility_score > 0):
-                    continue
-
-                next_node = None
-                if direction == "both":
-                    next_node = (
-                        edge.dest_node
-                        if edge.source_node == curr_node
-                        else edge.source_node
-                    )
-                elif direction == "outgoing" and edge.source_node == curr_node:
-                    next_node = edge.dest_node
-                elif direction == "incoming" and edge.dest_node == curr_node:
-                    next_node = edge.source_node
-
-                if next_node is not None:
-                    queue.append((next_node, curr_distance + 1))
-        return distances
-
-    def set_nodes_score_based_on_distance_from_active_nodes(
-        self, activated_nodes: List["Node"]
-    ) -> None:
-        distances = self.bfs_from_activated_nodes(activated_nodes)
-
-        for node in self._graph.nodes:
-            if node.node_type == NodeType.PROPERTY:
-                continue
-            if node in distances:
-                node.score = distances[node]
-            else:
-                node.score = min(node.score + 1, 100)
 
     def get_active_nodes(
         self, score_threshold: int, only_text_based: bool = False

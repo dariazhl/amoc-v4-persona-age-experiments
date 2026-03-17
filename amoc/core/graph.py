@@ -2,7 +2,7 @@ from __future__ import annotations
 from amoc.core.node import Node
 from amoc.core.node import NodeType, NodeSource, NodeProvenance
 from amoc.core.edge import Edge
-from amoc.memory.activation import NodeActivationEngine
+from amoc.core.edge_state import NodeActivationEngine
 from amoc.connectivity.repair import ConnectivityRepair
 from amoc.admission.node_validation import NodeValidation
 from typing import List, Set, Optional, Tuple, Callable

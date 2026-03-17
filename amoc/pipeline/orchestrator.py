@@ -562,7 +562,6 @@ class AMoCv4:
         inactive_nodes_for_plot: list,
         salient_nodes_for_plot: list,
     ):
-        """Capture graph state for reverse plots without generating per-sentence PNGs."""
         if not self._plot_ops._collect_states:
             return
 
