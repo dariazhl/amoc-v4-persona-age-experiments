@@ -747,16 +747,15 @@ class SentenceGraphBuilder:
         # step 3: deduplicate semantically similar triples
         validated_triples = validator.deduplicate_triplets(validated_triples)
 
-        # step 4: prioritize hub ordering
+        # step 3b: prioritize hub — process main character triplets first
         explicit_node_texts = [
             n.get_text_representer() for n in current_sentence_text_based_nodes
         ]
-        prioritized_triples = validator.prioritize_hub(
+        validated_triples = validator.prioritize_hub(
             validated_triples, explicit_node_texts
         )
 
-        # step 5: process each triple
-        for subj, rel, obj in prioritized_triples:
+        for subj, rel, obj in validated_triples:
             # Use raw strings directly – node lookup will handle them
             subj_final, obj_final = subj, obj
             rel_final = rel
@@ -861,6 +860,7 @@ class SentenceGraphBuilder:
         if not hasattr(self, "_triple_validator") or self._triple_validator is None:
             self._triple_validator = TripletValidator(
                 linguistic_ops=self,
+                # deprecated
                 extract_deterministic_fn=self._extract_deterministic_structure_fn,
                 text_normalizer=self.text_normalizer,
                 client=self.llm,

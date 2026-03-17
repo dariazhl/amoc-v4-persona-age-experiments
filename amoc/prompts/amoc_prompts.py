@@ -596,6 +596,9 @@ KEEP ONLY if they meet ALL these criteria:
 2. Is ABSOLUTELY NECESSARY to understand what's happening NOW
 3. Forms a CRITICAL BRIDGE that would break the graph if removed
 
+IMPORTANT - CONNECTIVITY RULE:
+If removing a relationship would leave a concept COMPLETELY ISOLATED (no other connections), you MUST keep at least one relationship for that concept, even if it's not ideal.
+
 REMOVE everything else, especially:
 - Any relationship NOT mentioned in the current sentence
 - Background information from earlier sentences
@@ -614,8 +617,10 @@ Sentence 2: "He wore traditional attire."
 - (charlemagne, conquered, saxons) - REMOVE (past event)
 - (charlemagne, wears, linen) - REMOVE (too specific, redundant with "attire")
 
-Sentence 5: (charlemagne, conquered, saxons) from 4 sentences ago
-- REMOVE (no longer relevant to current narrative)
+Sentence 3: "The court scholars wrote manuscripts."
+- (court, employs, scholars) - KEEP (bridges to current)
+- (scholars, write, manuscripts) - KEEP (directly in current sentence)
+- (charlemagne, has, court) - REMOVE (not mentioned in current sentence)
 
 Return a JSON object with this exact structure:
 {{

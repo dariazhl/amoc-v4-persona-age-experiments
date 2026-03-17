@@ -5,75 +5,13 @@ from amoc.core.graph import Graph
 from amoc.core.node import Node, NodeType, NodeSource
 from amoc.core.edge import Edge
 from amoc.admission.text_normalizer import TextNormalizer
+from amoc.utils.spacy_utils import clean_label
 
 if TYPE_CHECKING:
     from amoc.pipeline.orchestrator import AMoCv4
 
 
 class EdgeAdmission:
-
-    VAGUE_PATTERNS = (
-        "relat",
-        "associat",
-        "connect",
-        "link",
-        "involv",
-        "concern",
-        "regard",
-        "pertain",
-        "correspond",
-        "tie",
-        "bind",
-    )
-
-    VAGUE_EXACT = frozenset(
-        {
-            "related",
-            "relates",
-            "relates to",
-            "related to",
-            "associated",
-            "associated with",
-            "connected",
-            "connected to",
-            "linked",
-            "linked to",
-            "involves",
-            "concerns",
-            "regarding",
-            "pertains to",
-            "corresponds to",
-            "tied to",
-            "bound to",
-            "relating to",
-            "associating with",
-        }
-    )
-
-    NEGATION_PHRASES = (
-        "not connected",
-        "not_connected",
-        "not connected to",
-        "not_connected_to",
-        "not related",
-        "not associated",
-        "not linked",
-        "not involved",
-        "not applicable",
-        "not present",
-        "not exist",
-        "no connection",
-        "no_connection",
-        "no relation",
-        "no link",
-        "no association",
-        "no involvement",
-        "without connection",
-        "without relation",
-        "unconnected",
-        "unrelated",
-        "disconnected",
-    )
 
     def __init__(
         self,
@@ -138,6 +76,42 @@ class EdgeAdmission:
             triplet_intro=core._triplet_intro,
         )
 
+    # Negation phrases that should never appear as edge labels
+    _NEGATION_PHRASES = frozenset(
+        {
+            "not related",
+            "no connection",
+            "not available",
+            "not applicable",
+            "not connected",
+            "no relation",
+            "no link",
+            "not involved",
+            "not associated",
+            "without connection",
+            "without relation",
+            "unconnected",
+            "unrelated",
+            "disconnected",
+            "disassociated",
+            "nonapplicable",
+            "nonexistent",
+            "unavailable",
+            "uninvolved",
+        }
+    )
+
+    _NEGATION_WORDS = frozenset({"not", "no", "never", "neither", "nor", "without"})
+
+    def is_negation_label(self, label: str) -> bool:
+        if not label:
+            return False
+        normalized = label.lower().replace("_", " ").strip()
+        if any(phrase in normalized for phrase in self._NEGATION_PHRASES):
+            return True
+        words = normalized.split()
+        return any(w in self._NEGATION_WORDS for w in words)
+
     def set_edge_sentence_context(self, idx: int):
         self._current_sentence_index = idx
 
@@ -173,7 +147,7 @@ class EdgeAdmission:
             else self._current_sentence_index
         )
 
-        label = TextNormalizer.clean_label(label)
+        label = clean_label(label)
         if not label:
             return None
 
@@ -186,32 +160,6 @@ class EdgeAdmission:
             relation_class=relation_class,
             justification=justification,
         )
-
-    def is_vague_relation(self, label: str) -> bool:
-        if not label:
-            return False
-        normalised = label.lower().replace("_", " ").strip()
-        if normalised in self.VAGUE_EXACT:
-            return True
-        return any(pat in normalised for pat in self.VAGUE_PATTERNS)
-
-    def is_negation_relation(self, label: str) -> bool:
-        if not label:
-            return False
-        normalised = label.lower().replace("_", " ").strip()
-        for phrase in self.NEGATION_PHRASES:
-            if phrase in normalised:
-                return True
-        return normalised.startswith(("not ", "no "))
-
-    def is_valid_edge_label(self, label: str) -> bool:
-        if self.is_negation_relation(label):
-            logging.info("rejected negation edge label: %s", label)
-            return False
-        if self.is_vague_relation(label):
-            logging.info("rejected vague edge label: %s", label)
-            return False
-        return True
 
     def add_edge(
         self,
@@ -229,8 +177,9 @@ class EdgeAdmission:
         if source_node == dest_node:
             return None
 
-        # Reject vague / negation labels early
-        if not self.is_valid_edge_label(label):
+        # Safety net: reject negation relations that slipped past upstream validation
+        if self.is_negation_label(label):
+            logging.info(f"EDGE_ADMISSION: rejected negation edge label: '{label}'")
             return None
 
         # If both nodes are explicit in the current sentence, always allow
@@ -266,7 +215,7 @@ class EdgeAdmission:
             )
             return None
         # clean label
-        label = TextNormalizer.clean_label(label)
+        label = clean_label(label)
         if not label:
             return None
 

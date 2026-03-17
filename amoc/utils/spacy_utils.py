@@ -51,37 +51,6 @@ def get_content_words_from_sent(nlp, sent: Span) -> List[Token]:
     return content_words
 
 
-def verb_to_present_tense(lemma: str) -> str:
-    # Convert a verb lemma to simple present tense (3rd person singular).
-    if not lemma:
-        return lemma
-
-    lemma = lemma.lower().strip()
-
-    # Irregular verbs
-    irregulars = {
-        "be": "is",
-        "have": "has",
-        "do": "does",
-        "go": "goes",
-    }
-    if lemma in irregulars:
-        return irregulars[lemma]
-
-    # Verbs ending in -s, -sh, -ch, -x, -z, -o: add -es
-    if lemma.endswith(("s", "sh", "ch", "x", "z", "o")):
-        return lemma + "es"
-
-    # Verbs ending in consonant + y: change y to -ies
-    if lemma.endswith("y") and len(lemma) > 1:
-        prev_char = lemma[-2]
-        if prev_char not in "aeiou":
-            return lemma[:-1] + "ies"
-
-    # Default: add -s
-    return lemma + "s"
-
-
 def canonicalize_edge_label(nlp, label: str) -> str:
     if not label or not isinstance(label, str):
         return ""
@@ -112,7 +81,6 @@ def canonicalize_edge_label(nlp, label: str) -> str:
             return ""
     # add ADV and PREP to verb ie. rode => rode through
     if main_verb:
-        # base = verb_to_present_tense(main_verb.lemma_.lower())
         base = main_verb.lemma_.lower()
         parts = [base] + preps
         result = "_".join(parts)
@@ -206,75 +174,6 @@ def extract_adjectival_modifiers(sent: Span) -> List[dict]:
                         break
 
     return mods
-
-
-def extract_prepositional_objects(sent: Span) -> List[dict]:
-    prep_objects = []
-
-    for token in sent:
-        # Look for prep dependency
-        if token.dep_ == "prep":
-            prep_text = token.lemma_.lower()
-            head = token.head
-
-            # Find the object of the preposition
-            pobj = None
-            for child in token.children:
-                if child.dep_ == "pobj" and child.pos_ in {"NOUN", "PROPN"}:
-                    pobj = child
-                    break
-
-            if pobj is None:
-                continue
-
-            subject = None
-            head_word = None
-
-            # Case 1: Head is a verb (e.g., "rode through the forest")
-            if head.pos_ in {"VERB", "AUX"}:
-                head_word = head.lemma_.lower()
-                # Find the subject of the verb
-                for child in head.children:
-                    if child.dep_ in {"nsubj", "nsubjpass"} and child.pos_ in {
-                        "NOUN",
-                        "PROPN",
-                    }:
-                        subject = child
-                        break
-                # Also check if verb is part of a clause with a subject higher up
-                if (
-                    subject is None
-                    and head.head
-                    and head.head.pos_ in {"NOUN", "PROPN"}
-                ):
-                    subject = head.head
-
-            # Case 2: ADJ heads → SKIP ENTIRELY
-            elif head.pos_ == "ADJ":
-                continue
-
-            # Case 3: Head is a noun (e.g., "journey to the castle")
-            elif head.pos_ in {"NOUN", "PROPN"}:
-                head_word = head.lemma_.lower()
-                subject = head
-
-            if subject is None or head_word is None:
-                continue
-
-            # Create edge label: head_preposition
-            edge_label = f"{head_word}_{prep_text}"
-
-            prep_objects.append(
-                {
-                    "subject": subject.lemma_.lower(),
-                    "head_word": head_word,
-                    "preposition": prep_text,
-                    "object": pobj.lemma_.lower(),
-                    "label": edge_label,
-                }
-            )
-
-    return prep_objects
 
 
 # trouble - "is" case
@@ -378,3 +277,64 @@ def extract_deterministic_relation_candidates(
     else:
         print("DEBUG: No deterministic candidates found.")
     return candidates
+
+
+def clean_label(label: str) -> str:
+    if not label or not isinstance(label, str):
+        return ""
+
+    label = label.strip()
+    if not label:
+        return ""
+
+    prefixes_to_remove = [
+        "nsubj:",
+        "dobj:",
+        "pobj:",
+        "prep:",
+        "amod:",
+        "advmod:",
+        "ROOT:",
+        "VERB:",
+        "NOUN:",
+        "ADJ:",
+        "dep:",
+        "compound:",
+        "agent:",
+        "xcomp:",
+        "ccomp:",
+        "aux:",
+        "auxpass:",
+    ]
+    for prefix in prefixes_to_remove:
+        if label.lower().startswith(prefix.lower()):
+            label = label[len(prefix) :]
+
+    label = re.sub(r"[^\w\s]+$", "", label)
+    label = label.strip()
+    label = re.sub(r"\s+", " ", label)
+
+    if len(label) > 0:
+        if re.search(r"(.)\1{2,}", label):
+            label = re.sub(r"([bcdfghjklmnpqrstvwxyz])\1+$", r"\1", label)
+
+        words = label.split()
+        cleaned_words = []
+        for word in words:
+            if len(word) <= 2:
+                cleaned_words.append(word.lower())
+                continue
+            if not re.search(r"[aeiou]", word.lower()):
+                continue
+            cleaned_words.append(word.lower())
+
+        if not cleaned_words:
+            return ""
+        label = " ".join(cleaned_words)
+
+    label = label.lower().strip()
+
+    if len(label) < 2:
+        return ""
+
+    return label

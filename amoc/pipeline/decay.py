@@ -113,15 +113,17 @@ class Decay:
                     edge.reduce_visibility()
                     stats["protected"] += 1
                 else:
-                    edge.visibility_score = 0
-                    edge.active = False
+                    edge.reduce_visibility()
+                    if edge.visibility_score <= 0:
+                        edge.visibility_score = 0
+                        edge.active = False
                     stats["decay"] += 1
                     logging.info(
                         f"immediately deactivated edge {triplet_str} (score=1)"
                     )
 
             elif score == 2:
-                edge.visibility_score = max(0, edge.visibility_score - 2)
+                edge.visibility_score = max(0, edge.visibility_score - 1)
                 if edge.visibility_score <= 0:
                     edge.active = False
                 stats["maintain"] += 1
@@ -297,33 +299,41 @@ class Decay:
 
     # inactivates zombie nodes after pruning and decay
     def prune_inactive_edgeless_nodes(self) -> List["Node"]:
-        newly_dangling = []
+        # First pass: deactivate any ghost edges (active=True, visibility<=0)
+        ghost_count = 0
+        for edge in self._graph.edges:
+            if edge.active and edge.visibility_score <= 0:
+                edge.active = False
+                ghost_count += 1
+        if ghost_count:
+            logging.info(
+                f"deactivated {ghost_count} ghost edges (active but visibility=0)"
+            )
+
+        dangling_nodes = []
 
         for node in self._graph.nodes:
             active_edges = [e for e in node.edges if e.active]
 
-            # option 1 - Node has no active edges at all
+            # Node has no active edges — it's dangling
             if not active_edges:
                 if node.active:
-                    # Don't set node.active directly - it's a property
-                    # The node will become inactive automatically since it has no active edges
-                    newly_dangling.append(node)
+                    dangling_nodes.append(node)
                 continue
 
-            # option 2 - Node has active edges but all have visibility <= 0
+            # Node has active edges but all have visibility <= 0 (shouldn't happen after ghost pass, but safety net)
             if all(e.visibility_score <= 0 for e in active_edges):
                 for e in active_edges:
                     e.active = False
-                # Don't set node.active - it will reflect the edge states
-                newly_dangling.append(node)
+                dangling_nodes.append(node)
 
-        if newly_dangling:
+        if dangling_nodes:
             logging.info(
-                f"cleaned up {len(newly_dangling)} dangling nodes: "
-                f"{[n.get_text_representer() for n in newly_dangling]}"
+                f"cleaned up {len(dangling_nodes)} dangling nodes: "
+                f"{[n.get_text_representer() for n in dangling_nodes]}"
             )
 
-        return newly_dangling
+        return dangling_nodes
 
     def build_connectivity_map(self) -> Dict["Node", Set["Node"]]:
         connectivity = {}
@@ -960,9 +970,13 @@ class Decay:
         self.apply_pruning(prev_sentences)
 
         # Final node cleanup - edges get deactivated, but nodes do not
+        for edge in self._graph.edges:
+            if edge.visibility_score <= 0 and edge.active:
+                edge.active = False
+
         self.prune_inactive_edgeless_nodes()
 
-        # node cap
+        # # node cap
         explicit_nodes = (
             self._get_explicit_nodes()
             if hasattr(self, "_get_explicit_nodes")
@@ -971,11 +985,14 @@ class Decay:
         explicit_names = {n.get_text_representer() for n in explicit_nodes}
 
         # Get all active carryover nodes
-        carryover_nodes = [
-            n
-            for n in self._graph.nodes
-            if n.active and n.get_text_representer() not in explicit_names
-        ]
+        carryover_nodes = []
+        for n in self._graph.nodes:
+            if not n.active or n.get_text_representer() in explicit_names:
+                continue
+            # Check if node has any active edge with score > 0
+            has_active_edge = any(e.active and e.visibility_score > 0 for e in n.edges)
+            if has_active_edge:
+                carryover_nodes.append(n)
 
         # If too many, keep only those with most edges
         if len(carryover_nodes) > MAX_CARRYOVER:

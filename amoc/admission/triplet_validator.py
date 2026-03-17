@@ -1,9 +1,8 @@
 from typing import Dict, List, Optional, Tuple, Any
 import logging
 from difflib import SequenceMatcher
+import numpy as np
 
-from amoc.core.node import Node, NodeSource
-from amoc.core.edge import Edge
 from amoc.extraction.linguistic import LinguisticProcessing
 from amoc.admission.text_normalizer import TextNormalizer
 from amoc.llm.vllm_client import VLLMClient
@@ -12,6 +11,10 @@ from amoc.admission.triplet_deduplicator import TripletDeduplicator
 
 
 class TripletValidator:
+    COMMON_COPULAS = frozenset(
+        {"is", "am", "are", "was", "were", "be", "been", "being"}
+    )
+
     def __init__(
         self,
         linguistic_ops: LinguisticProcessing,
@@ -23,6 +26,7 @@ class TripletValidator:
         spacy_nlp=None,
     ):
         self.linguistic_ops = linguistic_ops
+        # deprecated
         self.extract_deterministic_fn = extract_deterministic_fn
         self.text_normalizer = text_normalizer
         self.client = client
@@ -38,6 +42,28 @@ class TripletValidator:
         self, triplets: List[Tuple[str, str, str]]
     ) -> List[Tuple[str, str, str]]:
         return self.deduplicator.deduplicate(triplets)
+
+    # anchoring - i noticed that the nodes cluster around random nodes with little importance such as "shirt" or "ability" when the story is not about this topic
+    # Reorder triplets so hub-related ones are processed first
+    def prioritize_hub(
+        self,
+        triplets: List[Tuple[str, str, str]],
+        explicit_nodes: List[str],
+    ) -> List[Tuple[str, str, str]]:
+        if not triplets or not explicit_nodes:
+            return triplets
+
+        specific_nodes = [n for n in explicit_nodes]
+
+        if not specific_nodes:
+            return triplets
+
+        hub_candidate = specific_nodes[0]
+
+        hub_as_subject = [t for t in triplets if t[0] == hub_candidate]
+        other_triples = [t for t in triplets if t[0] != hub_candidate]
+
+        return hub_as_subject + other_triples
 
     def normalize_llm_triplets(
         self, new_relationships: List[Any]
@@ -72,101 +98,7 @@ class TripletValidator:
 
         return None
 
-    # extract deterministic candidates and build lookup dictionaries for validation
-    def build_deterministic_lookup(
-        self, sentence_nodes: List[Node], sentence_words: List[str], current_sentence
-    ) -> Dict[str, Dict]:
-        candidates = (
-            self.extract_deterministic_fn(
-                current_sentence,
-                sentence_nodes,
-                sentence_words,
-            )
-            or []
-        )
-
-        forward = {}
-        reverse = {}
-
-        for cand in candidates:
-            key_forward = (cand.subject_lemma, cand.object_lemma)
-            forward[key_forward] = cand.relation_label
-            key_reverse = (cand.object_lemma, cand.subject_lemma)
-            reverse[key_reverse] = cand.relation_label
-
-        return {"forward": forward, "reverse": reverse}
-
-    # check if an llm triple conflicts with deterministic extraction
-    def validate_against_deterministic(
-        self, subj: str, rel: str, obj: str, det_lookup: Dict, sentence: str = None
-    ) -> Dict:
-        forward = det_lookup["forward"]
-        reverse = det_lookup["reverse"]
-
-        # If we have deterministic info, use it strictly
-        if forward or reverse:
-            forward_key = (subj, obj)
-            reverse_key = (obj, subj)
-
-            # case 1: exact match exists
-            if forward_key in forward:
-                det_rel = forward[forward_key]
-                if self.labels_are_similar(rel, det_rel):
-                    return {"valid": True, "subj": subj, "obj": obj, "rel": rel}
-                else:
-                    logging.info(
-                        f"llm edge ({subj},{rel},{obj}) conflicts with deterministic ({det_rel})"
-                    )
-                    return {"valid": False}
-
-            # case 2: reverse match exists (likely swapped)
-            if reverse_key in reverse:
-                det_rel = reverse[reverse_key]
-                logging.info(
-                    f"llm edge ({subj},{rel},{obj}) appears reversed - swapping to ({obj},{rel},{subj})"
-                )
-                if self.labels_are_similar(rel, det_rel):
-                    return {"valid": True, "subj": obj, "obj": subj, "rel": rel}
-                else:
-                    logging.info(
-                        f"swapped edge relation ({rel}) conflicts with deterministic ({det_rel})"
-                    )
-                    return {"valid": False}
-
-            # case 3: deterministic info exists but no match
-            logging.info(
-                f"llm edge ({subj},{rel},{obj}) has no deterministic match - rejecting"
-            )
-            return {"valid": False}
-
-        # case 4: NO deterministic info – apply simple heuristics
-        # "thing" should never be the subject of an action verb
-        if subj.lower() == "thing" and rel.lower() in [
-            "writes",
-            "knows",
-            "describes",
-            "says",
-            "tells",
-            "wrote",
-            "knew",
-            "described",
-            "said",
-            "told",
-        ]:
-            logging.info(f"rejecting - 'thing' cannot be the subject of '{rel}'")
-            return {"valid": False}
-
-        # If object is "thing", subject should be a person/entity
-        if obj.lower() == "thing" and subj.lower() in ["thing", "it", "this"]:
-            logging.info(f"rejecting - vague subject '{subj}' with 'thing' as object")
-            return {"valid": False}
-
-        # No deterministic info and heuristics passed – let LLM decide
-        logging.info(f"no deterministic info for ({subj},{rel},{obj}) - passing to LLM")
-        return {"valid": True, "subj": subj, "obj": obj, "rel": rel}
-
     # use llm to validate semantic plausibility of a triple
-    # TROUBLE - remove the story_context param
     def validate_with_llm(
         self, subj: str, rel: str, obj: str, sentence: str, story_context: str = ""
     ) -> Dict:
@@ -204,8 +136,6 @@ class TripletValidator:
         emb1 = self.get_label_embedding(label1)
         emb2 = self.get_label_embedding(label2)
         if emb1 is not None and emb2 is not None:
-            import numpy as np
-
             cos = float(np.dot(emb1, emb2))
             if cos >= self.similarity_threshold:
                 return True
@@ -237,38 +167,6 @@ class TripletValidator:
             return None
         return edge_label
 
-    def prioritize_hub(
-        self, triplets: List[Tuple[str, str, str]], explicit_nodes: List[str]
-    ) -> List[Tuple[str, str, str]]:
-        if not triplets or not explicit_nodes:
-            return triplets
-
-        # Find the most specific entity (usually a person name)
-        generic_terms = {
-            "thing",
-            "something",
-            "it",
-            "this",
-            "that",
-            "they",
-            "he",
-            "she",
-        }
-        specific_nodes = [n for n in explicit_nodes if n.lower() not in generic_terms]
-
-        if specific_nodes:
-            # Use the first specific node as hub candidate
-            hub_candidate = specific_nodes[0]
-
-            # Split triples into those with hub as subject and others
-            hub_as_subject = [t for t in triplets if t[0] == hub_candidate]
-            other_triples = [t for t in triplets if t[0] != hub_candidate]
-
-            # Return hub-first triples followed by others
-            return hub_as_subject + other_triples
-
-        return triplets
-
     def validate_relation_is_verb(
         self, triplet: Tuple[str, str, str]
     ) -> Tuple[bool, Optional[str], Optional[Tuple[str, str, str]]]:
@@ -282,6 +180,10 @@ class TripletValidator:
             return False, "empty relation after cleaning", None
 
         if self.spacy_nlp is None:
+            return True, None, None
+
+        # Fast path: single copular verb
+        if relation_clean in self.COMMON_COPULAS:
             return True, None, None
 
         rel_doc = self.spacy_nlp(relation_clean)
@@ -317,6 +219,12 @@ class TripletValidator:
                     has_verb = True
                     break
 
+        # Signal 5: multi-word relation starting with a copular verb
+        if not has_verb:
+            words = relation_clean.split()
+            if len(words) >= 1 and words[0] in self.COMMON_COPULAS:
+                has_verb = True
+
         if not has_verb:
             pos_tags = [f"{t.text}({t.pos_})" for t in rel_doc]
             return (
@@ -327,115 +235,132 @@ class TripletValidator:
 
         return True, None, None
 
-    _COPULAR_VERBS = frozenset(
-        {
-            "be",
-            "is",
-            "am",
-            "are",
-            "was",
-            "were",
-            "been",
-            "being",
-            "become",
-            "became",
-            "seem",
-            "appear",
-            "feel",
-            "look",
-            "sound",
-            "taste",
-            "smell",
-            "remain",
-            "stay",
-        }
-    )
+    # issue; there are a lot of edges that read "associated with" and "related to" that grow the graph and do not add to the narrative
+    # fix: reject them based on similary embeddings - easier than harcoding a list
+    def is_vague_relation(self, label: str) -> bool:
+        if not label:
+            return False
 
-    def validate_triplet_relation(
-        self, triplet: Tuple[str, str, str]
-    ) -> Dict[str, Any]:
-        subj, relation, obj = triplet
+        # Get embedding for the relation
+        label_emb = self.get_label_embedding(label)
+        if label_emb is None:
+            return False
 
-        if self.spacy_nlp is None:
-            return {
-                "valid": True,
-                "reason": None,
-                "corrected_triple": None,
-                "action": "accept",
-            }
+        # Define prototype vague relations (just a few examples)
+        vague_prototypes = ["related to", "associated with", "connected to"]
 
-        # parse all three slots once
-        subj_doc = self.spacy_nlp(subj) if subj else None
-        rel_doc = self.spacy_nlp(relation.strip().lower()) if relation else None
-        obj_doc = self.spacy_nlp(obj) if obj else None
+        # Check similarity to prototypes
+        for prototype in vague_prototypes:
+            proto_emb = self.get_label_embedding(prototype)
+            if proto_emb is not None:
+                similarity = float(np.dot(label_emb, proto_emb))
+                if similarity > 0.8:  # Threshold for vagueness
+                    logging.debug(
+                        f"Vague relation detected: '{label}' (sim={similarity:.3f})"
+                    )
+                    return True
 
-        subj_pos = subj_doc[0].pos_ if subj_doc and len(subj_doc) > 0 else None
-        obj_pos = obj_doc[0].pos_ if obj_doc and len(obj_doc) > 0 else None
+        return False
 
-        # --- verb-presence check FIRST (includes morphological fallback) ---
-        is_valid_verb, verb_reason, verb_corrected = self.validate_relation_is_verb(
-            triplet
-        )
-        rel_has_verb = is_valid_verb
+    # issue; there are a lot of edges that read "not associated with" and "not related to" that grow the graph and do not add to the narrative
+    # in general, there should be no such associations in the graph
+    # fix: reject them
+    def is_negation_relation(self, label: str) -> bool:
+        if not label:
+            return False
 
-        # find the relation's verb lemma
-        rel_lemma = None
-        if rel_doc:
-            # Pass 1: Look for explicit VERB/AUX tags
-            for t in rel_doc:
-                if t.pos_ in {"VERB", "AUX"}:
-                    rel_lemma = t.lemma_.lower()
-                    break
+        # Normalize first - replace underscores with spaces
+        normalized = label.lower().replace("_", " ").strip()
 
-            # Pass 2: If no explicit verb but rel_has_verb is True, use morphological features
-            if rel_lemma is None and rel_has_verb:
-                for t in rel_doc:
-                    morph_str = str(t.morph)
-                    # Check for any verb-related morphological features
-                    if any(
-                        f in morph_str
-                        for f in ["Tense=", "VerbForm=", "Mood=", "Voice="]
-                    ):
-                        rel_lemma = t.lemma_.lower()
-                        break
+        # CHECK FOR EXACT PHRASES
+        negation_phrases = [
+            "not related",
+            "no connection",
+            "not available",
+            "not applicable",
+            "not connected",
+            "no relation",
+            "no link",
+            "not involved",
+            "not associated",
+            "without connection",
+            "without relation",
+            "unconnected",
+            "unrelated",
+            "disconnected",
+            "disassociated",
+            "nonapplicable",
+            "nonexistent",
+            "unavailable",
+            "uninvolved",
+        ]
 
-            # Pass 3: Check dependency relations that indicate verbs
-            if rel_lemma is None:
-                for t in rel_doc:
-                    if t.dep_ in {"ROOT", "aux", "auxpass", "xcomp", "ccomp"}:
-                        rel_lemma = t.lemma_.lower()
-                        # If we found a verb-like dependency, ensure rel_has_verb is True
-                        rel_has_verb = True
-                        break
+        for phrase in negation_phrases:
+            if phrase in normalized:
+                logging.debug(f"Negation phrase match: '{phrase}' in '{normalized}'")
+                return True
 
-            # Pass 4: Use word shape heuristics for common verb patterns
-            if rel_lemma is None:
-                for t in rel_doc:
-                    word = t.text.lower()
-                    # Common verb endings (linguistic patterns, not hardcoded list)
-                    if (
-                        t.is_alpha
-                        and word.endswith(("ing", "ed", "en", "s"))
-                        and len(word) > 3
-                    ):
-                        # Check if this word has verb-like properties in the model
-                        if hasattr(t, "prob") and t.prob < -4:
-                            rel_lemma = t.lemma_.lower()
-                            rel_has_verb = True
-                            break
+        # Fast path: single negation words
+        negation_words = {"not", "no", "never", "neither", "nor", "without"}
+        words = normalized.split()
+        if any(word in negation_words for word in words):
+            return True
 
-            # Pass 5: Final fallback - use first token's lemma
-            if rel_lemma is None and len(rel_doc) > 0:
-                rel_lemma = rel_doc[0].lemma_.lower()
+        # Use spaCy for linguistic negation detection
+        doc = self.spacy_nlp(normalized)
 
-                # If we got here, do one last check for verb-likeness
-                first_token = rel_doc[0]
-                word = first_token.text.lower()
-                if first_token.is_alpha and word.endswith(("ing", "ed", "en", "s")):
-                    # This looks like a verb even if spaCy missed it
-                    rel_has_verb = True
+        for token in doc:
+            if token.dep_ == "neg":
+                return True
+            if token.lower_ in {
+                "not",
+                "n't",
+                "no",
+                "never",
+                "neither",
+                "nor",
+                "without",
+            }:
+                return True
 
-        # --- RULE: Reject "has" + adjective ---
+        return False
+
+    def is_valid_relation_label(self, label: str) -> bool:
+        if self.is_negation_relation(label):
+            return False
+        if self.is_vague_relation(label):
+            return False
+        return True
+
+    def extract_verb_info(self, relation: str, rel_doc) -> Tuple[Optional[str], bool]:
+        if not rel_doc:
+            return None, False
+
+        relation_lower = relation.lower().strip()
+
+        # Fast path: single copular verb
+        words = relation_lower.split()
+        if len(words) == 1 and words[0] in self.COMMON_COPULAS:
+            return words[0], True
+
+        for token in rel_doc:
+            if token.pos_ in {"VERB", "AUX"}:
+                return token.lemma_.lower(), True
+
+        for token in rel_doc:
+            morph_str = str(token.morph)
+            if any(f in morph_str for f in ["Tense=", "VerbForm=", "Mood=", "Voice="]):
+                return token.lemma_.lower(), True
+
+        # Multi-word relation starting with copular verb
+        if len(words) >= 1 and words[0] in self.COMMON_COPULAS:
+            return words[0], True
+
+        return rel_doc[0].lemma_.lower(), False
+
+    def check_has_adjective(
+        self, rel_lemma: str, obj_pos: str, obj: str
+    ) -> Optional[Dict]:
         if rel_lemma == "have" and obj_pos == "ADJ":
             return {
                 "valid": False,
@@ -443,91 +368,144 @@ class TripletValidator:
                 "corrected_triple": None,
                 "action": "reject",
             }
+        return None
 
-        # --- RULE: Reject circular "is" + noun where noun is same as subject or action ---
-        if rel_lemma == "be" and obj_pos in {"NOUN", "PROPN"}:
-            obj_lower = obj.lower().strip()
-            subj_lower = subj.lower().strip()
+    def is_event_or_action(self, doc):
+        if not doc or len(doc) == 0:
+            return False
+        token = doc[0]
+        # Check if it's a nominalization of a verb (common pattern)
+        if token.pos_ == "NOUN" and token.morph:
+            # Check for morphological indicators of derived nominals
+            morph_str = str(token.morph)
+            if any(
+                suffix in token.text.lower()
+                for suffix in ["tion", "ing", "ment", "al", "ence", "ance", "ure"]
+            ):
+                return True
+        # Check if it's a verb (shouldn't happen in object slot but just in case)
+        if token.pos_ == "VERB":
+            return True
+        return False
 
-            # Check if object is the same as subject (circular)
-            if obj_lower == subj_lower:
-                return {
-                    "valid": False,
-                    "reason": f"circular relation: '{subj} is {obj}' says nothing",
-                    "corrected_triple": None,
-                    "action": "reject",
-                }
+    # issue: king - is - king
+    def check_circular_is(
+        self, rel_lemma: str, obj_pos: str, subj: str, obj: str, subj_doc, obj_doc
+    ) -> Optional[Dict]:
+        if rel_lemma != "be" or obj_pos not in {"NOUN", "PROPN"}:
+            return None
 
-            # Check if object is the nominalized form of an action (victory is battle)
-            action_nouns = {"battle", "war", "fight", "victory", "defeat", "conquest"}
-            if obj_lower in action_nouns and subj_lower in action_nouns:
-                return {
-                    "valid": False,
-                    "reason": f"'{subj} is {obj}' is circular — both are events/actions",
-                    "corrected_triple": None,
-                    "action": "reject",
-                }
+        obj_lower = obj.lower().strip()
+        subj_lower = subj.lower().strip()
 
-        # --- structural POS checks ---
-
-        # ADJ-*-ADJ: always reject
-        if subj_pos == "ADJ" and obj_pos == "ADJ":
+        if obj_lower == subj_lower:
             return {
                 "valid": False,
-                "reason": f"both subject '{subj}' and object '{obj}' are adjectives",
+                "reason": f"circular relation: '{subj} is {obj}' says nothing",
                 "corrected_triple": None,
                 "action": "reject",
             }
 
-        # ADJ-VERB-NOUN with action verb: adjectives can't perform actions
-        if (
-            subj_pos == "ADJ"
-            and obj_pos in {"NOUN", "PROPN"}
-            and rel_has_verb
-            and rel_lemma not in self._COPULAR_VERBS
-        ):
+        subj_is_event = self.is_event_or_action(subj_doc)
+        obj_is_event = self.is_event_or_action(obj_doc)
+
+        if subj_is_event and obj_is_event:
             return {
                 "valid": False,
-                "reason": (
-                    f"adjective '{subj}' cannot be the subject of "
-                    f"action verb '{relation}'"
-                ),
+                "reason": f"'{subj} is {obj}' is circular — both are events/actions",
                 "corrected_triple": None,
                 "action": "reject",
             }
 
-        # NOUN/PRON-VERB-ADJ with non-copular verb: action verbs need noun objects
-        # This catches both "charlemagne values educational" and "he values traditional"
-        if (
-            subj_pos in {"NOUN", "PROPN", "PRON"}
-            and obj_pos == "ADJ"
-            and rel_has_verb
-            and rel_lemma not in self._COPULAR_VERBS
-        ):
+        return None
+
+    # Issue: "charlemagne - conquered - fierce" is wrong (as oppsed to "charlemagne - is - fierce" - valid)
+    # Fix: identify when a verb is functioning as a linking verb rather than an action verb
+    def is_copular_construction(self, relation: str, rel_doc=None) -> bool:
+        COPULAR_LEMMAS = frozenset({"be", "become", "seem", "appear", "remain"})
+        if rel_doc is None:
+            rel_doc = self.spacy_nlp(relation) if relation else None
+
+        if not rel_doc or len(rel_doc) == 0:
+            return False
+
+        relation_lower = relation.lower().strip()
+
+        # Fast path: single copular verb (handles "is", "was", etc.)
+        words = relation_lower.split()
+        if len(words) == 1 and words[0] in self.COMMON_COPULAS:
+            return True
+
+        # Fast path: multi-word starting with copular verb (e.g. "is famous")
+        if len(words) >= 1 and words[0] in self.COMMON_COPULAS:
+            return True
+
+        # Method 1: Check if the root verb is copular
+        root = None
+        for token in rel_doc:
+            if token.dep_ == "ROOT":
+                root = token
+                break
+
+        if root:
+            if root.lemma_.lower() in COPULAR_LEMMAS:
+                return True
+
+            for child in root.children:
+                if child.dep_ in {"attr", "acomp", "pred"}:
+                    return True
+
+        # Method 2: Check if the phrase has copular structure
+        has_subj = any(tok.dep_ in {"nsubj", "nsubjpass"} for tok in rel_doc)
+        has_copula = any(tok.lemma_.lower() in {"be", "become"} for tok in rel_doc)
+        has_complement = any(tok.dep_ in {"attr", "acomp", "pred"} for tok in rel_doc)
+
+        if has_subj and has_copula and has_complement:
+            return True
+
+        return False
+
+    def check_adjective_subject(
+        self, subj_pos: str, rel_has_verb: bool, relation: str, rel_doc
+    ) -> Optional[Dict]:
+        if subj_pos == "ADJ" and rel_has_verb:
+            # If it's a copular construction, adjectives as subjects are fine
+            if self.is_copular_construction(relation, rel_doc):
+                return None
             return {
                 "valid": False,
-                "reason": (
-                    f"action verb '{relation}' cannot take adjective "
-                    f"'{obj}' as object — needs a noun"
-                ),
+                "reason": f"adjective cannot be the subject of action verb '{relation}'",
                 "corrected_triple": None,
                 "action": "reject",
             }
-        # PRON-VERB-NOUN is usually fine (keep existing acceptance)
-        # No need for explicit rule as it will pass through
+        return None
 
-        # --- verb-presence result ---
-        if is_valid_verb:
+    # issue: triplets such as "beautiful - is - nice" -> wrong
+    def check_adjective_object(
+        self,
+        subj_pos: str,
+        obj_pos: str,
+        rel_has_verb: bool,
+        relation: str,
+        rel_doc,
+        obj: str,
+    ) -> Optional[Dict]:
+        if subj_pos in {"NOUN", "PROPN", "PRON"} and obj_pos == "ADJ" and rel_has_verb:
+            # If it's a copular construction, adjectives as objects are fine
+            if self.is_copular_construction(relation, rel_doc):
+                return None
             return {
-                "valid": True,
-                "reason": None,
+                "valid": False,
+                "reason": f"action verb '{relation}' cannot take adjective '{obj}' as object — needs a noun",
                 "corrected_triple": None,
-                "action": "accept",
+                "action": "reject",
             }
+        return None
 
-        # --- correction attempts for missing verb ---
-
-        # verb might be in the object slot (common swap)
+    # issue: triplets such as "king - associated - history"
+    def handle_missing_verb(
+        self, rel_doc, obj_doc, subj: str, relation: str, obj: str
+    ) -> Optional[Dict]:
         if obj_doc and any(t.pos_ in {"VERB", "AUX"} for t in obj_doc):
             return {
                 "valid": False,
@@ -536,7 +514,6 @@ class TripletValidator:
                 "action": "swap",
             }
 
-        # single adjective as relation → suggest copula
         if rel_doc and len(rel_doc) == 1 and rel_doc[0].pos_ == "ADJ":
             return {
                 "valid": False,
@@ -545,24 +522,89 @@ class TripletValidator:
                 "action": "add_copula",
             }
 
+        return None
+
+    def validate_triplet_relation(
+        self, triplet: Tuple[str, str, str]
+    ) -> Dict[str, Any]:
+        subj, relation, obj = triplet
+
+        if self.is_negation_relation(relation):
+            return {
+                "valid": False,
+                "reason": f"negation relation '{relation}' adds no semantic value",
+                "corrected_triple": None,
+                "action": "reject_negation",
+            }
+
+        if self.is_vague_relation(relation):
+            return {
+                "valid": False,
+                "reason": f"vague relation '{relation}' – be more specific",
+                "corrected_triple": None,
+                "action": "reject",
+            }
+
+        if self.spacy_nlp is None:
+            return {
+                "valid": True,
+                "reason": None,
+                "corrected_triple": None,
+                "action": "accept",
+            }
+
+        subj_doc = self.spacy_nlp(subj) if subj else None
+        rel_doc = self.spacy_nlp(relation.strip().lower()) if relation else None
+        obj_doc = self.spacy_nlp(obj) if obj else None
+
+        subj_pos = subj_doc[0].pos_ if subj_doc and len(subj_doc) > 0 else None
+        obj_pos = obj_doc[0].pos_ if obj_doc and len(obj_doc) > 0 else None
+
+        rel_lemma, rel_has_verb = self.extract_verb_info(relation, rel_doc)
+
+        if subj_pos == "ADJ" and obj_pos == "ADJ":
+            return {
+                "valid": False,
+                "reason": f"both subject '{subj}' and object '{obj}' are adjectives",
+                "corrected_triple": None,
+                "action": "reject",
+            }
+
+        result = self.check_has_adjective(rel_lemma, obj_pos, obj)
+        if result:
+            return result
+
+        result = self.check_circular_is(
+            rel_lemma, obj_pos, subj, obj, subj_doc, obj_doc
+        )
+        if result:
+            return result
+
+        result = self.check_adjective_subject(subj_pos, rel_has_verb, relation, rel_doc)
+        if result:
+            return result
+
+        result = self.check_adjective_object(
+            subj_pos, obj_pos, rel_has_verb, relation, rel_doc, obj
+        )
+        if result:
+            return result
+
+        if rel_has_verb:
+            return {
+                "valid": True,
+                "reason": None,
+                "corrected_triple": None,
+                "action": "accept",
+            }
+
+        result = self.handle_missing_verb(rel_doc, obj_doc, subj, relation, obj)
+        if result:
+            return result
+
         return {
             "valid": False,
-            "reason": verb_reason,
+            "reason": f"relation '{relation}' has no verb",
             "corrected_triple": None,
             "action": "reject",
         }
-
-    def is_likely_verb(self, word: str) -> bool:
-        if self.spacy_nlp is None:
-            return False
-
-        doc = self.spacy_nlp(word)
-        if not doc or len(doc) != 1:
-            return False
-
-        token = doc[0]
-        if token.pos_ in {"VERB", "AUX"}:
-            return True
-
-        morph_str = str(token.morph)
-        return any(f in morph_str for f in ["VerbForm", "Tense", "Mood", "Voice"])

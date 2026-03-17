@@ -5,6 +5,7 @@ from collections import defaultdict
 from amoc.core.node import NodeType, NodeSource, NodeProvenance
 from amoc.utils.spacy_utils import get_concept_lemmas
 from amoc.config.constants import MAX_NEW_CONCEPTS, MAX_NEW_PROPERTIES
+from amoc.admission.triplet_validator import TripletValidator
 
 if TYPE_CHECKING:
     from amoc.pipeline.orchestrator import AMoCv4
@@ -40,6 +41,9 @@ class RelationshipGraphBuilder:
 
         self._explicit_nodes_ref = None
         self._current_sentence_index = 0
+
+        # set in configure_with_core
+        self._triplet_validator = None
 
     def set_callbacks(
         self,
@@ -105,6 +109,80 @@ class RelationshipGraphBuilder:
             ),
         )
         self.set_state_refs(explicit_nodes_ref=core._get_explicit_nodes)
+
+        # issue: the triplet validation rules in triplet_validator do not apply to triplets with inferred nodes
+        # Create a triplet validator for this class
+        self._triplet_validator = TripletValidator(
+            linguistic_ops=core._linguistic_ops,
+            extract_deterministic_fn=core._linguistic_ops.extract_deterministic_structure,
+            text_normalizer=core._text_filter_ops,
+            client=core.client,
+            persona=core.persona,
+            spacy_nlp=self.spacy_nlp,
+        )
+
+    def validate_triplet(self, subj: str, rel: str, obj: str) -> tuple:
+        if not self._triplet_validator:
+            return True, subj, rel, obj
+
+        # rel = not related, not associated etc. => reject
+        if self._triplet_validator.is_negation_relation(rel):
+            logging.debug(f"Rejected negation relation (raw): ({subj}, {rel}, {obj})")
+            return False, None, None, None
+
+        if self._triplet_validator.is_vague_relation(rel):
+            logging.debug(f"Rejected vague relation (raw): ({subj}, {rel}, {obj})")
+            return False, None, None, None
+
+        # reject invalid labels
+        if not self._triplet_validator.is_valid_relation_label(rel):
+            logging.info(f"Inferred triplet rejected: invalid relation label '{rel}'")
+            return False, None, None, None
+
+        validation = self._triplet_validator.validate_triplet_relation((subj, rel, obj))
+
+        if validation["action"] in ("reject", "reject_negation"):
+            logging.info(
+                f"Inferred triplet rejected: ({subj}, {rel}, {obj}) – {validation['reason']}"
+            )
+            return False, None, None, None
+
+        # corrections such as swap of the subj/obj (ie. beautiful - is - king)
+        if validation["action"] == "swap" and validation.get("corrected_triple"):
+            corrected = validation["corrected_triple"]
+            logging.info(
+                f"Swapped inferred triplet: ({corrected[0]}, {corrected[1]}, {corrected[2]})"
+            )
+            return True, corrected[0], corrected[1], corrected[2]
+
+        if validation["action"] == "add_copula" and validation.get("corrected_triple"):
+            corrected = validation["corrected_triple"]
+            logging.info(
+                f"Added copula to inferred triplet: ({corrected[0]}, {corrected[1]}, {corrected[2]})"
+            )
+            return True, corrected[0], corrected[1], corrected[2]
+
+        #  Normalize endpoints
+        norm_subj, norm_obj = self._triplet_validator.normalize_endpoints(subj, obj)
+        if norm_subj is None or norm_obj is None:
+            logging.debug(
+                f"Inferred triplet rejected: failed to normalize endpoints ({subj}, {obj})"
+            )
+            return False, None, None, None
+
+        subj, obj = norm_subj, norm_obj
+
+        # Clean and validate relation label
+        edge_label = self._triplet_validator.clean_and_validate_relation(rel)
+        if not edge_label:
+            logging.debug(
+                f"Inferred triplet rejected: failed to clean relation '{rel}'"
+            )
+            return False, None, None, None
+
+        rel = edge_label
+
+        return True, subj, rel, obj
 
     def set_current_sentence(self, sentence_index: int):
         self._current_sentence_index = sentence_index
@@ -176,6 +254,13 @@ class RelationshipGraphBuilder:
                 relationship[2]
             )
 
+            # Validate the triplet
+            is_valid, subj, rel_validated, obj = self.validate_triplet(
+                subj, relationship[1], obj
+            )
+            if not is_valid:
+                continue
+
             # Check per-node limits before proceeding
             if subj_type == NodeType.CONCEPT:
                 if concepts_per_node[subj] >= MAX_NEW_CONCEPTS:
@@ -214,7 +299,7 @@ class RelationshipGraphBuilder:
                     create_node=False,
                 )
 
-            edge_label = relationship[1].replace("(edge)", "").strip()
+            edge_label = rel_validated.replace("(edge)", "").strip()
             edge_label = self._normalize_edge_label_fn(edge_label)
             if not self._is_valid_relation_label_fn(edge_label):
                 continue
@@ -360,6 +445,13 @@ class RelationshipGraphBuilder:
             if subj_type is None or obj_type is None:
                 continue
 
+            # Validate the triplet
+            is_valid, subj, rel_validated, obj = self.validate_triplet(
+                subj, relationship[1], obj
+            )
+            if not is_valid:
+                continue
+
             # Check per-node limits before proceeding
             if subj_type == NodeType.CONCEPT:
                 if concepts_per_node[subj] >= MAX_NEW_CONCEPTS:
@@ -397,7 +489,7 @@ class RelationshipGraphBuilder:
                 create_node=False,
             )
 
-            edge_label = relationship[1].replace("(edge)", "").strip()
+            edge_label = rel_validated.replace("(edge)", "").strip()
             edge_label = self._normalize_edge_label_fn(edge_label)
 
             if not self._is_valid_relation_label_fn(edge_label):

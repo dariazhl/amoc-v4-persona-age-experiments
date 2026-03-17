@@ -9,35 +9,35 @@ from typing import List, Set, Optional, Tuple, Callable
 import networkx as nx
 
 
-BANNED_LEMMAS = {
-    "thing",
-    "things",
-    "man",
-    "certain",
-    "year",
-    "time",
-    "something",
-    "anything",
-    "it",
-    "this",
-    "that",
-    "these",
-    "those",
-    "everything",
-    "nothing",
-    "someone",
-    "somebody",
-    "anyone",
-    "anybody",
-    "everyone",
-    "everybody",
-    "nobody",
-    "dress",
-    "dressed",
-}
-
-
 class Graph:
+
+    # TODO: test without these
+    # TROUBLE
+    BANNED_LEMMAS = {
+        "thing",
+        "things",
+        "man",
+        "certain",
+        "year",
+        "time",
+        "something",
+        "anything",
+        "it",
+        "this",
+        "that",
+        "these",
+        "those",
+        "everything",
+        "nothing",
+        "someone",
+        "somebody",
+        "anyone",
+        "anybody",
+        "everyone",
+        "everybody",
+        "nobody",
+    }
+
     def __init__(self) -> None:
         self.nodes: Set[Node] = set()
         self.edges: Set[Edge] = set()
@@ -75,7 +75,7 @@ class Graph:
         lemmas = [lemma.lower() for lemma in lemmas]
         primary_lemma = lemmas[0] if lemmas else ""
 
-        if primary_lemma in BANNED_LEMMAS:
+        if primary_lemma in self.BANNED_LEMMAS:
             return None
 
         existing_node = self.get_node(lemmas)

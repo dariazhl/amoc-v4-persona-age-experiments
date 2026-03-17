@@ -20,6 +20,26 @@ class TextNormalizer:
         self._graph = graph_ref
         self._story_lemmas = story_lemmas
 
+    def extract_meaning(self, text: str) -> str:
+        text = text.replace("_", " ")
+
+        # Likes/enjoys patterns
+        if re.search(r"\b(like|likes?)\b", text):
+            return "enjoys"
+
+        # Is patterns - prevents triplets such as: charlegmagne - is_type_of - king OR biographer - is_kind_of - knowledgeable
+        if re.search(r"\b(is|are|was|were|be|being|been)\b", text):
+            if re.search(r"kind|type|sort|form|variant|example|instance", text):
+                return "is"
+            return "is"
+
+        # Has patterns
+        if re.search(r"\b(has|have|possess|own)\b", text):
+            return "has"
+
+        # If no pattern matched, return cleaned version
+        return text
+
     def normalize_edge_label(self, label: str) -> str:
         if not label or not isinstance(label, str):
             return ""
@@ -31,31 +51,10 @@ class TextNormalizer:
         cleaned = re.sub(r"\s*\(edge\)\s*", "", cleaned)
         original_lower = cleaned.lower()
 
-        # Step 1: Extract core meaning using patterns
-        def extract_meaning(text: str) -> str:
-            text = text.replace("_", " ")
+        # Step 1: Apply meaning extraction
+        meaning = self.extract_meaning(original_lower)
 
-            # Likes/enjoys patterns
-            if re.search(r"\b(like|likes?)\b", text):
-                return "enjoys"
-
-            # Is patterns - prevents triplets such as: charlegmagne - is_type_of - king
-            if re.search(r"\b(is|are|was|were|be|being|been)\b", text):
-                if re.search(r"kind|type|sort|form|variant|example|instance", text):
-                    return "is"
-                return "is"
-
-            # Has patterns
-            if re.search(r"\b(has|have|possess|own)\b", text):
-                return "has"
-
-            # If no pattern matched, return cleaned version
-            return text
-
-        # Step 2: Apply meaning extraction
-        meaning = extract_meaning(original_lower)
-
-        # Step 3: Clean up for final output
+        # Step 2: Clean up for final output
         if meaning != original_lower:
             cleaned = meaning
         else:
@@ -149,64 +148,3 @@ class TextNormalizer:
                 return True
 
         return False
-
-    @classmethod
-    def clean_label(cls, label: str) -> str:
-        if not label or not isinstance(label, str):
-            return ""
-
-        label = label.strip()
-        if not label:
-            return ""
-
-        prefixes_to_remove = [
-            "nsubj:",
-            "dobj:",
-            "pobj:",
-            "prep:",
-            "amod:",
-            "advmod:",
-            "ROOT:",
-            "VERB:",
-            "NOUN:",
-            "ADJ:",
-            "dep:",
-            "compound:",
-            "agent:",
-            "xcomp:",
-            "ccomp:",
-            "aux:",
-            "auxpass:",
-        ]
-        for prefix in prefixes_to_remove:
-            if label.lower().startswith(prefix.lower()):
-                label = label[len(prefix) :]
-
-        label = re.sub(r"[^\w\s]+$", "", label)
-        label = label.strip()
-        label = re.sub(r"\s+", " ", label)
-
-        if len(label) > 0:
-            if re.search(r"(.)\1{2,}", label):
-                label = re.sub(r"([bcdfghjklmnpqrstvwxyz])\1+$", r"\1", label)
-
-            words = label.split()
-            cleaned_words = []
-            for word in words:
-                if len(word) <= 2:
-                    cleaned_words.append(word.lower())
-                    continue
-                if not re.search(r"[aeiou]", word.lower()):
-                    continue
-                cleaned_words.append(word.lower())
-
-            if not cleaned_words:
-                return ""
-            label = " ".join(cleaned_words)
-
-        label = label.lower().strip()
-
-        if len(label) < 2:
-            return ""
-
-        return label
