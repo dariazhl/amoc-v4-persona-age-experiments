@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Optional, List, Set, Dict
 from collections import deque
 import networkx as nx
 from amoc.core.node import NodeSource
+from amoc.config.constants import MAX_CARRYOVER
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
@@ -107,20 +108,26 @@ class Decay:
 
             elif score == 1:
                 if is_critical:
+                    # decay twice
                     edge.reduce_visibility()
                     edge.reduce_visibility()
                     stats["protected"] += 1
                 else:
-                    edge.reduce_visibility()
-                    if edge.visibility_score <= 0:
-                        edge.visibility_score = 0
-                        edge.active = False
+                    edge.visibility_score = 0
+                    edge.active = False
                     stats["decay"] += 1
-                    logging.info(f"decayed edge {triplet_str} (score=1)")
+                    logging.info(
+                        f"immediately deactivated edge {triplet_str} (score=1)"
+                    )
 
             elif score == 2:
-                edge.visibility_score = max(0, edge.visibility_score - 1)
+                edge.visibility_score = max(0, edge.visibility_score - 2)
+                if edge.visibility_score <= 0:
+                    edge.active = False
                 stats["maintain"] += 1
+                logging.info(
+                    f"fast decay for edge {triplet_str} (score=2, new score={edge.visibility_score})"
+                )
 
             elif score == 3:
                 edge.visibility_score = min(
@@ -198,7 +205,7 @@ class Decay:
             return 2
 
     # prune carryover nodes and inferred nodes
-    def apply_pruning(self, prev_sentences, target_size=5):
+    def apply_pruning(self, prev_sentences, threshold_for_pruning=5):
         # Get all active edges
         all_active_triplets = []
         edge_to_obj = {}
@@ -220,10 +227,12 @@ class Decay:
                 all_active_triplets.append(triplet)
                 edge_to_obj[triplet_str] = edge
 
-        if len(all_active_triplets) <= target_size:
+        if len(all_active_triplets) <= threshold_for_pruning:
             return
 
-        logging.info(f"current size {len(all_active_triplets)}, target {target_size}")
+        logging.info(
+            f"current size {len(all_active_triplets)}, target {threshold_for_pruning}"
+        )
 
         # Get story context
         story_context = self._get_story_context() if self._get_story_context else ""
@@ -286,21 +295,26 @@ class Decay:
             f"protected {explicit_protected} explicit edges"
         )
 
+    # inactivates zombie nodes after pruning and decay
     def prune_inactive_edgeless_nodes(self) -> List["Node"]:
         newly_dangling = []
 
         for node in self._graph.nodes:
-            if not node.edges:
-                continue
-            # Node has edges but none are active
-            if not any(e.active for e in node.edges):
-                continue
-            # Check if all active edges have visibility <= 0
-            # (they'll become inactive on next reset but are still marked active)
             active_edges = [e for e in node.edges if e.active]
+
+            # option 1 - Node has no active edges at all
+            if not active_edges:
+                if node.active:
+                    # Don't set node.active directly - it's a property
+                    # The node will become inactive automatically since it has no active edges
+                    newly_dangling.append(node)
+                continue
+
+            # option 2 - Node has active edges but all have visibility <= 0
             if all(e.visibility_score <= 0 for e in active_edges):
                 for e in active_edges:
                     e.active = False
+                # Don't set node.active - it will reflect the edge states
                 newly_dangling.append(node)
 
         if newly_dangling:
@@ -942,8 +956,41 @@ class Decay:
         # First run semantic decay
         self.apply_semantic_edge_decay()
 
-        # Then aggressive pruning
-        self.apply_pruning(prev_sentences, target_size=15)
+        # Then pruning
+        self.apply_pruning(prev_sentences)
 
-        # Finally node cleanup
+        # Final node cleanup - edges get deactivated, but nodes do not
         self.prune_inactive_edgeless_nodes()
+
+        # node cap
+        explicit_nodes = (
+            self._get_explicit_nodes()
+            if hasattr(self, "_get_explicit_nodes")
+            else set()
+        )
+        explicit_names = {n.get_text_representer() for n in explicit_nodes}
+
+        # Get all active carryover nodes
+        carryover_nodes = [
+            n
+            for n in self._graph.nodes
+            if n.active and n.get_text_representer() not in explicit_names
+        ]
+
+        # If too many, keep only those with most edges
+        if len(carryover_nodes) > MAX_CARRYOVER:
+            # Sort by number of active edges (descending)
+            carryover_nodes.sort(
+                key=lambda n: sum(1 for e in n.edges if e.active), reverse=True
+            )
+
+            # Keep top MAX_CARRYOVER, deactivate rest
+            to_keep = carryover_nodes[:MAX_CARRYOVER]
+            to_prune = carryover_nodes[MAX_CARRYOVER:]
+
+            for node in to_prune:
+                for edge in list(node.edges):
+                    if edge.active:
+                        edge.active = False
+                        edge.visibility_score = 0
+                logging.info(f"Capped carryover node: {node.get_text_representer()}")

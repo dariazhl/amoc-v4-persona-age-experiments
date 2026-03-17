@@ -591,38 +591,31 @@ Current sentence:
 Active relationships:
 {active_triplets}
 
-KEEP ONLY relationships that are ABSOLUTELY NECESSARY:
+KEEP ONLY if they meet ALL these criteria:
 1. Directly involves main characters in the CURRENT sentence
-2. Forms a CRITICAL BRIDGE that connects important concepts
-3. Is semantically complete (subject + verb + noun object)
+2. Is ABSOLUTELY NECESSARY to understand what's happening NOW
+3. Forms a CRITICAL BRIDGE that would break the graph if removed
 
-IMPORTANT - CONNECTIVITY RULE:
-If removing a relationship would leave a concept COMPLETELY ISOLATED (no other connections), you MUST keep at least one relationship for that concept, even if it's not ideal.
-
-REMOVE everything else, including:
-- Background information not relevant to current events
-- Inferred attributes that aren't essential
-- Redundant or duplicate relationships
+REMOVE everything else, especially:
+- Any relationship NOT mentioned in the current sentence
+- Background information from earlier sentences
+- Inferred attributes that aren't essential right now
+- Redundant relationships (keep only the most general form)
 - Vague or incomplete triples
 
 DECISION EXAMPLES:
 Sentence 1: "Charlemagne conquered the Saxons."
-Active triplets:
-- (charlemagne, conquered, saxons) - KEEP (directly in current sentence)
-- (charlemagne, is, king) - REMOVE (background, not in current sentence)
-- (saxons, are, fierce) - REMOVE (inferred, not in current sentence)
+- (charlemagne, conquered, saxons) - KEEP (current action)
+- (charlemagne, is, king) - REMOVE (background)
+- (saxons, are, fierce) - REMOVE (inferred)
 
-Sentence 2: "He was a powerful ruler."
-Active triplets:
-- (charlemagne, is, powerful) - KEEP (directly in current sentence)
-- (charlemagne, conquered, saxons) - REMOVE (not in current sentence)
-- (charlemagne, has, army) - REMOVE (not mentioned, inferred)
+Sentence 2: "He wore traditional attire."
+- (charlemagne, wears, attire) - KEEP (current action)
+- (charlemagne, conquered, saxons) - REMOVE (past event)
+- (charlemagne, wears, linen) - REMOVE (too specific, redundant with "attire")
 
-Sentence 3: "The court scholars wrote manuscripts."
-Active triplets:
-- (court, employs, scholars) - KEEP (bridges to current)
-- (scholars, write, manuscripts) - KEEP (directly in current sentence)
-- (charlemagne, has, court) - REMOVE (not mentioned in current sentence)
+Sentence 5: (charlemagne, conquered, saxons) from 4 sentences ago
+- REMOVE (no longer relevant to current narrative)
 
 Return a JSON object with this exact structure:
 {{
@@ -631,6 +624,6 @@ Return a JSON object with this exact structure:
         "(subject2, relation2, object2)",
         ...
     ],
-    "reasoning": "Explain pruning decisions, noting what was removed and why"
+    "reasoning": "Explain pruning decisions"
 }}
 """
