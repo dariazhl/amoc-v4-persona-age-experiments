@@ -8,44 +8,6 @@ class TripletDeduplicator:
         self.nlp = spacy_nlp
         self.vector_cache = {}
 
-    _VAGUE_PATTERNS = (
-        "relat",
-        "associat",
-        "connect",
-        "link",
-        "involv",
-        "concern",
-        "regard",
-        "pertain",
-        "correspond",
-        "tie",
-        "bind",
-    )
-
-    _VAGUE_EXACT = frozenset(
-        {
-            "related",
-            "relates",
-            "relates_to",
-            "related_to",
-            "associated",
-            "associated_with",
-            "connected",
-            "connected_to",
-            "linked",
-            "linked_to",
-            "involves",
-            "concerns",
-            "regarding",
-            "pertains_to",
-            "corresponds_to",
-            "tied_to",
-            "bound_to",
-            "relating_to",
-            "associating_with",
-        }
-    )
-
     def deduplicate(
         self, triplets: List[Tuple[str, str, str]]
     ) -> List[Tuple[str, str, str]]:
@@ -55,9 +17,7 @@ class TripletDeduplicator:
         original_count = len(triplets)
 
         exact_deduped = self.remove_exact_duplicates(triplets)
-        negation_filtered = self.remove_negation_relations(exact_deduped)
-        vague_filtered = self.remove_vague_relations(negation_filtered)
-        semantic_deduped = self.remove_semantic_duplicates(vague_filtered)
+        semantic_deduped = self.remove_semantic_duplicates(exact_deduped)
         final = self.remove_exact_duplicates(semantic_deduped)
 
         removed = original_count - len(final)
@@ -65,122 +25,6 @@ class TripletDeduplicator:
             logging.info(f"deduplication removed {removed} triplets")
 
         return final
-
-    def is_vague_relation(self, relation: str) -> bool:
-        if not relation:
-            return False
-
-        # Normalize for checking
-        r_check = relation.lower().replace("_", " ")
-
-        vague_patterns = [
-            "relat",
-            "associat",
-            "connect",
-            "link",
-            "involv",
-            "concern",
-            "regard",
-            "pertain",
-            "correspond",
-            "tie",
-            "bind",
-        ]
-
-        return any(pattern in r_check for pattern in vague_patterns)
-
-    _NEGATION_PHRASES = (
-        "not connected",
-        "not_connected",
-        "not connected to",
-        "not_connected_to",
-        "not related",
-        "not associated",
-        "not linked",
-        "not involved",
-        "not applicable",
-        "not present",
-        "not exist",
-        "no connection",
-        "no_connection",
-        "no relation",
-        "no link",
-        "no association",
-        "no involvement",
-        "without connection",
-        "without relation",
-        "unconnected",
-        "unrelated",
-        "disconnected",
-    )
-
-    def is_negation_relation(self, relation: str) -> bool:
-        if not relation:
-            return False
-
-        r_lower = relation.lower().strip().replace("_", " ")
-
-        for phrase in self._NEGATION_PHRASES:
-            if phrase in r_lower:
-                return True
-
-        return r_lower.startswith(("not ", "no "))
-
-    def remove_negation_relations(
-        self, triplets: List[Tuple[str, str, str]]
-    ) -> List[Tuple[str, str, str]]:
-        if not triplets:
-            return []
-
-        result = []
-        removed_count = 0
-
-        for s, r, o in triplets:
-            if self.is_negation_relation(r):
-                removed_count += 1
-                logging.debug(f"removed negation relation: ({s}, {r}, {o})")
-            else:
-                result.append((s, r, o))
-
-        if removed_count > 0:
-            logging.info(f"removed {removed_count} negation triplets")
-
-        return result
-
-    def remove_vague_relations(
-        self, triplets: List[Tuple[str, str, str]]
-    ) -> List[Tuple[str, str, str]]:
-        if not triplets:
-            return []
-
-        # Core vague patterns - these capture all variations
-        vague_patterns = [
-            "relat",  # related, relates, relating, relationship
-            "associat",  # associated, associates, association
-            "connect",  # connected, connects, connection
-            "involv",  # involves, involved, involvemen
-        ]
-
-        result = []
-        removed_count = 0
-
-        for s, r, o in triplets:
-            # Convert to lowercase and replace underscores with spaces for checking
-            r_check = r.lower().replace("_", " ")
-
-            # Check if any vague pattern appears
-            is_vague = any(pattern in r_check for pattern in vague_patterns)
-
-            if is_vague:
-                removed_count += 1
-                logging.debug(f"Removed vague relation: ({s}, {r}, {o})")
-            else:
-                result.append((s, r, o))
-
-        if removed_count > 0:
-            logging.info(f"Removed {removed_count} triplets with vague relations")
-
-        return result
 
     def remove_exact_duplicates(
         self, triplets: List[Tuple[str, str, str]]

@@ -351,55 +351,10 @@ class TripletValidator:
         }
     )
 
-    def is_negation_relation(self, relation: str) -> bool:
-        if not relation or not isinstance(relation, str):
-            return False
-
-        r_lower = relation.lower().strip().replace("_", " ")
-
-        negation_phrases = (
-            "not connected",
-            "not related",
-            "not associated",
-            "not linked",
-            "not involved",
-            "not applicable",
-            "not present",
-            "not exist",
-            "no connection",
-            "no relation",
-            "no link",
-            "no association",
-            "no involvement",
-            "without connection",
-            "without relation",
-            "unconnected",
-            "unrelated",
-            "disconnected",
-        )
-
-        for phrase in negation_phrases:
-            if phrase in r_lower:
-                return True
-
-        if r_lower.startswith(("not ", "no ")):
-            return True
-
-        return False
-
     def validate_triplet_relation(
         self, triplet: Tuple[str, str, str]
     ) -> Dict[str, Any]:
         subj, relation, obj = triplet
-
-        # negation check before spacy parsing
-        if self.is_negation_relation(relation):
-            return {
-                "valid": False,
-                "reason": f"negation relation '{relation}' adds no semantic value",
-                "corrected_triple": None,
-                "action": "reject_negation",
-            }
 
         if self.spacy_nlp is None:
             return {
