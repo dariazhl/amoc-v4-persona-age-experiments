@@ -53,13 +53,25 @@ scontrol show jobid -dd <JOBNR>
 Results are saved to:
 
 ```
-/export/projects/nlp/daria_amoc_output/amoc_analysis/small_example_output_llama/run_<JOBNR>/
+/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output/extracted_triplets/small_example_output_llama/run_<JOBNR>/
 ```
 
-Inside you'll find:
-
-- **graphs/** — graphs
+Folder structure:
+- **graphs/** — graphs 
+-- reverse --> nodes in frozen positions, plotted backwards (**main point of interest**)
+-- cumulative -> node position may shift 
 - **matrix/** — activation matrices
 - **triplets/** — extracted triplets (per-sentence and cumulative)
 
 ### 6. Export graphs using rsync
+```bash
+rsync -avz \
+ana_daria.zahaleanu@fep.grid.pub.ro:/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output/extracted_triplets/small_example_output_llama/run_129277/graphs/reverse_plots/ \
+/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/results/...
+```
+
+```bash
+rsync -avz \
+ana_daria.zahaleanu@fep.grid.pub.ro:/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output/extracted_triplets/small_example_output_llama/run_129277/graphs/cumulative_graph/ \
+/Users/dariazahaleanu/Documents/Coding_Projects/amoc-v4-persona-age-experiments/results/...
+```

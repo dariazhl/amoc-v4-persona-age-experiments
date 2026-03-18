@@ -11,7 +11,6 @@ pytest.ini
 *.csv
 *.pdf
 *.def
-*.md
 
 # environments
 venv/

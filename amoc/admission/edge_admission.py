@@ -76,6 +76,7 @@ class EdgeAdmission:
             triplet_intro=core._triplet_intro,
         )
 
+    # TODO: remove these lists from here
     # Negation phrases that should never appear as edge labels
     _NEGATION_PHRASES = frozenset(
         {

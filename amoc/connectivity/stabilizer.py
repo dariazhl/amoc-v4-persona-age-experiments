@@ -415,7 +415,7 @@ class ConnectivityStabilizer:
         self._persona = persona
 
         # Step 1: Connect isolated explicit nodes
-        self._connect_isolated_explicit_node(
+        self.connect_isolated_explicit_node(
             per_sentence_view,
             prev_sentences,
             current_sentence_text,
@@ -423,7 +423,7 @@ class ConnectivityStabilizer:
         )
 
         # Step 2: LLM repair for any remaining isolated explicit nodes
-        self._repair_isolated_explicit_nodes(
+        self.repair_isolated_explicit_nodes(
             per_sentence_view, current_sentence_text, normalize_edge_label_fn
         )
 
@@ -434,7 +434,7 @@ class ConnectivityStabilizer:
         self._graph.enforce_connectivity(required_nodes, allow_reactivation=True)
 
         # Step 4: LLM forced‑edge repair
-        self._create_forced_edges_via_llm(
+        self.create_forced_edges_via_llm(
             prev_sentences, current_sentence_text, create_forced_edges_fn
         )
 
@@ -450,7 +450,7 @@ class ConnectivityStabilizer:
         )
 
     # Connect a single isolated explicit node using LLM with FORCED_CONNECTIVITY_EDGE_PROMPT
-    def _connect_isolated_explicit_node(
+    def connect_isolated_explicit_node(
         self,
         per_sentence_view,
         prev_sentences: list,
@@ -508,7 +508,7 @@ class ConnectivityStabilizer:
             edge.mark_as_current_sentence(reset_score=True)
 
     # Use LLM to connect isolated explicit nodes, forcing the isolated node as subject
-    def _repair_isolated_explicit_nodes(
+    def repair_isolated_explicit_nodes(
         self,
         per_sentence_view,
         current_sentence_text: str,
@@ -566,7 +566,7 @@ class ConnectivityStabilizer:
                 edge.mark_as_current_sentence(reset_score=True)
 
     # Try twice to connect disconnected components using LLM
-    def _create_forced_edges_via_llm(
+    def create_forced_edges_via_llm(
         self,
         prev_sentences: list,
         current_sentence_text: str,
