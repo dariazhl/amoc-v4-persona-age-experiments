@@ -286,6 +286,18 @@ class TripletValidator:
             "not associated",
             "without connection",
             "without relation",
+            "not involved",
+            "not_related",
+            "no_connection",
+            "not_available",
+            "not_applicable",
+            "not_connected",
+            "no_relation",
+            "no_link",
+            "not_involved",
+            "not_associated",
+            "without_connection",
+            "without_relation",
             "unconnected",
             "unrelated",
             "disconnected",
@@ -557,7 +569,9 @@ class TripletValidator:
         subj_doc = self.spacy_nlp(subj) if subj else None
         # Replace underscores with spaces so spaCy can tokenize compound
         # relations like "has_biographer" → "has biographer" and detect verbs.
-        relation_for_parse = relation.strip().lower().replace("_", " ") if relation else ""
+        relation_for_parse = (
+            relation.strip().lower().replace("_", " ") if relation else ""
+        )
         rel_doc = self.spacy_nlp(relation_for_parse) if relation_for_parse else None
         obj_doc = self.spacy_nlp(obj) if obj else None
 

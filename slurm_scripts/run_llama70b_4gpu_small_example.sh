@@ -20,10 +20,6 @@ export HF_HOME="/export/projects/nlp/.cache"
 export TRANSFORMERS_CACHE="$HF_HOME"
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export NCCL_DEBUG=warn
-export NCCL_P2P_DISABLE=1
-export NCCL_IB_DISABLE=1
-
 
 RUN_ID="run_${SLURM_ARRAY_JOB_ID}"
 BASE_OUTPUT_DIR="/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output/extracted_triplets/small_example_output_llama"
@@ -40,7 +36,7 @@ fi
 
 INPUT_FILE="${CHUNK_FILES[$SLURM_ARRAY_TASK_ID]}"
 
-echo "Running Llama-3.3-70B (stable mode)"
+echo "Running Llama-3.3-70B"
 echo "SLURM ARRAY TASK ID: ${SLURM_ARRAY_TASK_ID}"
 echo "Processing chunk file: ${INPUT_FILE}"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"

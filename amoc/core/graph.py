@@ -37,6 +37,8 @@ class Graph:
         "everyone",
         "everybody",
         "nobody",
+        "dress",
+        "dressed",
     }
 
     def __init__(self) -> None:

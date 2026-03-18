@@ -50,7 +50,6 @@ class ReverseGraphPlotter:
             if "salient_nodes" in state:
                 state_nodes.update(state["salient_nodes"])
             if "inactive_nodes" in state:
-                # TODO: REVERT IF IT BREAKS
                 state_nodes.update(state["inactive_nodes"])
 
             # Filter out nodes that were never in working memory to prevent

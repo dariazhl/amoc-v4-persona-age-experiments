@@ -1,63 +1,65 @@
-# AMoC v4 Persona Age Experiments
+# AMoC v4 — Persona Age Experiments
 
-A pipeline to generate AMoC knowledge-graph triplets for persona texts, plot graphs, remove outliers, and run stats—optimized for SLURM + vLLM.
+## How to run
 
-## End-to-end flow
-Persona CSV (possibly chunked)
-        |
-        v
-  amoc.cli.main
-    - parse args (models, chunk file, TP, plotting flags)
-    - load spaCy
-    - call process_persona_csv
-        |
-        v
-  AgeAwareAMoCEngine.run
-    - build persona description (age + text)
-    - instantiate AMoCv4
-    - AMoCv4.analyze (story sentences)
-         - init graph from first sentence
-         - iterate sentences: add/infer edges, update active flags, optional per-sentence plots
-         - return triplets (with active flag)
-        |
-        v
-  Runner writes triplets CSV
-    - filename: model_<model>_triplets_<chunk>.csv
-    - columns: original_index, age_refined, persona_text, model_name,
-               subject, relation, object, regime, active
-    - optional final plot: amoc_graph_<model>_<persona>_<age>_final.png
-        |
-        v
-Parallel over chunks via SLURM array
-        |
-        v
-After extraction:
-Merge chunks:
-  merge_csv_triplet_chunks.py
-    - group by model/regime
-    - merge → model_<model>_triplets_<regime>.csv
-        |
-        v
-Outlier removal & stats:
-  remove_outliers_and_run_plots.sh
-    - remove_outliers.py (reads merged files)
-    - stats/plots per regime/age bins
+### 1. Navigate to the project directory
 
-## Directories
-- Persona inputs: `input/` 
-- Extraction outputs: `results/extracted_triplets_final_plot/`
-- Graphs after each sentence: `results/Qwen3-30b/graphs_per_sentence/`
+```bash
+cd /export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments
+```
 
-## File naming:
-  - Triplets per chunk: `model_<model>_triplets_<chunkfilename>.csv`
-  - Merged per regime: `model_<model>_triplets_<regime>.csv`
-  - Plots: `amoc_graph_<model>_<persona>_<age>[_sentN|_final].png`
+### 2. Pull latest changes
 
-## Important Flags
-- `--plot-final-graph`: one graph per persona (final state).
-- `--plot-largest-component-only`: plot only the largest component (display only).
-- `--replace-pronouns`: enable pronoun resolution (off by default).
-- `--tp`: tensor parallel size for vLLM.
+```bash
+git pull
+git status
+```
 
+### 3. Submit a job
 
+Use scripts Qwen3-30B-A3B-Instruct-2507 or Llama-3.3-70B:
 
+```bash
+slurm_scripts/ 
+```
+
+By default, I have been using  Llama-3.3-70B on a handful of personas with:
+```bash
+slurm_scripts/run_llama70b_4gpu_small_example.sh
+```
+
+For a custom text (e.g. grade 4-5 texts):
+
+```bash
+sbatch slurm_scripts/run_llama70b_4gpu_small_example.sh tusa_text/grade_4_5.txt
+```
+
+For the original knight story (default):
+
+```bash
+sbatch slurm_scripts/run_llama70b_4gpu_small_example.sh
+```
+
+### 4. Check job status
+
+Logs go to `exports/`. To inspect a running or completed job:
+
+```bash
+scontrol show jobid -dd <JOBNR>
+```
+
+### 5. Find the outputs
+
+Results are saved to:
+
+```
+/export/projects/nlp/daria_amoc_output/amoc_analysis/small_example_output_llama/run_<JOBNR>/
+```
+
+Inside you'll find:
+
+- **graphs/** — graphs
+- **matrix/** — activation matrices
+- **triplets/** — extracted triplets (per-sentence and cumulative)
+
+### 6. Export graphs using rsync

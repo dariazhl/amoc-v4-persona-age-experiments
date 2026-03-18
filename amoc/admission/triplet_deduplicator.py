@@ -142,7 +142,7 @@ class TripletDeduplicator:
             if sim > 0.7:
                 return True
 
-        # Strategy 2: Lemma relationship
+        # Strategy 2: Lemma
         if self.check_lemma_relationship(adj_data["lemma"], noun_data["lemma"]):
             return True
 
@@ -150,7 +150,7 @@ class TripletDeduplicator:
         if self.check_morphological_pattern(adj_data, noun_data):
             return True
 
-        # Strategy 4: String containment
+        # Strategy 4: Strings
         if self.check_string_relationship(
             adj_data["object_lower"], noun_data["object_lower"]
         ):

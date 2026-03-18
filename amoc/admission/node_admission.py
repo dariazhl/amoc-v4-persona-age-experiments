@@ -71,12 +71,8 @@ class NodeAdmission:
             logging.info(f"ADMIT_NODE: First sentence inference - ALLOWING")
             if self._has_active_attachment_fn and self._has_active_attachment_fn(lemma):
                 return True
-            # # For first sentence, also check if it's grounded in the current sentence
-            # if sent and any(tok.lemma_.lower() == lemma for tok in sent):
-            #     return True
-            # return False
 
-            return True  # ← Make sure this is uncommented!
+            return True
 
         # reject nodes from internal provenance
         if provenance in {
@@ -130,16 +126,6 @@ class NodeAdmission:
         # anything else is rejected
         if provenance != "STORY_EXPLICIT" and not is_allowed_inference:
             return False
-
-        # # cut down the number of nodes
-        # if provenance == "INFERRED_RELATION":
-        #     inferred_count = sum(
-        #         1
-        #         for n in self._graph.nodes
-        #         if n.node_source == NodeSource.INFERENCE_BASED
-        #     )
-        #     if inferred_count > 15:
-        #         return False
 
         # Track total nodes and layout depth
         if lemma not in self._ever_admitted_nodes:
