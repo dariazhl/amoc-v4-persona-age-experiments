@@ -745,6 +745,7 @@ class GraphPlotter:
                 edge_activation_scores=edge_scores,
                 layout_from_active_only=False,  # Layout based on all nodes
                 show_triplet_overlay=True,
+                active_triplets_for_overlay=active_triplets,
                 layout_depth=self._layout_depth,
                 graph=self._graph,
             )

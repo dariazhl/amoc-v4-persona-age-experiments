@@ -519,12 +519,24 @@ def plot_amoc_triplets(
     edge_labels: Dict[Tuple[str, str, str], str] = {}
     edge_status: Dict[Tuple[str, str, str], str] = {}
     edge_scores: Dict[Tuple[str, str, str], int] = edge_activation_scores or {}
+    # Build a lookup set of active triplets for the smart dedup and overlay.
+    # Use active_triplets_for_overlay (authoritative source with correct labels
+    # and directions) when available; fall back to active_edges for compat.
+    _active_triplet_set: set = set()
+    if active_triplets_for_overlay:
+        _active_triplet_set = {
+            (str(s).strip(), str(r).strip(), str(o).strip())
+            for s, r, o in active_triplets_for_overlay
+            if s and o
+        }
+
     active_edge_set = active_edges or set()
 
     # Build sets for node categorization (needed for layout decision)
     inactive_node_set = set(inactive_nodes) if inactive_nodes else set()
 
-    seen_node_pairs: set[Tuple[str, str]] = set()
+    # dedup: keep at most one edge per undirected node pair,
+    _best_edge_per_pair: Dict[Tuple[str, str], Tuple[str, str, str, bool]] = {}
 
     for src, rel, dst in triplets:
         src = str(src).strip()
@@ -534,35 +546,40 @@ def plot_amoc_triplets(
         if not src or not dst or not rel:
             continue
 
-        pair_key = tuple(sorted((src, dst)))
-        if pair_key in seen_node_pairs:
-            continue
-        seen_node_pairs.add(pair_key)
-
         is_structural = rel.startswith("structural::")
         clean_rel = rel.replace("structural::", "").strip()
 
-        # Unique key per semantic relation
+        # Check if this triplet is active — first via the authoritative
+        # active_triplet_set, then via the legacy active_edge_set.
+        is_active = (src, rel, dst) in _active_triplet_set
+        if not is_active and not _active_triplet_set:
+            is_active = (src, dst) in active_edge_set or (
+                src,
+                dst,
+                clean_rel,
+            ) in active_edge_set
+
+        pair_key = tuple(sorted((src, dst)))
+
+        if pair_key not in _best_edge_per_pair:
+            _best_edge_per_pair[pair_key] = (src, clean_rel, dst, is_active)
+        else:
+            _, _, _, current_is_active = _best_edge_per_pair[pair_key]
+            # Replace if the stored edge is inactive and this one is active
+            if not current_is_active and is_active:
+                _best_edge_per_pair[pair_key] = (src, clean_rel, dst, is_active)
+
+    # Second pass: build G from the winning edges
+    for src, clean_rel, dst, is_active in _best_edge_per_pair.values():
         edge_key = f"{clean_rel}"
 
-        # Edge direction must always follow triplet ordering.
         G.add_edge(src, dst, key=edge_key)
-
         edge_labels[(src, dst, edge_key)] = clean_rel
+        edge_status[(src, dst, edge_key)] = "normal"
 
-        if is_structural:
-            edge_status[(src, dst, edge_key)] = "structural"
-        else:
-            edge_status[(src, dst, edge_key)] = "normal"
-
-        # Add to active subgraph only if BOTH endpoints are active
-        is_edge_active = (src, dst) in active_edge_set or (
-            src,
-            dst,
-            edge_key,
-        ) in active_edge_set
+        # Add to active subgraph for layout computation
         involves_inactive = src in inactive_node_set or dst in inactive_node_set
-        if layout_from_active_only and not involves_inactive and is_edge_active:
+        if layout_from_active_only and not involves_inactive and is_active:
             G_active.add_edge(src, dst, key=edge_key)
 
     # Ensure explicit nodes always exist in graph (even without edges)
@@ -799,9 +816,14 @@ def plot_amoc_triplets(
     _EDGE_WIDTH_INACTIVE = 1.2  # edges touching inactive nodes
     _EDGE_WIDTH_STRUCTURAL = 2.0  # structural (dashed) edges
 
+    def check_edge_active(u, v, k):
+        if _active_triplet_set:
+            return (u, k, v) in _active_triplet_set
+        return (u, v, k) in active_edge_set or (u, v) in active_edge_set
+
     for u, v, k in G.edges(keys=True):
         status = edge_status.get((u, v, k), "normal")
-        is_active = (u, v, k) in active_edge_set or (u, v) in active_edge_set
+        is_active = check_edge_active(u, v, k)
         involves_inactive = u in inactive_node_set or v in inactive_node_set
 
         if status == "structural":
@@ -832,7 +854,7 @@ def plot_amoc_triplets(
     # Uniform alpha: active = fully opaque, inactive = faded
     normal_edge_alphas = []
     for u, v, k in normal_edges:
-        is_active = (u, v, k) in active_edge_set or (u, v) in active_edge_set
+        is_active = check_edge_active(u, v, k)
         normal_edge_alphas.append(1.0 if is_active else 0.4)
 
     # Edges are drawn with arrows pointing from u to v
@@ -952,7 +974,7 @@ def plot_amoc_triplets(
         if (u, v, k) not in edge_labels:
             continue
 
-        is_active = (u, v, k) in active_edge_set or (u, v) in active_edge_set
+        is_active = check_edge_active(u, v, k)
         is_structural = str(k).startswith("structural::")
         involves_inactive = u in inactive_node_set or v in inactive_node_set
 
@@ -1181,21 +1203,18 @@ def plot_amoc_triplets(
     if show_triplet_overlay:
         active_nodes_for_filter = plotted_nodes - inactive_node_set
 
-        # Build overlay triplets — only edges that are both between active
-        # nodes AND present in active_edge_set.  Without the active_edge_set
-        # check, deactivated edges between two nodes that still have *other*
-        # active connections leak into the "active triplet" panel while
-        # being rendered as gray/faded in the graph visual.
         overlay_triplets = []
-        for u, v, k in G.edges(keys=True):
-            if (u, v, k) in edge_labels:
-                if u in active_nodes_for_filter and v in active_nodes_for_filter:
-                    is_active = (
-                        (u, v, k) in active_edge_set
-                        or (u, v) in active_edge_set
-                    )
-                    if is_active:
-                        overlay_triplets.append((u, edge_labels[(u, v, k)], v))
+        if active_triplets_for_overlay:
+            for s, r, o in active_triplets_for_overlay:
+                if s in active_nodes_for_filter and o in active_nodes_for_filter:
+                    overlay_triplets.append((s, r, o))
+        else:
+            # Fallback for callers that don't pass active_triplets_for_overlay
+            for u, v, k in G.edges(keys=True):
+                if (u, v, k) in edge_labels:
+                    if u in active_nodes_for_filter and v in active_nodes_for_filter:
+                        if check_edge_active(u, v, k):
+                            overlay_triplets.append((u, edge_labels[(u, v, k)], v))
 
         draw_triplet_panel(
             ax_triplets,
