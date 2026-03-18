@@ -1,0 +1,98 @@
+Bootstrap: docker
+From: nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04
+
+%environment
+source /opt/venv/bin/activate
+export PATH="/opt/venv/bin:$PATH"
+export HF_HOME="/export/projects/nlp/.cache"
+
+%post
+apt-get update -y
+apt-get install -y software-properties-common
+add-apt-repository -y ppa:deadsnakes/ppa
+apt-get update -y
+
+echo "Acquire::http::Pipeline-Depth 0;" > /etc/apt/apt.conf.d/99custom
+echo "Acquire::http::No-Cache true;" >> /etc/apt/apt.conf.d/99custom
+echo "Acquire::BrokenProxy    true;" >> /etc/apt/apt.conf.d/99custom
+
+rm -rf /var/lib/apt/lists/*
+sed -i 's|http://archive.ubuntu.com/ubuntu|http://de.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+sed -i 's|http://security.ubuntu.com/ubuntu|http://de.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+
+apt-get update -y
+apt-get install -y \
+    rsync \
+    git \
+    wget \
+    curl \
+    ninja-build \
+    python3.11 \
+    python3.11-venv \
+    python3.11-dev \
+    python3-pip \
+    python3-venv \
+    python-is-python3 \
+    python3-dev \
+    build-essential \
+    libsndfile1
+
+python3.11 -m venv /opt/venv
+. /opt/venv/bin/activate
+
+python -m pip install --upgrade pip setuptools wheel
+
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+python -m pip install vllm
+
+python -m pip install \
+    accelerate \
+    av \
+    bert-score \
+    bitsandbytes \
+    cleantext \
+    datasets \
+    evaluate \
+    fairscale \
+    fire \
+    matplotlib \
+    networkx \
+    nltk \
+    num2words \
+    numpy \
+    openai \
+    openpyxl \
+    packaging \
+    pandas \
+    peft \
+    Pillow \
+    plotly \
+    python-dotenv \
+    regex \
+    requests \
+    rouge_score \
+    scikit-learn \
+    scipy \
+    seaborn \
+    sentence-transformers \
+    sentencepiece \
+    seqeval \
+    spacy==3.7.4 \
+    statsmodels \
+    tabulate \
+    tenacity \
+    transformers \
+    triton \
+    trl \
+    wandb 
+
+python -m spacy download en_core_web_lg
+
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+rm -rf /root/.cache/pip
+
+echo '#!/bin/bash' > /entrypoint.sh
+echo 'source /opt/venv/bin/activate' >> /entrypoint.sh
+echo 'exec "$@"' >> /entrypoint.sh
+chmod +x /entrypoint.sh

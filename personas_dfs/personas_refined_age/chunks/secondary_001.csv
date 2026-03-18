@@ -1,0 +1,8 @@
+idx,persona_text,age,source_config,strict_reject_reasons,llm_label,llm_confidence,llm_reason,age_refined,age_refine_confidence,age_refine_reason
+198636,A curious and enthusiastic group of middle school students eager to learn through gaming,12.0,persona,[],yes,100,Explicitly described as middle school students,12.0,,
+21530,A middle school student who turns to the stream for encouragement while dealing with school stress,12.0,persona,[],yes,100,Explicitly described as a middle school student,12.0,,
+69806,A middle schooler who loves exploring their town's history through geocaching and local legends,12.0,persona,[],yes,100,Explicitly described as a middle schooler,12.0,,
+85360,A middle school student working on a school project about mystery novels,12.0,persona,[],yes,100,Explicitly described as a middle school student,12.0,,
+92105,A secondary school student who is just starting to learn about programming and open-source projects,12.0,persona,[],yes,100,Persona is explicitly described as a secondary school student,12.0,,
+173036,A curious and inquisitive middle school student eager to learn about the town's past,12.0,persona,[],yes,100,Explicitly described as a middle school student,12.0,,
+111683,An ambitious 8th grader with a penchant for documentary filmmaking and a keen interest in local legends,,persona,[],yes,100,8th grade is typically part of middle school or junior high school,13.0,60.0,"The persona is an 8th grader, which typically corresponds to ages 13–14 in the secondary school regime; 13 is a common age for this grade level."

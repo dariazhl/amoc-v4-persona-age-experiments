@@ -1,0 +1,414 @@
+idx,persona_text,age,source_config,strict_reject_reasons,llm_label,llm_confidence,llm_reason
+7156,A curious elementary school student who eagerly awaits the next story on their daily bus ride,8.0,persona,[],yes,100,Persona is described as an elementary school student
+27701,A group of enthusiastic elementary school students who regularly visit the website for engaging educational content,8.0,persona,[],yes,100,Explicitly described as elementary school students
+31340,"A young child enrolled in a language immersion program, providing valuable firsthand insights for their research",,persona,[],yes,90,"young child enrolled in a program, likely primary school age"
+42259,A classmate of one of the children who looks forward to the bike rides as a fun outing,,persona,[],yes,90,"classmate of a child, implies same age group and educational level"
+47829,A natural leader in the class who takes it upon themselves to include the child in conversations and group projects,,persona,[],yes,90,"describes a child's behavior in a class setting, implying primary school level"
+59270,A young child who loves playing fetch and taking long walks with their furry companion,,persona,[],yes,80,young child and activities typical of primary school age
+61632,"Another young child of Chinese heritage living in China, who can help the child practice their Mandarin skills and learn more about Chinese culture",,persona,[],yes,90,young child
+63568,A curious child who loves animals and wants to know everything about them.,,persona,[],yes,80,describes a child with interests typical of a primary school age
+67380,A young child captivated by the stories of Hindu deities and eager to learn more,,persona,[],yes,80,young child
+70199,A young learner who becomes engaged and motivated through educational games,,persona,[],yes,80,engagement through educational games is typical for primary school age
+71102,"A young student with a passion for arts and crafts, who wants to start an after-school club",,persona,[],yes,90,Mention of after-school club implies elementary school level
+78005,A bright and curious child who thrives in learning new languages and enjoys creative writing,,persona,[],yes,80,persona describes a child with interests typical of a primary school student
+92877,A young child who has experienced abuse and relies on the pediatrician and psychologist for support,,persona,[],yes,80,"young child implies primary school age and reliance on pediatrician and psychologist suggests a child in need of support, consistent with a primary school student"
+104664,A bright pupil who excels in math and has started their own mini-bank game for classmates,,persona,[],yes,90,"excels in math and interacts with classmates, indicating a primary school setting"
+109567,A young child who dreams of having a pet and looks up to the volunteer as a role model,,persona,[],yes,80,young child implies primary school age
+117326,A grade school student who finds solace and inspiration in the author's stories,,persona,[],yes,90,grade school is another term for elementary/primary school
+119631,A young child who eagerly watches the shelter segments and dreams of adopting a furry friend,,persona,[],yes,80,young child
+121646,I am a curious elementary school student who has just learned about millipedes in science class and is fascinated by all kinds of bugs.,8.0,persona,[],yes,100,Persona explicitly states they are an elementary school student
+132956,A young child excited about the new family pet and eager to play and take part in its care,,persona,[],yes,80,young child
+136187,"A young child who stops and listens to the street performer every day, dreaming of becoming a Broadway star",,persona,[],yes,90,young child implies primary school age
+144282,An elementary school student who looks forward to watching the weather report every day,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+147945,An elementary school student who shares their favorite pop songs with the principal and asks for recommendations,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+152281,A young child who eagerly looks forward to going to school and learning new things,,persona,[],yes,90,"The persona describes a young child who is eager to learn, which is consistent with the behavior of a primary school student."
+167533,A young child who learns to interact responsibly with dogs and becomes the playmate and source of companionship for the couple's dog,,persona,[],yes,90,young child
+174184,A young child who listens with wide-eyed wonder and learns about history and resilience from their stories,,persona,[],yes,90,"young child learning about history and resilience, implies early educational level"
+194842,A young student learning about Nelson Mandela's legacy and the fight against apartheid,,persona,[],yes,80,Learning about historical figures is common in primary school curriculum
+6312,A curious elementary school student who looks forward to meeting the author and asking questions about their books,8.0,persona,[],yes,100,Persona is described as an elementary school student
+7016,A young child who provides feedback and suggestions on playability and fun factor of the toys,,persona,[],yes,90,"young child providing feedback on toys, likely a primary school student"
+37289,A young child who loves dressing up their cat in adorable costumes and creating imaginative stories,,persona,[],yes,80,behaviors and interests typical of a young child
+47824,A young child who eagerly awaits the storytelling events and sees the retired librarian as their favorite storyteller,,persona,[],yes,90,"The persona is described as a young child, which aligns with the primary school age range."
+53871,"A child with a speech disorder, whose progress has been positively impacted by the use of voice recognition technology in therapy",,persona,[],yes,80,"The persona is described as a child, and the context of therapy with voice recognition technology suggests an age range consistent with primary school"
+67351,A child with a fear of clowns who overcomes their fear after witnessing the clown's hilarious performance,,persona,[],yes,90,"The persona is described as a child, implying an age range consistent with primary school attendance."
+69941,A third-grade student who benefits from the integrated lesson plans and develops a love for reading and writing,,persona,[],yes,100,Third-grade student indicates primary school attendance
+77960,A shy and introverted child who learns to open up and build confidence through storytelling and classroom activities,,persona,[],yes,90,"Persona describes a child learning through classroom activities, indicating primary school attendance"
+92806,A young child who received a prosthetic limb and is now able to walk and play,,persona,[],yes,80,"young child able to walk and play, implies early developmental stage"
+96475,A young child who is eager to help in the kitchen and learn about different types of ingredients,,persona,[],yes,80,"young child eager to help in the kitchen, suggests primary school age"
+119552,A curious elementary school student in need of help with math and science homework,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+127288,A young boy who always joins the reading circles and enjoys storytelling sessions,,persona,[],yes,90,"joins reading circles and storytelling sessions, typical activities for primary school students"
+141097,A young child who constantly reminds the project manager of the importance of quality time and being present,,persona,[],yes,80,young child implies primary school age
+147759,"A grandchild with a picky palate, challenging the chef to create dishes that appeal to young taste buds",,persona,[],yes,90,"grandchild with young taste buds implies a child, likely in primary school age range"
+150806,A 3rd grade biology enthusiast,8.0,persona,[],yes,100,3rd grade is a primary school level
+156253,"A young child who collects and cherishes the postcards, dreaming of visiting those places one day",,persona,[],yes,80,young child implies primary school age
+157768,A toddler who giggles and dances along to the catchy jingles and stories from children's podcasts,,persona,[],yes,90,Toddler likely attends preschool or kindergarten
+166644,A young child who is learning about different types of food and enjoys trying new vegan dishes,,persona,[],yes,90,"young child learning about food, implies early educational level"
+170972,"A young child who, after experiencing a traumatic event, finds solace in the firefighters' comforting presence",,persona,[],yes,80,young child implies primary school age
+173271,A shy and artistic child who finds solace in expressing her cultural identity through drawings and crafts,,persona,[],yes,90,"The persona describes a child with characteristics typical of a primary school student, such as expressing themselves through drawings and crafts."
+181586,A primary school student who eagerly provides input and suggestions for story development,8.0,persona,[],yes,100,Persona is explicitly described as a primary school student
+182363,"A young child fascinated by space exploration, constantly asking questions about the materials used in rockets and satellites",,persona,[],yes,90,young child and curiosity level consistent with primary school age
+183033,A curious and engaged 5th grader who loves hearing stories about historical figures,,persona,[],yes,100,5th grade is typically part of elementary/primary education
+190032,"A young child with a severe stutter, seeking guidance and therapy to improve communication",,persona,[],yes,80,young child implies primary school age and seeking therapy for stuttering
+193337,A young child who idolizes the baseball photographer and dreams of becoming a professional photographer in the future,,persona,[],yes,80,young child implies primary school age
+199318,A traveler's young child who finds comfort in the air traffic controller's reassuring voice over the intercom,,persona,[],yes,90,"referred to as a 'young child', implying primary school age"
+2317,A child from a remote village in a different country who loves learning about different cultures,,persona,[],yes,80,"The persona is described as a child, implying they are likely of primary school age."
+11554,A 10-year-old child with autism spectrum disorder who benefits from occupational therapy to improve their motor skills,10.0,persona,[],yes,100,"The persona is a 10-year-old child, which falls within the primary school age range."
+12100,A young student participating in educational nature walks organized by the park ranger,,persona,[],yes,80,"participating in educational activities suggests a student, and nature walks are common in primary school"
+18540,An imaginative child obsessed with prehistoric animals.,,persona,[],yes,90,"Persona describes a child, likely in primary school due to interest in imaginative topics like prehistoric animals"
+22081,A young child who becomes captivated by the immersive sound design in animated films,,persona,[],yes,80,young child
+37327,A curious child fascinated by warfare history and eager to learn gardening skills,,persona,[],yes,80,describes a child with interests typical of a primary school age
+38455,A child who adores the pet and looks forward to playdates with their cheerful and patient animal-loving aunt/uncle,,persona,[],yes,80,"child persona, no indication of higher education level"
+39308,I am a child who just learned about flies in school and is eager to share my newfound knowledge with friends.,,persona,[],yes,90,"The persona mentions learning in school and is described as a child, indicating primary school age."
+46859,A dedicated pupil who writes and directs their own plays aiming to debut on the school stage,,persona,[],yes,90,writing and directing plays for the school stage suggests a primary school student
+50272,A young child with a speech delay who benefits from using visual aids to support communication,,persona,[],yes,80,"young child with speech delay, likely in primary school age range"
+60428,A child who cherishes their stuffed animals and brings them everywhere,,persona,[],yes,80,childlike behavior and attachment to stuffed animals is typical of primary school age
+63623,"A shy, introverted child who is initially intimidated by physical activities",,persona,[],yes,80,description of a child with characteristics typical of a primary school student
+66480,A young student who writes about their daily school experiences and seeks advice on various subjects,,persona,[],yes,80,"writes about daily school experiences, implies young age"
+71840,A hyperactive child who loves fantasy stories and often becomes the protagonist in storytelling events,,persona,[],yes,90,behaviors and interests typical of a primary school age child
+72583,A comparative child prodigy who is the defending champion of multiple national spelling bees,,persona,[],yes,90,participating in national spelling bees is typical for elementary school students
+76001,A sensitive and imaginative child who dreams of becoming a wildlife conservationist,,persona,[],yes,80,"describes a child with a dream, implying a young age"
+79009,A local elementary school student who is part of a gardening club and looks up to the urban gardening enthusiast as a mentor,8.0,persona,[],yes,100,Persona is described as an elementary school student
+101308,A young child overcoming a stutter with a newfound love for storytelling,,persona,[],yes,90,young child and love for storytelling suggests primary school age
+103514,A 6-year-old child who experienced a traumatic event and is in need of therapy,6.0,persona,[],yes,100,age 6 is within primary school range
+105516,A young child who volunteers their time to help their elder sibling pack and ship care packages,,persona,[],yes,80,young child
+111764,A quiet 5-year-old child who has just discovered the magic of picture books,5.0,persona,[],yes,100,"age 5, likely in preschool or kindergarten"
+114079,"A curious child fascinated by dinosaurs, asking numerous questions about their discoveries",,persona,[],yes,90,"childlike curiosity and fascination with dinosaurs, typical of primary school age"
+115633,"A neighborhood kid who also hopes to serve in the military, turning their terrace into a mini boot camp for pretend drills and exercises",,persona,[],yes,90,neighborhood kid and pretend drills suggest a young child
+122454,A young child who loves to watch and help the potter create beautiful ceramic pieces,,persona,[],yes,80,young child
+130210,A young child who loves playing in the river and is concerned about the disappearing sand,,persona,[],yes,90,young child
+170375,A young child who believes that dragons are real and constantly draws pictures of them,,persona,[],yes,90,behaviors and beliefs are typical of a young child
+176146,"A bright, curious 5th grader with an interest in women’s rights movements",,persona,[],yes,100,5th grade is typically part of elementary/primary education
+176940,A young child who has developed a love for nature and follows in their footsteps by picking up trash in the park,,persona,[],yes,90,behaviors and interests described are typical of a young child
+178806,A child who looks up to the moderator as a superhero and diligently follows their recommendations for LEGO sets,,persona,[],yes,90,childlike behavior and interest in LEGO sets
+184388,A young child who eagerly awaits the retired baker's delicious pancakes,,persona,[],yes,80,young child
+187658,A young child who is fascinated by germs and loves to learn about handwashing and hygiene,,persona,[],yes,90,"interests and topics suggest a young child, likely in primary school age range"
+189395,A young child who is fascinated by the process of growing their own food and looks up to the organic farmer as a mentor,,persona,[],yes,80,young child and mentorship context suggests primary school age
+196925,A dyslexic child whose life has been positively impacted by the neuroscientist's research and advocacy,,persona,[],yes,90,"The persona is described as a child, implying they are likely of primary school age."
+198490,A younger sibling who seeks assistance with reading and writing because of dyslexia,,persona,[],yes,90,Seeking assistance with reading and writing due to dyslexia is common in primary school age
+25475,A ten years old kid from New York City who likes fun facts about different cultures,,persona,[],yes,100,age 10 is within primary school range
+26457,A young child who is mesmerized by the squirrel's performances and dreams of training their own animal,,persona,[],yes,90,young child
+39377,A young child living next door who often visits to play Nintendo games together,,persona,[],yes,80,"young child often visiting to play games, implies primary school age"
+44661,A curious and open-minded child who eagerly absorbs the lessons about different customs and traditions,,persona,[],yes,90,"describes a child learning about customs and traditions, consistent with primary school curriculum"
+55198,A shy and introverted child who struggles with speaking up in class,,persona,[],yes,90,describes a child with behaviors typical of a primary school student
+61203,A young child who is curious and eager to learn about their Catholic faith,,persona,[],yes,80,young child implies primary school age and curiosity about faith suggests early education level
+75279,A young child who is encouraged to explore and learn through educational television programs,,persona,[],yes,80,young child and educational context suggests primary school age
+77093,A group of young kids who practice breakdancing and often put on impromptu performances in the park,,persona,[],yes,80,young kids implies primary school age and no mention of higher education level
+82925,A curious young child who spends weekends tinkering with toy cars and dreams of becoming a mechanic,,persona,[],yes,90,describes a young child with interests typical of a primary school age
+88498,A young child who constantly asks for new toys and clothes,,persona,[],yes,80,behavior typical of a young child
+99486,A group of elementary school students whose behaviors and academic performance are observed in different classroom setups,8.0,persona,[],yes,100,Explicitly described as elementary school students
+102873,A young child who dreams of having their own pet snake and is eager to learn about responsible ownership,,persona,[],yes,90,young child with interests typical of a primary school age
+114126,A 7-year-old kid excited about meeting the Governor,7.0,persona,[],yes,100,age 7 is within primary school range
+126368,A young child from an underprivileged background who discovers a love for reading through the program,,persona,[],yes,90,young child implies primary school age
+137215,A young child struggling with anxiety and receiving firsthand support from the implemented mental health program in a pediatric healthcare setting,,persona,[],yes,90,young child and pediatric setting implies primary school age
+138162,A young child who is proud of their heritage and is learning their ancestral language,,persona,[],yes,80,young child learning ancestral language suggests primary school age
+139249,A young child who develops their problem-solving abilities and vocabulary through solving crossword puzzles,,persona,[],yes,90,"engages in activities typical for a young child, such as developing vocabulary"
+142315,A young child who is amazed by the vintage action figures and often comes over to play,,persona,[],yes,80,"young child, implies early age and play behavior"
+150937,An 8-year-old child who is excited to learn skiing for the first time,8.0,persona,[],yes,100,age 8 is within primary school range
+153886,A 10-year-old book lover who inspired to write their own children's story,10.0,persona,[],yes,100,Age 10 is within the primary school range
+156836,A curious and imaginative child who looks up to their older brother and shares his love for nature,,persona,[],yes,80,describes a child with characteristics typical of a primary school age
+163527,A curious and energetic child who loves helping the janitor pick up litter and wants to learn more about cleaning,,persona,[],yes,90,behaviors and interests typical of a young child
+170391,a 5-year-old child who loves to watch cooking shows and pretend to be a chef.,5.0,persona,[],yes,100,"age 5 is within primary school range, likely in kindergarten"
+175507,A 10-year-old child who struggles with reading and has a low interest in books,10.0,persona,[],yes,100,"The persona is a 10-year-old child, which falls within the primary school age range."
+178867,An imaginative kid who draws inspiration from their favorite children's books and dreams of becoming a writer one day,,persona,[],yes,90,Persona describes a kid with interests typical of a primary school age child
+197774,A young child who eagerly awaits the toy reviewer's latest video to discover new toys to add to their collection,,persona,[],yes,90,young child awaiting toy reviewer's video
+199408,A preschooler who shows a natural inclination towards music and has a strong interest in learning the violin,3.0,persona,[],yes,100,"Persona is a preschooler, which falls under primary school age"
+3043,A young child who looks forward to their visits and sees them as a source of love and wisdom,,persona,[],yes,80,young child implies primary school age
+4283,A shy and anxious elementary school student who is afraid of needles and medical procedures,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+10836,A young child who is fascinated by different languages and wants to learn from the interpreter,,persona,[],yes,80,young child
+11658,A young child in a war-torn country whose life has been impacted by the retired military officer's humanitarian work,,persona,[],yes,80,young child implies primary school age
+33470,A dyslexic child who develops confidence in their communication abilities under their guidance,,persona,[],yes,90,"The persona is described as a child, implying a young age and likely primary school attendance."
+36345,"A nature-loving elementary school student who dreams of a city filled with grass, trees, and playgrounds",8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+47097,A curious young child who eagerly listens to stories about magical plants,,persona,[],yes,90,"describes a young child, likely in primary school age range"
+49586,A classmate who visits the child in the hospital and brings them toys and books to keep them company,,persona,[],yes,90,"classmate visiting in hospital implies same age group, likely primary school"
+82929,A young child who is fascinated by the intricate details of the vintage model trains,,persona,[],yes,80,young child
+87612,A young child who desires a game room that transports them to a magical fantasy world,,persona,[],yes,90,young child implies primary school age
+99491,A young child who can't resist the aroma of popcorn and often pops by for a snack,,persona,[],yes,80,behaviors and preferences described are typical of a young child
+116531,A elementary school student currently learning about how communication has evolved over time,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+122514,A young child who listens intently to the veteran's stories and draws pictures based on the stories,,persona,[],yes,90,The persona is described as a 'young child' which aligns with the primary school age range.
+133084,A young child who dreams of becoming an RC car racer and looks up to the shop owner as a mentor,,persona,[],yes,90,young child implies primary school age
+144345,a kid on a school trip to the museum reading about Nathan Hale for the first time,,persona,[],yes,90,"kid on a school trip, likely elementary school age"
+151063,A curious and artistic child who enjoys sketching and exploring different natural landscapes,,persona,[],yes,90,describes a child with interests typical of a primary school age
+170397,A young child who is fascinated by the idea of robots in their living space,,persona,[],yes,80,young child implies primary school age
+172675,A classmate of one of the children who comes from a military family and teaches them about discipline and self-defense,,persona,[],yes,80,classmate of a child and teaching self-defense implies a young age
+173431,A young child with Type 1 diabetes who receives ongoing care from the pediatric endocrinologist and relies on their expertise to manage their condition,,persona,[],yes,90,young child and pediatric care imply primary school age
+188617,An 11-year-old kid who can't get enough of the 'Phoebe and Her Unicorn' series.,11.0,persona,[],yes,100,age 11 is within primary school range
+192059,A young child who is eager to learn and excited to be part of language-learning programs,,persona,[],yes,80,"young child eager to learn, likely in primary school age range"
+193427,A fellow child who loves exploring and learning through interactive hardware,,persona,[],yes,80,"Persona describes a child and mentions learning, suggesting primary school age"
+198541,A young girl who loves storytelling but struggles with reading comprehension,,persona,[],yes,80,"struggles with reading comprehension, a common challenge in primary school"
+21270,A committed child actor who is always excited for the next school play,,persona,[],yes,90,child actor and school play participation implies primary school age
+27977,A classmate of the young girl who also participates in the organization's reading programs and forms a reading club with her,,persona,[],yes,90,"participates in reading programs and forms a reading club, suggesting a young student"
+31665,A young child who looks up to the dentist as a superhero who saves their teeth,,persona,[],yes,90,young child implies primary school age
+36426,A neighborhood kid who has daily 'meriendas' or afternoon snacks at the sari-sari store,,persona,[],yes,90,"The term 'neighborhood kid' and the context of having daily afternoon snacks suggest a young child, likely in primary school age."
+42993,A curious kid who enjoys dropping by to listen to historical stories and ask about the world before they were born,,persona,[],yes,80,"describes a curious kid, implies young age"
+47972,A young child who dreams of becoming a professional snowmobiler and is just starting to learn how to ride,,persona,[],yes,90,young child just starting to learn a new skill
+69618,A 5-year-old child who shares their enthusiasm for bugs and loves catching them in the garden,5.0,persona,[],yes,100,"Age 5 is typical for kindergarten or preschool, which is part of primary school education"
+81726,A young child who is excited to learn about and observe the different animals that visit the oasis,,persona,[],yes,90,young child
+83597,A child who listens to audiobooks and is enthralled by the voices and personalities the voice actor portrays,,persona,[],yes,80,childhood activity and lack of indicators for higher education level
+87624,A young child who dreams of being a roller coaster designer and asks the ride operator endless questions about the rides,,persona,[],yes,90,described as a young child
+94107,A young couple who recently moved into the area and attend the librarian's storytime sessions with their toddler,,persona,[],yes,90,"The persona mentions attending storytime sessions with their toddler, which is typically for young children in preschool or kindergarten age."
+99544,A playful elementary school student who loves outdoor activities but often forgets to wash his hands,8.0,persona,[],yes,100,Persona is described as an elementary school student
+112599,A young child who finds joy and laughter in the weatherperson's antics,,persona,[],yes,80,young child
+120892,A young child who eagerly looks forward to indulging in cotton candy and popcorn at the concession stand,,persona,[],yes,80,"young child, no indication of higher education level"
+138299,A curious child who discovers the wonders of dental hygiene and develops good oral habits through reading the author's books,,persona,[],yes,90,"The persona is described as a child developing good oral habits, implying an age range consistent with primary school."
+141495,A young child who looks up to the Cronulla Sharks mascot and dreams of becoming a professional athlete,,persona,[],yes,90,young child and no mention of higher education level
+142354,A young child who is fascinated by bugs and constantly asks questions about the natural world,,persona,[],yes,90,"young child, curiosity about natural world typical of primary school age"
+156331,"A curious young student fascinated by herpetology, the study of reptiles and amphibians, who just learned about Platyceps atayevi in class.",,persona,[],yes,90,"The persona is described as a student who just learned about a topic in class, indicating they are currently attending school, and the context suggests an age-appropriate interest for a primary school student."
+159672,A young child who is eager to learn how to ride a bike and stay safe on the roads,,persona,[],yes,90,"young child learning to ride a bike, typical activity for primary school age"
+163669,A curious and imaginative child who loves science experiments and plays Minecraft,,persona,[],yes,90,interests and activities typical of a primary school age child
+175514,a Taiwanese elementary school student who loves playing tennis and is a fan of the Chan sisters,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+181084,A fellow child who has already excelled in yoga and invites the young child to join a kids yoga club,,persona,[],yes,90,"The persona is described as a fellow child and invites another young child to a kids yoga club, indicating they are likely of similar age and in primary school."
+9136,A young student who is eager to explore books featuring diverse characters and cultures,,persona,[],yes,80,"young student implies a child, and interest in diverse books is common in primary school"
+18783,A young child who looks forward to visiting the store and receiving stickers from the staff,,persona,[],yes,90,behaviors and interests typical of a young child
+23401,A young child who is both terrified and fascinated by the special effects makeup artist's creations,,persona,[],yes,80,young child
+31680,A 9-year-old child who requires multiple orthopedic surgeries due to a congenital condition,9.0,persona,[],yes,100,age 9 is within primary school range
+39574,A young child who loves solving math problems and looks up to the accountant as a math role model,,persona,[],yes,90,"The persona is described as a young child, implying an age range consistent with primary school."
+64525,A young child who loves sweets and is hesitant to visit the dentist,,persona,[],yes,90,behaviors and concerns typical of a young child
+67701,"A young child with a vivid imagination and a love for all things sweet, who eagerly awaits each birthday cake creation",,persona,[],yes,90,young child with a vivid imagination
+71305,A young child who has benefited from innovative hearing aids and is now thriving in school,,persona,[],yes,90,"thriving in school implies attendance, likely at primary level due to 'young child' description"
+73610,A young child with a sweet tooth who always looks forward to getting an ice cream from the van,,persona,[],yes,90,behaviors and preferences consistent with a young child
+83677,"A young child with a congenital hand deformity, seeking guidance and support from the occupational therapist",,persona,[],yes,80,"young child implies primary school age and seeking support from an occupational therapist, commonly found in elementary school settings"
+87721,A 6-year-old child with anxiety and social communication difficulties,6.0,persona,[],yes,100,age 6 is within primary school range
+94732,A young reader who owns every book written by the children's book author,,persona,[],yes,80,"owns children's books, implies young age"
+114396,A mischievous child who constantly gets into amusing and unexpected situations that inspire the screenwriter's storytelling,,persona,[],yes,90,description implies a young child
+116654,A history enthusiast grade schooler who loves reading Sherlock Holmes,,persona,[],yes,90,grade schooler indicates primary school level
+118466,A child who loves to collect and draw cartoons inspired by their favorite characters,,persona,[],yes,80,Childlike interests and activities
+120050,A young child with a vivid imagination and a love for building fairy gardens,,persona,[],yes,90,young child with interests typical of primary school age
+122800,a grade school student in the UK who enjoys crossing the road with the help of a lollipop lady.,,persona,[],yes,100,grade school student is equivalent to primary school student
+123884,A young child who is enchanted by the beauty and grace of horses and dreams of becoming an equestrian,,persona,[],yes,80,young child implies primary school age
+126607,A curious child who often peeks over the fence to ask questions about the stars,,persona,[],yes,90,behaves like a curious child
+151761,A child who is absolutely fascinated by the illustrator's artwork and dreams of becoming a paleontologist one day,,persona,[],yes,90,Childlike interests and career aspirations typical of a primary school student
+153377,"A young child who sees the museum curator as a superhero, inspiring them to explore the wonders of the world",,persona,[],yes,90,"The persona is described as a young child, implying an age range consistent with primary school attendance."
+155466,"A young, curious child fascinated by marine life and eager to learn about coral reefs",,persona,[],yes,90,"young and curious child, no indication of higher education level"
+157186,A young child who is learning to regulate their emotions and make effective choices,,persona,[],yes,90,learning to regulate emotions and make choices is typical for primary school age
+166888,An imaginative elementary school student with a pet iguana and a love for adventure stories,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+170526,"A classmate of the child who is also learning chess, and together they explore different strategies and practice games",,persona,[],yes,90,"The persona is a classmate of a child, implying they are also a child in the same educational level, likely primary school."
+176974,A young child who loves exploring and playing in different playgrounds,,persona,[],yes,90,young child and playground activities suggest primary school age
+178990,A young child who eagerly awaits each new episode and dreams of being a character in the animated series,,persona,[],yes,80,young child
+192540,A young grandchild fascinated by the colors and shapes of the different flowers in the garden,,persona,[],yes,80,"young grandchild implies a child, likely in primary school age range"
+6569,A curious and imaginative child who loves to help in the garden and play with the puppy,,persona,[],yes,90,behaviors and interests typical of a young child
+29900,A young child who is eager to learn about military history and heroes,,persona,[],yes,80,young child eager to learn
+39710,A young child with a rare eye condition who looks up to the visually impaired individual and finds comfort in their shared experiences,,persona,[],yes,80,"The persona is described as a 'young child', implying an age range consistent with primary school attendance."
+45965,A neighborhood child who shares the toddler's curiosity and enjoys going on outdoor adventures together,,persona,[],yes,80,"described as a child with toddler-like curiosity, implying a young age"
+61832,"A young child with a fear of eye exams, in need of a caring and patient optometrist",,persona,[],yes,90,young child implies primary school age
+69715,A young child who accidentally ingested a household cleaning product and requires immediate medical attention,,persona,[],yes,90,young child implies primary school age
+84784,A classmate who enjoys outdoor activities and repeatedly attempts to coax the child into more physical play,,persona,[],yes,90,classmate implies a school setting and behavior typical of primary school age
+87051,An eager 7-year old boy who enjoys reading more than playing video games,7.0,persona,[],yes,100,age 7 is within primary school range
+106472,A young child who has undergone multiple MRI scans and loves the engineer's colorful machine designs,,persona,[],yes,80,young child
+113455,A cheerful and outgoing child who befriends the shy preschooler and helps them feel more comfortable,3.0,persona,[],yes,100,"Persona is described as a child who befriends a preschooler, indicating they are also in a similar early educational level."
+115196,a young child who dreams of becoming a meteorologist,,persona,[],yes,80,young child implies primary school age
+123425,A young child who admires the woodworking skills and dreams of becoming a woodworker too,,persona,[],yes,80,young child implies primary school age
+135343,A young child who is fascinated by balloon animals and dreams of becoming a balloon artist,,persona,[],yes,90,young child
+137624,A young child from an underprivileged community who dreams of becoming a scientist to solve water crisis,,persona,[],yes,90,young child implies primary school age
+141565,"A fellow young learner who enjoys discovering new knowledge through books, experiments, and hands-on projects",,persona,[],yes,80,enjoys hands-on projects and is described as a young learner
+143476,A preschooler who loves being read to and discusses the pictures in the books,3.0,persona,[],yes,100,"Persona is a preschooler, which falls under primary school category"
+160836,A young child with a genetic disorder eager to understand how gene editing could potentially improve their quality of life,,persona,[],yes,80,"The persona is described as a young child, implying an age range consistent with primary school attendance."
+165080,A group of children at a local library eagerly listening to their captivating tales,,persona,[],yes,80,children listening to tales at a library suggests a primary school age group
+182053,"A young student fascinated by Viking folklore and history, using the author's work as a reference for a school project",,persona,[],yes,90,"The persona is described as a young student working on a school project, which suggests they are likely in primary school."
+183462,A young child who is eager to learn how to train their new puppy,,persona,[],yes,80,young child
+197204,"A young child who trusts and feels comfortable with their pediatrician, seeing them as a source of comfort and support",,persona,[],yes,80,young child implies primary school age
+7664,A young child who dreams of becoming a pilot and looks up to the calm and collected pilot as a role model,,persona,[],yes,80,young child implies primary school age
+21416,A young child fascinated by Disney movies and loves to hear stories from their collection,,persona,[],yes,80,young child and interests typical of primary school age
+35522,A young child who is fascinated by toys and loves hearing stories about the history of Hector toys,,persona,[],yes,90,Persona describes a young child with interests typical of a primary school age
+39734,A young child with cerebral palsy who is determined to learn how to walk independently,,persona,[],yes,90,young child implies primary school age and educational level
+54271,A young child who looks up to the muralist and finds inspiration in their colorful creations,,persona,[],yes,80,young child implies primary school age
+61857,A curious and eager young student who hangs onto their elder's every word,,persona,[],yes,80,"describes a young student, implies early educational level"
+71407,A young child who eagerly watches every video and wishes to be featured in one,,persona,[],yes,80,young child
+75576,A child living in one of Holt International's sponsored communities who is positively impacted by their communications efforts,,persona,[],yes,80,Holt International's sponsored communities often support children in early education
+83839,A shy and anxious preschooler who is struggling with separation anxiety,3.0,persona,[],yes,100,Persona is described as a preschooler
+87059,A young child who has developed a deep bond with one of the livestock animals and considers it their best friend,,persona,[],yes,80,young child implies primary school age
+103065,A young child who is nervous about receiving vaccinations and needs reassurance and support,,persona,[],yes,90,young child
+122941,A curious and adventurous child who looks forward to every outdoor lesson with excitement,,persona,[],yes,90,describes a child with characteristics typical of a primary school student
+135409,A timid 8-year-old child who is afraid of the water but eager to learn swimming,8.0,persona,[],yes,100,age 8 is within primary school range
+150344,A young child who looks up to the mediator's calm and composed demeanor,,persona,[],yes,80,young child implies primary school age
+154696,A nine-year-old girl struggling with reading comprehension but shows great enthusiasm for learning.,,persona,[],yes,100,age and educational challenges are consistent with primary school
+163045,A child who attends the reading sessions and is inspired to write their own stories,,persona,[],yes,90,"Attends reading sessions and writes own stories, typical of primary school activities"
+163845,A primary school student who serves as the first reader and critic of every new book,8.0,persona,[],yes,100,Persona is explicitly described as a primary school student
+184663,A curious and imaginative child attending the reading workshops with a thirst for knowledge,,persona,[],yes,90,attending reading workshops and described as a child
+193704,A young child who dreams of becoming a zookeeper and loves learning about different animals,,persona,[],yes,90,young child and love for learning about animals is typical for a primary school student
+197331,A young child who relies on the caregiver for their daily needs and finds comfort in their presence,,persona,[],yes,90,young child implies primary school age and reliance on caregiver
+16622,A curious and eco-conscious child who looks up to the solar energy entrepreneur as a role model,,persona,[],yes,90,described as a child
+23547,A classmate who is initially unaware of the child's anxiety but becomes a supportive friend after discovering their talent in art,,persona,[],yes,90,"The persona is described as a classmate, implying they are in the same educational setting, likely a primary school."
+26671,A curious and enthusiastic elementary school student who loves asking questions about the human body and how it works,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+32908,"A quiet, imaginative student who always participates in story time and dreams of becoming an inventor",,persona,[],yes,90,"participates in story time, a common activity in primary school"
+41855,A young child who dreams of becoming a race car driver like Chase Briscoe,,persona,[],yes,90,young child
+49903,A young child who has limited access to technology and dreams of exploring the digital world,,persona,[],yes,80,"young child with limited access to technology, implies early educational level"
+53415,A young child who just received their first bike and looks up to the retired cyclist as a mentor,,persona,[],yes,90,"young child with a new bike, implies early childhood"
+59699,An 8-year-old Sudanese child who received healthcare from the EMERGENCY Peadiatric Clinic in Port Sudan.,8.0,persona,[],yes,100,Age 8 is within primary school range
+73694,A young child who is learning about different animal species and their habitats,,persona,[],yes,90,Learning about animal species and habitats is a common topic in primary school
+81949,A motivated 5th grader with a keen interest in computer games and often helps peers with math problems,,persona,[],yes,100,5th grade is typically part of elementary/primary education
+85113,A curious child who is mesmerized by the chocolatier's shop window displays,,persona,[],yes,80,childlike curiosity and fascination with shop window displays
+92103,A young child who looks forward to the nurse's visits for a cookie and a comforting chat,,persona,[],yes,90,young child and nurse's visits are typical in primary school settings
+103201,A curious and imaginative young child who is always eager to learn new things about chemistry,,persona,[],yes,90,describes a young child eager to learn
+106533,A creative and imaginative fifth grader who loves to help design and decorate the reading spaces,,persona,[],yes,100,Fifth grader indicates elementary school attendance
+107870,An elementary school student who just started a project on plant life cycles and ecology,8.0,persona,[],yes,100,Persona is described as an elementary school student
+114537,A young child who appreciates the doctor's funny bedside manner and happy disposition,,persona,[],yes,80,young child
+115219,A young child with cerebral palsy who is working on improving their hand-eye coordination,,persona,[],yes,80,young child implies primary school age and focus on hand-eye coordination suggests early developmental stage
+121196,A young child interested in learning about how different foods affect their energy levels,,persona,[],yes,80,young child implies primary school age
+140465,A young child who loves pretending to be a yogi and frequently joins in on the tea parties,,persona,[],yes,90,behaviors described are typical of a young child
+144748,A young child with a hearing impairment discovering the joy of playing the piano through touch and vibrations,,persona,[],yes,90,"young child discovering music, implies early educational level"
+167162,A neighbor's child who is always ready for imaginative adventures and role-playing games,,persona,[],yes,90,behavior typical of a primary school child
+170600,A young child who looks forward to the holiday season and is in awe of the enchanted display,,persona,[],yes,80,young child
+172213,A young child who looks up to the marine biologist and dreams of becoming a marine biologist themselves,,persona,[],yes,80,young child implies primary school age
+179253,A 10-year-old child who actively participates in school debates and is learning the importance of peaceful conflict resolution,10.0,persona,[],yes,100,"The persona is a 10-year-old child, which falls within the primary school age range."
+180188,A young child who is captivated by the fire performer's performance and dreams of becoming an entertainer,,persona,[],yes,80,young child implies primary school age
+182655,A classmate who always has their hand up to ask intriguing questions and share wild ideas during story time,,persona,[],yes,95,"participates in story time, a typical primary school activity"
+191386,A young child who watches in awe as the junior ice resurfacer operator meticulously smooths the ice before a skating event,,persona,[],yes,80,young child
+198100,A younger grandchild who possess advanced knowledge in technology and can patiently teach the judge the basics,,persona,[],yes,80,"described as a younger grandchild, implying a young age likely within primary school range"
+216,A child beta reader who provides honest and valuable feedback from a target audience perspective,,persona,[],yes,80,"child beta reader implies a young age, likely within primary school range"
+4975,A young niece who is just starting to develop an interest in reading and writing poetry,,persona,[],yes,80,"developing interest in reading and writing suggests a young age, likely within primary school range"
+8670,An imaginative boy who also enjoys reading and frequently engages in creative writing activities with the little girl,,persona,[],yes,80,engages in activities typical of a primary school child
+13387,A young child who is learning about the importance of balanced nutrition,,persona,[],yes,80,learning about nutrition is a common topic in primary school
+26684,A child who idolizes Mickey Mouse and dreams of becoming a Disney character performer,,persona,[],yes,90,Childlike interests and career aspirations suggest a young age
+32926,A classmate who is interested in starting a pet care club at school and recruits the child to be a founding member,,persona,[],yes,90,"The persona is a classmate and is at school, indicating they are likely of primary school age."
+34790,A curious grandchild who loves to listen to family stories and is learning Gaelic,,persona,[],yes,80,learning and curiosity are consistent with a primary school child
+65786,A young child who relies on the refugee's stories to understand their own family's journey,,persona,[],yes,80,young child implies primary school age
+66975,A young child who is eager to have their first pet and is interested in getting a hamster,,persona,[],yes,90,"young child interested in having a pet, typical of primary school age"
+67805,A young child who is eager to learn the accordion and dance to the lively Zydeco tunes,,persona,[],yes,80,young child
+94380,A group of young Maasai children eager to hear stories and learn about their heritage,,persona,[],yes,90,"young children eager to learn about heritage, implies primary school age"
+100949,A lively ten-year-old who adores reading and regularly reviews books on her YouTube channel,,persona,[],yes,100,age 10 is within primary school range
+116965,A young child in a low-income family who relies on the social worker for medical resources and support,,persona,[],yes,80,young child implies primary school age and reliance on social worker suggests early educational level
+122972,A young child who finds solace and distraction from medical procedures through listening to music,,persona,[],yes,80,young child implies primary school age
+128146,"A young child who has struggled with severe asthma and eczema, eagerly participating in clinical trials for the new treatments",,persona,[],yes,80,young child implies primary school age
+141808,A young child who receives education and medical support from the aid worker's organization,,persona,[],yes,80,young child receiving education
+149509,An elementary school student who is motivated to read in order to earn rewards at the local business,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+153629,A young child with hearing loss who is undergoing speech therapy,,persona,[],yes,80,"young child undergoing speech therapy, likely in primary school age range"
+155819,A shy and introverted child who gains confidence and discipline through taekwondo classes,,persona,[],yes,80,"The persona is described as a child, implying a young age, and no mention of advanced educational levels."
+159237,A young child who is fascinated by the flight attendant's safety instructions and offers of snacks,,persona,[],yes,90,behaviors and interests suggest a young child
+161790,A curious child who constantly asks the engineer to explain how software works,,persona,[],yes,90,described as a child
+167243,A young child who depends on accurate diagnosis and treatment from the radiologist,,persona,[],yes,80,young child implies primary school age
+4976,A classmate who started a movement to make their school playground accessible for all children,,persona,[],yes,90,"started a movement in their school playground, implying they are a current student"
+15500,A young child obsessed with pirates and fascinated by tales of shipwrecks,,persona,[],yes,80,young child
+70526,A young child fascinated by the tales of mountains and dreams of becoming a mountaineer,,persona,[],yes,80,young child implies primary school age
+71619,A young indigenous child eager to learn and participate in cultural ceremonies,,persona,[],yes,80,"young child eager to learn and participate in cultural ceremonies, implies early educational level"
+75089,A young child in the neighborhood who admires the tailgate party host and dreams of becoming a Vikings player,,persona,[],yes,80,young child
+94388,"A 10-year-old, dinosaur-obsessed kid",10.0,persona,[],yes,100,Age 10 is within primary school range
+99935,A young child struggling with reading comprehension and in need of personalized strategies,,persona,[],yes,90,struggling with reading comprehension is a common issue in primary school
+110256,A young child who is fascinated by the Christmas village display and loves listening to stories about the little figurines,,persona,[],yes,90,"young child, interests typical of primary school age"
+112249,An energetic and imaginative child who loves hearing stories and learning new things from their mentor,,persona,[],yes,90,"description implies a young child with a mentor, consistent with primary school age"
+120229,an aspiring child-chef who participated in the first season of MasterChef Junior (Brazil).,,persona,[],yes,95,MasterChef Junior typically features children in the primary school age range
+133376,A young child who eagerly visits the dessert shop after school for a sugary reward,,persona,[],yes,90,"visits the dessert shop after school, implying attendance at a school level typical for young children"
+137783,An enthusiastic young child who adores listening to the enchanting train tales and dreams of becoming an engineer,,persona,[],yes,90,young child and no indication of higher education level
+154946,A young child who visits her older neighbors to bring them drawings and share stories,,persona,[],yes,90,"behaviors typical of a young child, likely in preschool or early elementary school"
+156662,A young child who loves playing with and teaching tricks to the energetic Labrador Retriever,,persona,[],yes,80,young child
+165687,A bright and curious child who is eager to overcome learning challenges with the help of the therapist's guidance,,persona,[],yes,90,"The persona is described as a child, implying a young age and potential attendance in primary school."
+175696,A curious 7-year-old who loves reading and immerses herself in the vibrant world of picture books,7.0,persona,[],yes,100,Age 7 is within primary school range and picture books are typical for this age group
+197462,A young child who is inspired by the pet groomer's love for animals and dreams of becoming a veterinarian,,persona,[],yes,90,"young child with career aspirations, likely in primary school age range"
+198306,A young child struggling with emotional trauma who finds solace in imaginary play,,persona,[],yes,80,young child and imaginary play suggests primary school age
+199065,A young child who requires a medical device and looks up to the technician as a hero,,persona,[],yes,90,young child implies primary school age
+989,A young child who has experienced traumatic events and receives counseling from the psychologist in collaboration with the humanitarian aid worker,,persona,[],yes,80,young child implies primary school age and collaboration with humanitarian aid worker suggests a vulnerable population
+5176,A young student who is inspired by the activist's message and starts a school recycling program,,persona,[],yes,90,"starts a school recycling program, implies attendance at a school level where such activities are common"
+9379,"A grandchild who, despite their young age, shows a keen interest in reading and discussing Shakespeare",,persona,[],yes,80,young age and keen interest in reading
+13409,A curious and imaginative child who looks up to their energetic sibling and loves joining in on video game sessions,,persona,[],yes,80,childlike behavior and interests
+14165,A young child who looks up to the marathon enthusiast and is inspired to participate in charity runs,,persona,[],yes,80,young child
+15516,A young child who has lost everything in a natural disaster and relies on the humanitarian worker for support and hope,,persona,[],yes,80,young child implies primary school age
+18090,A hearing-impaired child learning sign language as their first language in a bilingual education program,,persona,[],yes,90,bilingual education program and learning sign language as first language suggests early childhood education
+20940,A 3-year-old child who struggles with articulation and speech sound production,3.0,persona,[],yes,100,"The persona is a 3-year-old child, which falls within the age range for preschool or kindergarten, a level of primary education."
+35589,A bright pupil who dreams of becoming a famous Dutch playwright,,persona,[],yes,80,The term 'pupil' often refers to a student in primary or elementary school.
+39935,A young child who is fascinated by birds and butterflies and eagerly helps in creating the backyard haven,,persona,[],yes,90,young child and backyard activities suggest primary school age
+43165,A young child who is fascinated by science experiments and loves to help with DIY projects,,persona,[],yes,80,interests and activities typical of a primary school child
+50026,A melodious child from a low-income family who has discovered a love for the piano through affordable music lessons,,persona,[],yes,80,"The persona is described as a child, implying a young age, and there is no mention of an educational level beyond primary school."
+72870,A young child who is just starting to develop a love for books and reading,,persona,[],yes,80,"young child developing a love for reading, typical of primary school age"
+79323,A young child who loves playing with dollhouses and wants to learn more about architecture,,persona,[],yes,90,interests and play style typical of a primary school age child
+80176,An equally talented child prodigy specializing in hip-hop dance who often competes in the same competitions,,persona,[],yes,80,"child prodigy implies a young age, likely within primary school range"
+82128,A curious and enthusiastic child who is excited to experience live music for the first time,,persona,[],yes,80,describes a child with no indication of higher education level
+86430,A young child who loves to dress up and perform silly skits for their family,,persona,[],yes,90,behaviors and interests typical of a young primary school child
+91607,a 10-year-old kid who has learned little programming,10.0,persona,[],yes,100,age 10 is within primary school range
+106089,A young child who looks up to the chain smoker and wants them to live a long and healthy life,,persona,[],yes,80,"The persona is described as a young child, implying an age range consistent with primary school attendance."
+112886,"A classmate who shares their own positive experiences at the dentist, helping to normalize the experience for the child",,persona,[],yes,90,"The persona is described as a classmate, implying they are a peer and likely of similar age, and the context suggests they are helping to normalize an experience for a child, indicating they are also a child."
+113654,A young child who enjoys playing simple and colorful board games with their older sibling,,persona,[],yes,90,"young child, simple games, and presence of an older sibling suggest primary school age"
+114691,A kindergartener who enjoys stories about knights and castles,5.0,persona,[],yes,100,Persona is explicitly described as a kindergartener
+122303,A young child with dyscalculia who benefits from visual and hands-on learning techniques,,persona,[],yes,90,young child and learning techniques suggest primary school age
+123041,A young child who is inspired by the activist's work and starts their own garden at home,,persona,[],yes,80,young child starting their own garden implies an age consistent with primary school
+127108,A young child who brings their injured pet to the veterinarian for care,,persona,[],yes,80,young child likely in primary school age range
+133409,A shy and introverted child who finds solace in the author's books and connects deeply with the characters,,persona,[],yes,80,"describes a child who finds solace in books, implying an age range consistent with primary school"
+135705,A young child who is mesmerized by the stories and dreams of one day becoming a submarine pilot themselves,,persona,[],yes,90,"The persona is described as a young child with dreams, implying an age typical of primary school students."
+145719,A young child eager to learn how to play the ukulele and explore the world of Hawaiian music,,persona,[],yes,80,young child implies primary school age
+149543,A young child with mobility limitations who receives assistance from a robot companion during therapy sessions,,persona,[],yes,80,young child implies primary school age and context of therapy sessions
+172307,A young student who often comes over to borrow books and asks for recommendations for their school projects,,persona,[],yes,90,"borrows books and asks for recommendations for school projects, indicating a current student likely in primary school"
+180497,A young child who dreams of becoming an actor and sees the nurse as an inspiration,,persona,[],yes,80,young child
+181390,"A young, imaginative child who sees the game developer as a hero and role model",,persona,[],yes,80,young and imaginative child
+188138,A curious primary school student from France.,8.0,persona,[],yes,100,Persona is explicitly described as a primary school student
+193984,An elementary school student working on a community recycling project for a school fair,8.0,persona,[],yes,100,Explicitly described as an elementary school student
+196538,A young child fascinated by the beekeeping process and eager to learn from the beekeeper,,persona,[],yes,90,young child
+10354,A child who loves playing with the toy designer's imaginative creations,,persona,[],yes,80,"Persona describes a child, likely in primary school age range due to interest in toys"
+21044,A curious and imaginative child who is mesmerized by the colorful puppet characters,,persona,[],yes,80,description implies a young child
+45359,A schoolgirl excited about her science subjects and loves sharing what she learns,,persona,[],yes,90,"The persona is described as a schoolgirl, which typically refers to a young female student, and her interest in science subjects is consistent with primary school curriculum."
+47760,A young child who idolizes the Border Collie handler and dreams of becoming a herder themselves,,persona,[],yes,90,young child
+56979,A elementary school student on the student council who voices peers' concerns about playground safety,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+67165,A young child with a budding talent for drawing and creating unique clothing designs,,persona,[],yes,80,young child implies primary school age
+70724,A young student who looks forward to garden club meetings for the delicious homemade snacks,,persona,[],yes,90,"participation in garden club and mention of snacks suggests a young student, likely in primary school"
+73898,"A young child eager to learn about different cultures, often visiting to hear stories and try Indian dishes",,persona,[],yes,90,young child eager to learn
+94395,A 6-year-old child with a curious mind and a willingness to participate in cognitive development studies,6.0,persona,[],yes,100,Age 6 is within primary school range
+102799,A child with a sweet tooth who has dietary restrictions and relies on the dietitian for tasty dessert alternatives,,persona,[],yes,80,"The persona is described as a child, implying a young age likely within primary school range."
+113678,A curious and imaginative young child who loves to ask questions about numbers and patterns,,persona,[],yes,90,description implies a young child
+115385,A young child who eagerly awaits the mail carrier's arrival and helps shovel the pathway to their mailbox,,persona,[],yes,90,behaviors described are typical of a young child
+119096,A curious child who is fascinated by planes and asks endless questions,,persona,[],yes,90,behaves like a young child with curiosity and fascination with a specific topic
+125373,A playful and energetic child who loves spending time in their friend's backyard,,persona,[],yes,80,description implies a young child
+127174,A grade school student who loves arts and crafts and gets excited about school projects,,persona,[],yes,100,grade school is another term for elementary/primary school
+139954,A polish school child who loves geography and am fond of small hamlets and villages.,,persona,[],yes,90,"The persona is described as a school child, implying attendance in primary school."
+156688,A quirky and imaginative young child who enjoys making short films with their smartphone,,persona,[],yes,80,young child
+167368,A young child who is part of a study on children's response to emotionally expressive robots,,persona,[],yes,90,"part of a study on children, implies young age"
+175329,A grandchild who shares their curiosity about the weather and seeks their guidance for science fair projects,,persona,[],yes,90,grandchild seeking guidance for science fair projects implies elementary school age
+178392,A young child who looks up to the basketball team captain and wants to learn math,,persona,[],yes,90,young child and interest in learning math suggests primary school age
+179600,A young child who is fascinated by the janitor's mop and bucket and considers them a superhero,,persona,[],yes,90,The persona describes a young child with a fascination typical of a primary school age child
+180603,A young child receiving their first cochlear implant and learning to navigate the world of sound,,persona,[],yes,90,young child implies primary school age and context suggests early developmental stage
+181492,A curious child who often observes and asks questions about the ant colonies in their backyard,,persona,[],yes,90,behaviors and interests consistent with a young child
+186051,A curious child who is fascinated by the birds and enjoys listening to the woman's stories about them,,persona,[],yes,90,describes a child with curiosity and interests typical of a primary school age
+195347,A shy elementary school student struggling to pronounce certain sounds correctly,8.0,persona,[],yes,100,explicitly described as an elementary school student
+199131,A gifted but socially awkward child who experiences challenges interacting with fellow classmates,,persona,[],yes,90,"description implies a child in a school setting, likely primary school due to social interaction challenges"
+373,A 10-year-old schoolboy who lives in Nigeria,10.0,persona,[],yes,100,Age 10 is within primary school range
+2124,A young child who prefers playtime over watching TV or movies,,persona,[],yes,80,preference for playtime is typical of young children in primary school age
+14281,A young child who dreams of becoming an environmental activist and fighting against mining pollution,,persona,[],yes,90,young child implies primary school age
+18128,A young child who dreams of becoming a horse owner and seeks advice on starting horseback riding lessons,,persona,[],yes,90,young child seeking advice on starting horseback riding lessons implies an age consistent with primary school
+33250,"A young child with a speech delay, struggling to communicate in both English and Spanish",,persona,[],yes,80,young child implies primary school age and speech delay is common in early childhood development
+37833,A young child with dental anxiety who requires gentle and precise medication administration,,persona,[],yes,80,young child implies primary school age
+39019,An elementary school student who prefers reading traditional storybooks over digital ones,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+42808,"A child who eagerly flips through the pages, captivated by the colorful illustrations and imaginative storytelling",,persona,[],yes,90,"behavior typical of a young child, such as flipping through pages and being captivated by illustrations, suggests primary school age"
+52011,A fellow shy child who understands the struggle and offers empathy and encouragement,,persona,[],yes,90,"describes as a 'child' and 'shy', implying a young age"
+53702,A young child who looks up to the construction worker and dreams of becoming an architect one day,,persona,[],yes,90,young child implies primary school age
+67170,A young child who is educated about the importance of reducing carbon emissions through sustainable transportation,,persona,[],yes,80,young child implies primary school age and focus on basic environmental education
+70791,A young child with a physical disability who looks up to the Paralympic athlete as a role model and draws inspiration to participate in adapted sports,,persona,[],yes,80,young child implies primary school age and context suggests early educational level
+76805,A primary school student who loves learning new healthy recipes to cook at home,8.0,persona,[],yes,100,Persona explicitly describes themselves as a primary school student
+82550,A young student who is introduced to the magic of books through the book collector's collection,,persona,[],yes,80,"young student implies a child, likely in primary school"
+98576,a grade school sports player who adores hockey,,persona,[],yes,90,grade school implies primary education level
+113886,A curious child who asks thought-provoking questions about the psychology behind learning and development,,persona,[],yes,90,"The persona is described as a child, implying an age range consistent with primary school, and is curious about learning and development, which is typical of a young student."
+115428,"A young child who eagerly awaits breakfast every morning, excited to taste the chef's latest creations",,persona,[],yes,80,young child
+118139,A young child who eagerly watches the art workshops from their backyard,,persona,[],yes,80,young child likely in primary school age
+120494,A9-year-old child who greatly enjoys the storytelling events and wants to become a writer,9.0,persona,[],yes,100,"The persona is a 9-year-old child, which falls within the primary school age range."
+121493,A curious and empathetic child who becomes the designated first aider in their friend group,,persona,[],yes,90,"child in friend group, implies elementary school age"
+124394,A young child who looks up to the churchgoer as a role model,,persona,[],yes,80,young child implies primary school age
+137880,An 11-year-old child obsessed with astronomy,11.0,persona,[],yes,100,age 11 is within primary school range
+144809,An elementary school student who helps in the garden and listens to stories of classic literature,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+150690,A young child who dreams of becoming a humanitarian aid worker and following in their footsteps,,persona,[],yes,80,young child implies primary school age
+171612,A young grandchild who enjoys listening to bedtime stories and dreams of becoming an author,,persona,[],yes,90,"enjoys bedtime stories, implies young age"
+175339,"A kind-hearted classmate who helps the child feel included and supported, practicing speech exercises together",,persona,[],yes,90,practicing speech exercises together implies a young child in primary school
+182307,"A young, energetic child who is beginning to explore educational apps and games on a tablet",,persona,[],yes,90,"young and energetic child exploring educational apps, likely in primary school age range"
+194805,"A proactive, creative pupil with a knack for original thinking and challenging the status quo",,persona,[],yes,90,"describes a pupil, implying a student, and the context suggests a young age"
+2219,a schoolchild who participated in the parade to support the Elmora Troopers,,persona,[],yes,80,"participated in a parade, likely as part of a school event, and 'schoolchild' implies primary education level"
+2899,An energetic pupil who is always eager to share new historical facts learned from extracurricular reading,,persona,[],yes,80,"The persona is described as a pupil, which typically refers to a student in primary or elementary school, and their behavior is consistent with a child's enthusiasm for learning."
+3888,A young student who dreams of becoming a firefighter and carries around a toy firetruck everywhere,,persona,[],yes,90,"carries a toy and has a childlike dream, indicating a young age"
+5331,A young child who constantly observes the older sibling's responsible behavior and tries to emulate it,,persona,[],yes,80,"young child trying to emulate older sibling's behavior, suggesting an age typical of primary school"
+21075,A curious and energetic preschooler who loves participating in gym class activities,3.0,persona,[],yes,100,Persona is described as a preschooler
+35033,A young child with a thirst for knowledge and a love for bedtime stories,,persona,[],yes,80,young child and love for bedtime stories suggests primary school age
+37956,A compassionate student who volunteers to disinfect the classroom to protect the child's health,,persona,[],yes,90,"volunteers to disinfect the classroom, implies a young student taking care of their own classroom"
+40057,A young nephew who has just discovered the joy of reading and seeks book recommendations from their librarian aunt,,persona,[],yes,90,"The persona is described as a 'young nephew' who has just discovered reading, suggesting an early school age."
+48519,A fellow elementary school student who is fascinated by birds and enjoys drawing them,8.0,persona,[],yes,100,Persona is explicitly described as an elementary school student
+52812,A shy and introverted third-grader who discovers the joy of reading through the librarian's recommendations,,persona,[],yes,100,third-grader indicates primary school attendance
+57052,A young child with dietary restrictions seeking guidance on incorporating organic foods,,persona,[],yes,80,young child implies primary school age
+59191,A young child who attends the fire safety training sessions with their school,,persona,[],yes,90,"attends school and participates in training sessions, indicating primary school age"
+76888,A curious and inventive 5th grader who develops a passion for electronics and communication,,persona,[],yes,100,5th grade is typically part of elementary/primary education
+80307,"A young student with a natural talent for music, eager to learn and participate in music class",,persona,[],yes,80,young student and music class implies primary school level
+86692,A young child with a learning disability whose experiences help shape their understanding of individual differences in learning,,persona,[],yes,90,young child with learning experiences
+101719,A classmate of the official's child who is inspired to become a future community leader,,persona,[],yes,80,"classmate of the official's child implies a student, likely in primary school"
+103434,A struggling reader in elementary school who looks up to the reading specialist as a mentor,8.0,persona,[],yes,100,Explicitly mentioned as an elementary school student
+107127,A 5-year-old child who was born with a cleft lip and palate and is undergoing speech therapy to improve his articulation,5.0,persona,[],yes,100,"Age 5 is typical for kindergarten or preschool, which is a primary school level"
+116272,"A young child who eagerly awaits the release of each new children's book, excited to see their own classroom experiences come to life",,persona,[],yes,90,Persona describes a young child with classroom experiences
+123245,"A young child who hangs on to her every word, eager to hear stories of their ancestors",,persona,[],yes,80,young child implies primary school age
+129912,"A reluctant young reader, attempting to build his interest in reading guided by innovative digital tools",,persona,[],yes,80,young reader with guided learning implies primary school age
+142095,"An extroverted, sports-loving peer constantly trying to pull the introverted child out of her shell",,persona,[],yes,80,"description implies a peer relationship, suggesting a school setting, likely primary school due to the focus on social interactions and personality traits"
+144933,A young child who loves Disney characters and wants a personalized artwork for their bedroom,,persona,[],yes,80,interests and request suggest a young child
+182995,A gifted child prodigy who displays exceptional musical abilities at a young age,,persona,[],yes,80,young age and exceptional abilities suggest primary school level
+184205,A group of school children who are invited to engage with the interactive installations and explore math in a creative way,,persona,[],yes,90,"The persona describes school children, implying an age range consistent with primary school, and the context of interactive installations suggests an early educational level."
+185398,A young child who is intrigued by their relative's knowledge of herbal remedies for common pet ailments,,persona,[],yes,80,"The persona is described as a 'young child', implying an age range consistent with primary school attendance."
+190020,Inquisitive 5 year old child,5.0,persona,[],yes,100,age 5 is typical for kindergarten or preschool
+190843,A young child fascinated by the night sky and eager to learn more about the universe,,persona,[],yes,80,young child implies primary school age

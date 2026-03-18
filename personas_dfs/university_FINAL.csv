@@ -1,0 +1,87 @@
+idx,persona_text,age,source_config,strict_reject_reasons,llm_label,llm_confidence,llm_reason
+29158,A college freshman interested in studying automobile engineering,18.0,persona,[],yes,100,Persona is explicitly described as a college freshman
+41919,"A freshman student who is excited about joining an ""Ultimate Frisbee"" club at the University.",18.0,persona,[],yes,100,Persona is explicitly described as a freshman student at a university.
+94796,a first-year female undergraduate who is majoring in electronics at a university,18.0,persona,[],yes,100,clearly described as a first-year university student
+131810,a first-year history student at Oregon State University with some interest in environmental topics,18.0,persona,[],yes,100,explicitly described as a first-year university student
+136245,"A budding film music composer currently studying at Berklee College of Music, who idolizes established composers and seeks inspiration from their careers.",18.0,persona,[],yes,90,"studying at Berklee College of Music implies enrollment in a higher-education program, and no information suggests they are beyond their first year"
+5343,A first-year university student who dreams of studying in a foreign country to immerse themselves in a different culture,18.0,persona,[],yes,100,Persona is explicitly described as a first-year university student
+10520,Introductory level computer engineering university student,18.0,persona,[],yes,90,introductory level implies first year
+24123,A college freshman discovering the world of literature and finding their passion for writing,18.0,persona,[],yes,100,Persona is explicitly described as a college freshman
+29585,a freshman college football player for Alabama State University,18.0,persona,[],yes,100,explicitly described as a freshman college student
+49350,a freshman at the University of Vermont studying Business Administration,18.0,persona,[],yes,100,explicitly described as a freshman at a university
+95088,a freshman college student who is the first in his family to attend college,18.0,persona,[],yes,100,explicitly described as a freshman college student
+132723,a freshman psychology student at Palo Alto University,18.0,persona,[],yes,100,explicitly described as a freshman university student
+113530,a freshman at Columbia College,18.0,persona,[],yes,100,explicitly described as a freshman
+128278,"a freshman biomedical engineering student at the University of Massachusetts, Lowell",18.0,persona,[],yes,100,explicitly described as a freshman university student
+153707,"A freshman chemistry student pursuing a Bachelor's degree at the University of California, Irvine.",18.0,persona,[],yes,100,Explicitly described as a freshman university student
+194503,an ambitious freshman now studying at Baker University,18.0,persona,[],yes,100,explicitly described as a freshman
+42594,a freshman student considering joining a fraternity at Illinois Wesleyan University.,18.0,persona,[],yes,100,explicitly described as a freshman student at a university
+78061,A freshman student at Wayne State College who's never experienced a tornado,18.0,persona,[],yes,100,Explicitly described as a freshman student
+194725,A freshman in college who is interested in studying abroad but is unsure about the application requirements and process,18.0,persona,[],yes,100,Persona is explicitly described as a freshman in college
+42729,A freshman in mathematics at a university,18.0,persona,[],yes,100,Explicitly described as a freshman at a university
+45780,A freshman student at Artsakh State University (ArSU),18.0,persona,[],yes,100,Explicitly described as a freshman student at a university
+67904,a freshman history student at the National University of Singapore,18.0,persona,[],yes,100,explicitly described as a freshman
+71887,An international student from a non-Christian country who has recently started studying at a Western university.,18.0,persona,[],yes,90,recently started studying at a Western university implies first-year student
+6306,a freshman art student at Carnegie Mellon University,18.0,persona,[],yes,100,explicitly described as a freshman university student
+97220,A freshman who just joined the Temple University Diamond Marching Band.,18.0,persona,[],yes,100,"Persona is explicitly described as a freshman, indicating first-year university student"
+154620,a first-year architecture student at Japan Women's University,18.0,persona,[],yes,100,clearly described as a first-year university student
+161077,a freshman student at Southern Illinois University Carbondale who is passionate about heritage conservation,18.0,persona,[],yes,100,explicitly described as a freshman student
+2460,A college freshman experiencing the challenges of living away from home for the first time,18.0,persona,[],yes,100,Explicitly described as a college freshman
+19507,"A first-year university student from Lima, Peru studying history.",18.0,persona,[],yes,100,Persona is explicitly described as a first-year university student
+36793,a freshman student preparing to enroll in Elon University,18.0,persona,[],yes,100,explicitly described as a freshman student
+46202,a freshman at a UK university who follows fashion trends,18.0,persona,[],yes,100,explicitly described as a freshman
+68568,a freshman college student majoring in Social Genetics,18.0,persona,[],yes,100,explicitly described as a freshman college student
+72382,a freshman in university who is passionate about fencing and is planning to participate in future World Fencing Championship,18.0,persona,[],yes,100,Persona is explicitly described as a freshman in university
+82428,"a recent graduate of Woodbridge High School, now studying at university",16.0,persona,[],yes,90,"recent high school graduate now at university, likely a freshman"
+145283,An average college freshman who is more interested in subjects related to his chosen major and is not particularly enthusiastic about general education requirements,18.0,persona,[],yes,100,Persona is explicitly described as a college freshman
+149464,A first-year law student studying at the University of São Paulo,18.0,persona,[],yes,100,Clearly described as a first-year university student
+195956,"a first-year university student majoring in English, with little background in chemistry or biology",18.0,persona,[],yes,100,explicitly described as a first-year university student
+13059,A first-year university student who struggles with parking availability on campus,18.0,persona,[],yes,100,Explicitly described as a first-year university student
+30625,an incoming freshman at Barton College who's interested in studying audio recording technologies,18.0,persona,[],yes,100,Persona is described as an incoming freshman
+115931,"a film student in their first year of university, learning about different roles on film sets for the first time.",18.0,persona,[],yes,100,explicitly described as a first-year university student
+182143,a freshman student at the University of Alabama who participates in the school band and cheers for every home game.,18.0,persona,[],yes,100,Explicitly described as a freshman student at a university
+13698,a freshman at the American University in Dubai who is majoring in Digital Production and Storytelling,18.0,persona,[],yes,100,Persona is explicitly described as a freshman at a university.
+86035,a first-year biology student at the University of Sheffield,18.0,persona,[],yes,100,clearly described as a first-year university student
+150215,a freshman student at the College of Charleston who relies heavily on Information Technology services in his learning.,18.0,persona,[],yes,100,Persona is explicitly described as a freshman student at a college.
+197242,"A current college football player who graduated from Wells High School, where Timothy Roche coached me",16.0,persona,[],yes,90,recent high school graduate and current college student
+8181,a freshman college student who is searching for the perfect college accommodation.,18.0,persona,[],yes,100,Persona is explicitly described as a freshman college student
+57362,A sports broadcasting intern who is a freshman at the University of Arizona,18.0,persona,[],yes,100,Persona is explicitly described as a freshman at a university
+64610,A freshman at Oklahoma State University who is eagerly anticipating participating in student government.,18.0,persona,[],yes,100,Explicitly described as a freshman at a university
+73411,"An eager university student aiming to complete their first Ironman, studying sports science and nutrition",18.0,persona,[],yes,100,Persona is a first-year university student studying sports science and nutrition
+93013,A first-year college student majoring in business and has no particular interest in extinct species,18.0,persona,[],yes,100,Persona is explicitly described as a first-year college student
+110666,A local credit counselor who offers advice and resources to help the college freshman navigate the world of credit,18.0,persona,[],yes,100,"Persona is described as a 'college freshman', indicating they are a first-year university student"
+169149,a freshman student recently accepted to the South Carolina Honors College,18.0,persona,[],yes,100,explicitly described as a freshman student
+21547,"a young Japanese university student studying abroad who is a fan of Haruka Ito and her dog, Chobi",18.0,persona,[],yes,80,described as a university student with no indication of being beyond the first year
+65428,a freshman business student at Oakland University.,18.0,persona,[],yes,100,explicitly described as a freshman university student
+106473,a university student benefiting from the Fees Free policy in New Zealand,18.0,persona,[],yes,90,Fees Free policy typically applies to first-year students
+135243,A university freshman who navigated through high school with help from the counselor and is now studying social work,18.0,persona,[],yes,100,Persona is explicitly described as a university freshman
+183075,a first-year economy student at a less competitive college who initially chose the program out of impulsion.,18.0,persona,[],yes,100,Persona is explicitly described as a first-year student
+186034,a college freshman who loved photography and was close friends with Dylan Pietrs.,18.0,persona,[],yes,100,Persona is explicitly described as a college freshman
+28250,a freshman student enrolled at Canisius College who is a dedicated fan of the Golden Griffins men's ice hockey team.,18.0,persona,[],yes,100,Explicitly described as a freshman student at a college
+52805,a freshman studying at Penn State Behrend university,18.0,persona,[],yes,100,Persona is explicitly described as a freshman at a university
+141773,a freshman college student who just started following college baseball closely,18.0,persona,[],yes,100,explicitly described as a freshman college student
+178319,A freshman music student who just got accepted into St. Mary’s University in San Antonio.,18.0,persona,[],yes,100,Explicitly described as a freshman university student
+183170,a freshman majoring in linguistics at Ternopil Volodymyr Hnatiuk National Pedagogical University,18.0,persona,[],yes,100,explicitly described as a freshman
+199048,A freshman student who just joined Troy University and doesn't understand basketball,18.0,persona,[],yes,100,Persona is explicitly described as a freshman student
+65578,a first-year university student who just completed a course in number theory.,18.0,persona,[],yes,100,Persona is explicitly described as a first-year university student
+69617,A freshman studying sociology at Estrella Mountain Community College,18.0,persona,[],yes,100,Persona is explicitly described as a freshman at a community college
+100034,university freshman interested in cross-disciplinary studies,18.0,persona,[],yes,100,explicitly described as a university freshman
+106490,"an overly anxious, cautious, and health-conscious student studying at Bluegrass Community and Technical College (BCTC).",18.0,persona,[],yes,90,"studying at a community college implies a higher-education program, but age is not explicitly stated, assuming typical community college enrollment age"
+186472,an enthused freshman student at the University of Worcester,18.0,persona,[],yes,100,explicitly described as a freshman student
+23314,"a young, aspiring Korean actor currently studying at the same Chung-Ang University, Department of Theater and Film, that Nam Gi-ae attended.",18.0,persona,[],yes,90,"currently studying at university, implies first-year due to age and recent enrollment"
+65782,a first-year college student who is timid and anxious about situations that involve big crowds and strangers,18.0,persona,[],yes,100,Persona is explicitly described as a first-year college student
+107068,a university student who's just turned 18 and is going to vote for the first time,18.0,persona,[],yes,100,"18-year-old university student, likely a freshman"
+111787,an undecided freshman at the University of Georgia,18.0,persona,[],yes,100,explicitly described as a freshman at a university
+147600,a university freshman who is planning to apply for student loans,18.0,persona,[],yes,100,Persona is explicitly described as a university freshman
+152528,A freshman track athlete at Amherst College who gets intimidated easily,18.0,persona,[],yes,100,Described as a freshman at Amherst College
+174315,A first-year university student who values honesty and integrity in academics.,18.0,persona,[],yes,100,Persona is explicitly described as a first-year university student
+33565,A college freshman volunteering in social work inspired by early education experiences,18.0,persona,[],yes,100,Persona is explicitly described as a college freshman
+40183,An international student from India enrolled at the University of King's College,18.0,persona,[],yes,90,"enrolled at university, likely first-year due to lack of information suggesting otherwise"
+44203,A college freshman who struggles with distinguishing reliable information from misinformation online,18.0,persona,[],yes,100,Persona is explicitly described as a college freshman
+58530,"A first-year college student majoring in engineering, struggling with calculus",18.0,persona,[],yes,100,Explicitly described as a first-year college student
+77670,A first-year student in Bioengineering at Imperial College London,18.0,persona,[],yes,100,Clearly described as a first-year university student
+183507,"a freshman studying at the American University Washington, DC",18.0,persona,[],yes,100,explicitly described as a freshman
+29065,"A college freshman enrolled in an archaeology course, inspired by the stories of past civilizations",18.0,persona,[],yes,100,Persona is explicitly described as a college freshman
+107780,"A freshman student of Brock University studying online from her home country, India.",18.0,persona,[],yes,100,Explicitly described as a freshman student at a university
+143216,"I am a freshman at Utah Tech University, enthusiastic about football, and deeply involved in school spirit.",18.0,persona,[],yes,100,Persona explicitly states they are a freshman at a university.
+184394,A freshman student at Cleveland State University who is eager to deepen his understanding of Middle Eastern Studies and needs to collect various academic resources for his study.,18.0,persona,[],yes,100,Explicitly described as a freshman student at a university

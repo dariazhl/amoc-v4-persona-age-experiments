@@ -1,0 +1,26 @@
+# Byte-compiled / optimized / DLL files
+.DS_Store
+._*
+/pycache__/
+pytest.ini
+
+# file types
+*.pyc
+*.png
+*.json
+*.csv
+*.pdf
+*.def
+
+# environments
+venv/
+venv311/
+
+# patches
+patches/
+*.patch
+
+# folders
+me_learning/
+tests/*
+local_tests/
