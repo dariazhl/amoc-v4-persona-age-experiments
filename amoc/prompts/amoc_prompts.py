@@ -472,7 +472,7 @@ VALIDATION RULES (apply in order):
    Valid: (charlemagne, is, handsome), (attire, is, traditional)
 
 5. AVOID VAGUE RELATIONS:
-   Prefer specific over "related to", "associated with".
+   Prefer specific over "related to", "associated with", "involves"
    Valid: (charlemagne, fought, saxons)
    Invalid: (charlemagne, related to, saxons)
 
@@ -591,21 +591,19 @@ Current sentence:
 Active relationships:
 {active_triplets}
 
-TARGET SIZE: The graph should have at most {max_carryover} carryover nodes (concepts from previous sentences that remain active).
+For each relationship, decide: Is it DIRECTLY relevant to UNDERSTANDING the current sentence?
 
-KEEP ONLY if they meet ALL these criteria:
-1. Directly involves main characters in the CURRENT sentence
-2. Is ABSOLUTELY NECESSARY to understand what's happening NOW
-3. Forms a CRITICAL BRIDGE that would break the graph if removed
+KEEP if the relationship:
+1. Directly involves main characters in the CURRENT sentence OR
+2. Forms a bridge WITHOUT WHICH the current sentence would be confusing
 
 IMPORTANT - CONNECTIVITY RULE:
 If removing a relationship would leave a concept COMPLETELY ISOLATED (no other connections), you MUST keep at least one relationship for that concept, even if it's not ideal.
 
 REMOVE everything else, especially:
-- Any relationship NOT mentioned in the current sentence
-- Background information from earlier sentences
-- Inferred attributes that aren't essential right now
-- Redundant relationships (keep only the most general form)
+- Neither subject nor object appears in the current sentence
+- It describes background information not needed right now
+- It's redundant or overly specific
 - Vague or incomplete triples
 
 DECISION EXAMPLES:

@@ -1181,12 +1181,21 @@ def plot_amoc_triplets(
     if show_triplet_overlay:
         active_nodes_for_filter = plotted_nodes - inactive_node_set
 
-        # Build overlay triplets WITHOUT removing edges from G
+        # Build overlay triplets — only edges that are both between active
+        # nodes AND present in active_edge_set.  Without the active_edge_set
+        # check, deactivated edges between two nodes that still have *other*
+        # active connections leak into the "active triplet" panel while
+        # being rendered as gray/faded in the graph visual.
         overlay_triplets = []
         for u, v, k in G.edges(keys=True):
             if (u, v, k) in edge_labels:
                 if u in active_nodes_for_filter and v in active_nodes_for_filter:
-                    overlay_triplets.append((u, edge_labels[(u, v, k)], v))
+                    is_active = (
+                        (u, v, k) in active_edge_set
+                        or (u, v) in active_edge_set
+                    )
+                    if is_active:
+                        overlay_triplets.append((u, edge_labels[(u, v, k)], v))
 
         draw_triplet_panel(
             ax_triplets,

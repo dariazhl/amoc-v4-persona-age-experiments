@@ -186,7 +186,10 @@ class TripletValidator:
         if relation_clean in self.COMMON_COPULAS:
             return True, None, None
 
-        rel_doc = self.spacy_nlp(relation_clean)
+        # Replace underscores with spaces so spaCy can parse multi-word ie "write_about"
+        relation_for_parse = relation_clean.replace("_", " ")
+
+        rel_doc = self.spacy_nlp(relation_for_parse)
         if not rel_doc or len(rel_doc) == 0:
             return False, f"could not parse relation '{relation}'", None
 
@@ -213,15 +216,13 @@ class TripletValidator:
 
             # Signal 4: Word shape and probability (for imperative/infinitive)
             if len(rel_doc) == 1 and token.is_alpha:
-                # Check if this word has verb-like characteristics in the model
                 if hasattr(token, "prob") and token.prob < -3:
-                    # Low probability words are more likely to be content words like verbs
                     has_verb = True
                     break
 
         # Signal 5: multi-word relation starting with a copular verb
         if not has_verb:
-            words = relation_clean.split()
+            words = relation_for_parse.split()  # Use the space-separated version
             if len(words) >= 1 and words[0] in self.COMMON_COPULAS:
                 has_verb = True
 
@@ -554,7 +555,10 @@ class TripletValidator:
             }
 
         subj_doc = self.spacy_nlp(subj) if subj else None
-        rel_doc = self.spacy_nlp(relation.strip().lower()) if relation else None
+        # Replace underscores with spaces so spaCy can tokenize compound
+        # relations like "has_biographer" → "has biographer" and detect verbs.
+        relation_for_parse = relation.strip().lower().replace("_", " ") if relation else ""
+        rel_doc = self.spacy_nlp(relation_for_parse) if relation_for_parse else None
         obj_doc = self.spacy_nlp(obj) if obj else None
 
         subj_pos = subj_doc[0].pos_ if subj_doc and len(subj_doc) > 0 else None

@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Optional, List, Set, Dict
 from collections import deque
 import networkx as nx
 from amoc.core.node import NodeSource
-from amoc.config.constants import MAX_CARRYOVER
+from amoc.config.constants import MAX_CARRYOVER, MAX_TRIPLETS
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
@@ -207,7 +207,7 @@ class Decay:
             return 2
 
     # prune carryover nodes and inferred nodes
-    def apply_pruning(self, prev_sentences, threshold_for_pruning=5):
+    def apply_pruning(self, prev_sentences, threshold_for_pruning=5, aggressive=False):
         # Get all active edges
         all_active_triplets = []
         edge_to_obj = {}
@@ -229,7 +229,8 @@ class Decay:
                 all_active_triplets.append(triplet)
                 edge_to_obj[triplet_str] = edge
 
-        if len(all_active_triplets) <= threshold_for_pruning:
+        current_count = len(all_active_triplets)
+        if current_count <= threshold_for_pruning:
             return
 
         logging.info(
@@ -248,8 +249,8 @@ class Decay:
             story_context=story_context,
             current_sentence=current_sentence,
             active_triplets="\n".join(triplet_strings),
-            max_carryover=MAX_CARRYOVER,
             persona=self._persona,
+            aggressive=aggressive,
         )
 
         if not result or "to_keep" not in result:
@@ -258,6 +259,13 @@ class Decay:
 
         # Get kept triplets
         keep_set = set(result["to_keep"])
+
+        if not aggressive and len(keep_set) > MAX_TRIPLETS:
+            logging.info(
+                f"First pass kept {len(keep_set)} edges – still too many. Running second pass."
+            )
+            self.apply_pruning(prev_sentences, threshold_for_pruning=0, aggressive=True)
+            return
 
         # Build connectivity map for protection
         connectivity_map = self.build_connectivity_map()
@@ -976,6 +984,11 @@ class Decay:
                 edge.active = False
 
         self.prune_inactive_edgeless_nodes()
+
+        # Final node cleanup - edges get deactivated, but nodes do not
+        for edge in self._graph.edges:
+            if edge.visibility_score <= 0 and edge.active:
+                edge.active = False
 
         # # # node cap
         # explicit_nodes = (

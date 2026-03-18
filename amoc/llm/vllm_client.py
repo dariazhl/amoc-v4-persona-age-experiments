@@ -322,14 +322,20 @@ class VLLMClient:
 
     # call in sentrene builder before adding the edges
     def prune_irrelevant_triplets_by_narrative(
-        self, story_context, current_sentence, active_triplets, max_carryover, persona
+        self,
+        story_context,
+        current_sentence,
+        active_triplets,
+        persona,
+        aggressive=False,
     ):
         prompt = PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE.format(
             story_context=story_context,
             current_sentence=current_sentence,
             active_triplets=active_triplets,
-            max_carryover=max_carryover,
         )
+        if aggressive:
+            prompt += "\n\nThis is a SECOND PASS. Be EVEN MORE AGGRESSIVE. Remove anything that is not absolutely essential."
         response = self.call_vllm(prompt, persona)
         return parse_for_dict(response)
 
