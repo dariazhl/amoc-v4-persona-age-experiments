@@ -248,6 +248,7 @@ class Decay:
             story_context=story_context,
             current_sentence=current_sentence,
             active_triplets="\n".join(triplet_strings),
+            max_carryover=MAX_CARRYOVER,
             persona=self._persona,
         )
 
@@ -976,38 +977,38 @@ class Decay:
 
         self.prune_inactive_edgeless_nodes()
 
-        # # node cap
-        explicit_nodes = (
-            self._get_explicit_nodes()
-            if hasattr(self, "_get_explicit_nodes")
-            else set()
-        )
-        explicit_names = {n.get_text_representer() for n in explicit_nodes}
+        # # # node cap
+        # explicit_nodes = (
+        #     self._get_explicit_nodes()
+        #     if hasattr(self, "_get_explicit_nodes")
+        #     else set()
+        # )
+        # explicit_names = {n.get_text_representer() for n in explicit_nodes}
 
-        # Get all active carryover nodes
-        carryover_nodes = []
-        for n in self._graph.nodes:
-            if not n.active or n.get_text_representer() in explicit_names:
-                continue
-            # Check if node has any active edge with score > 0
-            has_active_edge = any(e.active and e.visibility_score > 0 for e in n.edges)
-            if has_active_edge:
-                carryover_nodes.append(n)
+        # # Get all active carryover nodes
+        # carryover_nodes = []
+        # for n in self._graph.nodes:
+        #     if not n.active or n.get_text_representer() in explicit_names:
+        #         continue
+        #     # Check if node has any active edge with score > 0
+        #     has_active_edge = any(e.active and e.visibility_score > 0 for e in n.edges)
+        #     if has_active_edge:
+        #         carryover_nodes.append(n)
 
-        # If too many, keep only those with most edges
-        if len(carryover_nodes) > MAX_CARRYOVER:
-            # Sort by number of active edges (descending)
-            carryover_nodes.sort(
-                key=lambda n: sum(1 for e in n.edges if e.active), reverse=True
-            )
+        # # If too many, keep only those with most edges
+        # if len(carryover_nodes) > MAX_CARRYOVER:
+        #     # Sort by number of active edges (descending)
+        #     carryover_nodes.sort(
+        #         key=lambda n: sum(1 for e in n.edges if e.active), reverse=True
+        #     )
 
-            # Keep top MAX_CARRYOVER, deactivate rest
-            to_keep = carryover_nodes[:MAX_CARRYOVER]
-            to_prune = carryover_nodes[MAX_CARRYOVER:]
+        #     # Keep top MAX_CARRYOVER, deactivate rest
+        #     to_keep = carryover_nodes[:MAX_CARRYOVER]
+        #     to_prune = carryover_nodes[MAX_CARRYOVER:]
 
-            for node in to_prune:
-                for edge in list(node.edges):
-                    if edge.active:
-                        edge.active = False
-                        edge.visibility_score = 0
-                logging.info(f"Capped carryover node: {node.get_text_representer()}")
+        #     for node in to_prune:
+        #         for edge in list(node.edges):
+        #             if edge.active:
+        #                 edge.active = False
+        #                 edge.visibility_score = 0
+        #         logging.info(f"Capped carryover node: {node.get_text_representer()}")

@@ -591,6 +591,8 @@ Current sentence:
 Active relationships:
 {active_triplets}
 
+TARGET SIZE: The graph should have at most {max_carryover} carryover nodes (concepts from previous sentences that remain active).
+
 KEEP ONLY if they meet ALL these criteria:
 1. Directly involves main characters in the CURRENT sentence
 2. Is ABSOLUTELY NECESSARY to understand what's happening NOW

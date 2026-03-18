@@ -11,8 +11,9 @@ import networkx as nx
 
 class Graph:
 
-    # TODO: test without these
-    # TROUBLE
+    # TODO: find a different way to deal with these
+    # issue: "man" and "thing" appear in the first sentence of the text as explicit nodes and they get carried over.
+    # They obviously do not add any value to the text
     BANNED_LEMMAS = {
         "thing",
         "things",
