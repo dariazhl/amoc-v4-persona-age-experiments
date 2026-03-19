@@ -6,11 +6,13 @@ pytest.ini
 
 # file types
 *.pyc
-*.png
 *.json
 *.csv
 *.pdf
 *.def
+*.png
+#except the diagrams
+!diagrams/*.png
 
 # environments
 venv/

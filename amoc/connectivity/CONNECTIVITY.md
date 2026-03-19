@@ -1,8 +1,8 @@
 # Connectivity for Rollback and Fragmentation
 
-This is not actually needed much, because the graph grows organically and it generally stays connected. 
+This is a module that could eventually be removed because it adds complexity to the workflow.
 
-However, fragmentation may happen because of pruning and decay. Also, if a plot has 0 explicit nodes, it must rollback to previous state. This is where connectivity is needed.  
+The graph typically maintains organic connectivity during normal growth. However, fragmentation may happen because of pruning and decay. Also, if a plot has 0 explicit nodes, it must rollback to previous state. This is where connectivity is needed.  
 
 To disable connectivity, comment out this piece of code: 
 

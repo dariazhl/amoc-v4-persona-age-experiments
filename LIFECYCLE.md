@@ -34,8 +34,7 @@ Implements rollback mechanism and general connecitivity stabilization in case of
 
 The graphs grow organically and it stays connected radially to a main hub. However, fragments may occur after decay / pruning. Also, if a sentence does not have explicit nodes, then the plot must revert to the previous state.
 
-It could be remove to reduce complexity if deemed that fragmentation after pruning is allowed. See CONNECTIVITY.md. 
-
+It could be remove to reduce complexity. See CONNECTIVITY.md. 
 `stabilize_connectivity_wrapper()` kicks in if the active subgraph is disconnected. It tries three things in order:
 - Reactivate old cumulative edges along shortest paths
 - Ask the LLM to generate bridging edges
@@ -55,12 +54,11 @@ If none of that works, the sentence gets rolled back to the previous graph state
 
 ## Overview
 
-```
-story
-  -> spaCy sentences -> pronoun resolution
-    -> for each sentence:
-        reset -> extract nodes -> LLM inference -> validate triplets
-          -> add edges -> decay + prune -> build view
-            -> [connectivity repair] -> update state -> plot/capture
-  -> final triplets + matrices
-```
+### Main components
+<img src="diagrams/lifecycle_components.png">
+
+### Lifecycle of an Edge
+<img src="diagrams/edge_lifecycle.png" width="40%" alt="Edge Lifecycle">
+
+### Lifecycle AMoC
+<img src="diagrams/lifecycle_diagram.png">
