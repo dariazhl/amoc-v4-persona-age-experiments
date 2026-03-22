@@ -14,6 +14,7 @@ from amoc.runtime.per_sentence import (
 from amoc.llm.vllm_client import VLLMClient
 from amoc.pipeline.wiring import wire_core_dependencies
 from amoc.config.constants import MAX_DISTANCE_FROM_ACTIVE_NODES
+from amoc.output.recorder import graph_edges_to_triplets
 
 
 class AMoCv4:
@@ -87,7 +88,6 @@ class AMoCv4:
         self._amoc_matrix_records = []
         self._previous_active_triplets = []
         self._story_lemma_set = set()
-        self._sentence_triplets = []
         self._new_inferred_nodes_count = 0
 
         self._get_explicit_nodes = lambda: self._explicit_nodes_current_sentence
@@ -425,11 +425,11 @@ class AMoCv4:
             triplet_intro=self._triplet_intro,
             explicit_nodes_current_sentence=self._explicit_nodes_current_sentence,
             get_nodes_with_active_edges_fn=self._get_active_edge_nodes,
-            reconstruct_semantic_triplets_fn=lambda only_active=False, restrict_nodes=None: self._triplet_ops.reconstruct_semantic_triplets(
-                only_active=only_active, restrict_nodes=restrict_nodes
+            reconstruct_semantic_triplets_fn=lambda only_active=False, restrict_nodes=None: graph_edges_to_triplets(
+                self.graph, only_active=only_active
             ),
             current_sentence_index=self._current_sentence_index,
-            sentence_triplets=self._sentence_triplets,
+            sentence_triplets=self._triplet_ops.get_sentence_records(),
             matrix_suffix=matrix_suffix,
         )
 
@@ -537,12 +537,18 @@ class AMoCv4:
 
     def capture_sentence_triplets_wrapper(self, original_text: str) -> None:
         self._triplet_ops.capture_sentence_triplets(
-            original_text=original_text,
-            current_sentence_index=self._current_sentence_index,
+            sentence_index=self._current_sentence_index,
+            sentence_text=original_text,
             explicit_nodes=self._explicit_nodes_current_sentence,
-            nodes_with_active_edges=self._get_active_edge_nodes(),
-            sentence_triplets=self._sentence_triplets,
+            carryover_nodes=self._carryover_nodes_current_sentence,
         )
+        # Attach decay decisions from the most recent decay pass
+        decisions = self._activation_ops.get_last_decay_decisions()
+        if decisions:
+            self._triplet_ops.record_decay_decisions(
+                sentence_index=self._current_sentence_index,
+                decisions=decisions,
+            )
 
     def capture_state_only_wrapper(
         self,
@@ -565,12 +571,8 @@ class AMoCv4:
         self._plot_ops._ever_in_working_memory.update(active_node_names)
 
         # Paper view state: all triplets (active + inactive), active edges highlighted
-        all_triplets = self._triplet_ops.reconstruct_semantic_triplets(
-            only_active=False
-        )
-        active_triplets = self._triplet_ops.reconstruct_semantic_triplets(
-            only_active=True
-        )
+        all_triplets = graph_edges_to_triplets(self.graph, only_active=False)
+        active_triplets = graph_edges_to_triplets(self.graph, only_active=True)
 
         nodes_with_active_edges = set()
         for s, r, o in active_triplets:
@@ -628,8 +630,8 @@ class AMoCv4:
             largest_component_only=largest_component_only,
             per_sentence_view=self._per_sentence_view,
             explicit_nodes_current_sentence=self._explicit_nodes_current_sentence,
-            reconstruct_semantic_triplets_fn=lambda only_active=False, restrict_nodes=None: self._triplet_ops.reconstruct_semantic_triplets(
-                only_active=only_active, restrict_nodes=restrict_nodes
+            reconstruct_semantic_triplets_fn=lambda only_active=False, restrict_nodes=None: graph_edges_to_triplets(
+                self.graph, only_active=only_active
             ),
         )
         self._viz_positions = self._plot_ops.get_viz_positions()
@@ -643,12 +645,8 @@ class AMoCv4:
         highlight_nodes: Optional[Iterable[str]],
     ) -> None:
         # Paper plot: all edges for layout, active edges highlighted
-        all_triplets = self._triplet_ops.reconstruct_semantic_triplets(
-            only_active=False
-        )
-        active_triplets = self._triplet_ops.reconstruct_semantic_triplets(
-            only_active=True
-        )
+        all_triplets = graph_edges_to_triplets(self.graph, only_active=False)
+        active_triplets = graph_edges_to_triplets(self.graph, only_active=True)
 
         active_nodes, _ = self.graph.get_active_subgraph_wrapper()
         active_node_names = {n.get_text_representer() for n in active_nodes}
@@ -703,7 +701,7 @@ class AMoCv4:
         resolved_sentences = self.resolve_story_sentences(replace_pronouns)
 
         prev_sentences = []
-        self._sentence_triplets = []
+        self._triplet_ops.reset()
         sentence_counter = 0
         text_prefix_pattern = re.compile(r"^The text is:\s*", re.IGNORECASE)
 

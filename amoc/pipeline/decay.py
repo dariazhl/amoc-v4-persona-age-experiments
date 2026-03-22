@@ -4,6 +4,7 @@ from collections import deque
 import networkx as nx
 from amoc.core.node import NodeSource
 from amoc.config.constants import MAX_CARRYOVER, MAX_TRIPLETS
+from amoc.output.models import DecayDecision
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
@@ -35,6 +36,7 @@ class Decay:
         self._current_sentence_text = None
         self._persona = None
         self._record_edge_fn = None
+        self._last_decay_decisions: List[DecayDecision] = []
 
     def set_decay_state_refs(
         self,
@@ -63,22 +65,23 @@ class Decay:
                     edge.visibility_score = 0
                     edge.active = False
 
-    def apply_semantic_edge_decay(self) -> None:
+    def apply_semantic_edge_decay(self) -> List[DecayDecision]:
         # Step 1: Collect candidates
         decay_candidates, edge_to_triplet, candidate_strings = (
             self.collect_decay_candidates()
         )
         if not decay_candidates:
-            return
+            return []
 
         # Step 2: Get LLM scores
         scores, reasoning = self.get_decay_scores(candidate_strings)
         if scores is None:
             self.apply_fallback_decay(decay_candidates)
-            return
+            return []
 
-        if reasoning:
-            logging.info(f"llm reasoning for decay: {reasoning}")
+        reasoning_text = reasoning if reasoning else ""
+        if reasoning_text:
+            logging.info(f"llm reasoning for decay: {reasoning_text}")
 
         # Step 3: Build connectivity map
         connectivity_map = self.build_connectivity_map()
@@ -91,20 +94,36 @@ class Decay:
             "decay_immediate": 0,
             "protected": 0,
         }
+        decisions: List[DecayDecision] = []
 
         for edge in decay_candidates:
             triplet_str = edge_to_triplet[edge]
             score = self.normalize_score(scores.get(triplet_str, 2))
             is_critical = not self.can_remove_edge(edge, connectivity_map)
+            triplet = (
+                edge.source_node.get_text_representer(),
+                edge.label,
+                edge.dest_node.get_text_representer(),
+            )
 
             if score == 0:
                 if is_critical:
                     edge.reduce_visibility()
                     stats["protected"] += 1
+                    decisions.append(DecayDecision(
+                        triplet=triplet, score=score,
+                        action="protected", was_connectivity_critical=True,
+                        reasoning=reasoning_text,
+                    ))
                 else:
                     edge.visibility_score = 0
                     edge.active = False
                     stats["decay_immediate"] += 1
+                    decisions.append(DecayDecision(
+                        triplet=triplet, score=score,
+                        action="removed", was_connectivity_critical=False,
+                        reasoning=reasoning_text,
+                    ))
 
             elif score == 1:
                 if is_critical:
@@ -112,6 +131,11 @@ class Decay:
                     edge.reduce_visibility()
                     edge.reduce_visibility()
                     stats["protected"] += 1
+                    decisions.append(DecayDecision(
+                        triplet=triplet, score=score,
+                        action="protected", was_connectivity_critical=True,
+                        reasoning=reasoning_text,
+                    ))
                 else:
                     edge.reduce_visibility()
                     if edge.visibility_score <= 0:
@@ -121,6 +145,11 @@ class Decay:
                     logging.info(
                         f"immediately deactivated edge {triplet_str} (score=1)"
                     )
+                    decisions.append(DecayDecision(
+                        triplet=triplet, score=score,
+                        action="decayed", was_connectivity_critical=False,
+                        reasoning=reasoning_text,
+                    ))
 
             elif score == 2:
                 edge.visibility_score = max(0, edge.visibility_score - 1)
@@ -130,6 +159,11 @@ class Decay:
                 logging.info(
                     f"fast decay for edge {triplet_str} (score=2, new score={edge.visibility_score})"
                 )
+                decisions.append(DecayDecision(
+                    triplet=triplet, score=score,
+                    action="maintained", was_connectivity_critical=is_critical,
+                    reasoning=reasoning_text,
+                ))
 
             elif score == 3:
                 edge.visibility_score = min(
@@ -137,12 +171,22 @@ class Decay:
                 )
                 edge.mark_as_reactivated(reset_score=False)
                 stats["reinforce"] += 1
+                decisions.append(DecayDecision(
+                    triplet=triplet, score=score,
+                    action="reinforced", was_connectivity_critical=is_critical,
+                    reasoning=reasoning_text,
+                ))
 
             else:
                 edge.reduce_visibility()
                 logging.info(
                     f"fallback decay for edge {triplet_str} (unexpected score={score})"
                 )
+                decisions.append(DecayDecision(
+                    triplet=triplet, score=score,
+                    action="decayed", was_connectivity_critical=is_critical,
+                    reasoning=reasoning_text,
+                ))
 
         # Step 5: Log stats
         logging.info(
@@ -152,6 +196,7 @@ class Decay:
         )
 
         self.reinforce_multi_hop_chains()
+        return decisions
 
     def collect_decay_candidates(self):
         decay_candidates = []
@@ -971,9 +1016,12 @@ class Decay:
         active_nodes |= self._get_explicit_nodes()
         return any(lemma in n.lemmas for n in active_nodes)
 
+    def get_last_decay_decisions(self) -> List[DecayDecision]:
+        return self._last_decay_decisions
+
     def post_sentence_cleanup(self, prev_sentences):
         # First run semantic decay
-        self.apply_semantic_edge_decay()
+        self._last_decay_decisions = self.apply_semantic_edge_decay()
 
         # Then pruning
         self.apply_pruning(prev_sentences)

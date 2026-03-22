@@ -1,10 +1,20 @@
 import logging
 from typing import TYPE_CHECKING, List, Tuple, Set, Optional, Dict
+from amoc.output.models import DecayDecision, SentenceTripletRecord
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
     from amoc.core.node import Node
     from amoc.core.edge import Edge
+
+# Re-export for callers that import from this module
+__all__ = [
+    "DecayDecision",
+    "SentenceTripletRecord",
+    "TripletRecorder",
+    "graph_edges_to_triplets",
+    "get_edge_activation_scores",
+]
 
 
 class TripletRecorder:
@@ -15,14 +25,31 @@ class TripletRecorder:
     ):
         self._graph = graph_ref
         self._triplet_intro = triplet_intro_ref
+        self._sentence_records: List[SentenceTripletRecord] = []
 
-    def graph_edges_to_triplets(
-        self, only_active: bool = False
-    ) -> List[Tuple[str, str, str]]:
-        triplets = []
+    def reset(self) -> None:
+        self._sentence_records.clear()
+
+    def get_sentence_records(self) -> List[SentenceTripletRecord]:
+        return self._sentence_records
+
+    def capture_sentence_triplets(
+        self,
+        sentence_index: int,
+        sentence_text: str,
+        explicit_nodes: Set["Node"],
+        carryover_nodes: Set["Node"],
+    ) -> None:
+        from amoc.core.node import NodeSource
+
+        explicit_text = []
+        explicit_inferred = []
+        carryover_text = []
+        carryover_inferred = []
+        inactive_text = []
+        inactive_inferred = []
+
         for edge in self._graph.edges:
-            if only_active and not edge.active:
-                continue
             # Skip empty labels
             if not edge.label or not str(edge.label).strip():
                 continue
@@ -30,121 +57,108 @@ class TripletRecorder:
             if edge.source_node == edge.dest_node:
                 continue
 
-            triplets.append(
-                (
-                    edge.source_node.get_text_representer(),
-                    edge.label,
-                    edge.dest_node.get_text_representer(),
-                )
-            )
-        return triplets
-
-    def cumulative_triplets_upto(self, sentence_idx: int) -> List[Tuple[str, str, str]]:
-        triplets = []
-        for edge in self._graph.edges:
-            if edge.created_at_sentence is not None:
-                if edge.created_at_sentence <= sentence_idx:
-                    triplets.append(
-                        (
-                            edge.source_node.get_text_representer(),
-                            edge.label,
-                            edge.dest_node.get_text_representer(),
-                        )
-                    )
-            else:
-                # No sentence info - include
-                triplets.append(
-                    (
-                        edge.source_node.get_text_representer(),
-                        edge.label,
-                        edge.dest_node.get_text_representer(),
-                    )
-                )
-        return triplets
-
-    def get_edge_activation_scores(self) -> Dict[Tuple[str, str, str], int]:
-        scores = {}
-        for edge in self._graph.edges:
-            key = (
-                edge.source_node.get_text_representer(),
-                edge.dest_node.get_text_representer(),
+            src = edge.source_node
+            dst = edge.dest_node
+            triplet = (
+                src.get_text_representer(),
                 edge.label,
+                dst.get_text_representer(),
             )
-            scores[key] = edge.visibility_score
-            # Also add 2-tuple key for compatibility
-            scores[(key[0], key[1])] = edge.visibility_score
-        return scores
 
-    # returns a list of all triplets currently in the graph
-    def reconstruct_semantic_triplets(
-        self,
-        only_active: bool = False,
-        restrict_nodes: Optional[Set["Node"]] = None,
-    ) -> List[Tuple[str, str, str]]:
-        triplets = []
-        for edge in self._graph.edges:
-            if only_active and not edge.active:
-                continue
-            # Skip empty labels
-            if not edge.label or not edge.label.strip():
-                continue
-            # Skip self-loops
-            if edge.source_node == edge.dest_node:
-                continue
-            # Apply node restriction if provided
-            if restrict_nodes is not None:
-                if (
-                    edge.source_node not in restrict_nodes
-                    or edge.dest_node not in restrict_nodes
+            src_is_explicit = src in explicit_nodes
+            dst_is_explicit = dst in explicit_nodes
+            src_is_carryover = src in carryover_nodes
+            dst_is_carryover = dst in carryover_nodes
+
+            is_inferred = (
+                src.node_source == NodeSource.INFERENCE_BASED
+                and dst.node_source == NodeSource.INFERENCE_BASED
+            )
+
+            # Determine state
+            if not edge.active:
+                if not (
+                    src_is_explicit
+                    or dst_is_explicit
+                    or src_is_carryover
+                    or dst_is_carryover
                 ):
                     continue
+                if is_inferred:
+                    inactive_inferred.append(triplet)
+                else:
+                    inactive_text.append(triplet)
+            elif src_is_explicit or dst_is_explicit:
+                if is_inferred:
+                    explicit_inferred.append(triplet)
+                else:
+                    explicit_text.append(triplet)
+            elif src_is_carryover and dst_is_carryover:
+                if is_inferred:
+                    carryover_inferred.append(triplet)
+                else:
+                    carryover_text.append(triplet)
+            elif src_is_carryover or dst_is_carryover:
+                if is_inferred:
+                    carryover_inferred.append(triplet)
+                else:
+                    carryover_text.append(triplet)
 
-            triplets.append(
-                (
-                    edge.source_node.get_text_representer(),
-                    edge.label,
-                    edge.dest_node.get_text_representer(),
-                )
-            )
+        record = SentenceTripletRecord(
+            sentence_index=sentence_index,
+            sentence_text=sentence_text,
+            explicit_text_triplets=explicit_text,
+            explicit_inferred_triplets=explicit_inferred,
+            carryover_text_triplets=carryover_text,
+            carryover_inferred_triplets=carryover_inferred,
+            inactive_text_triplets=inactive_text,
+            inactive_inferred_triplets=inactive_inferred,
+        )
+        self._sentence_records.append(record)
 
-        return triplets
-
-    def get_filtered_triplets_for_plot(
-        self, active_only: bool = True
-    ) -> List[Tuple[str, str, str]]:
-        active_nodes, _ = self._graph.get_active_subgraph_wrapper()
-        active_names = {n.get_text_representer() for n in active_nodes}
-
-        triplets = self.graph_edges_to_triplets(only_active=active_only)
-
-        return [
-            (s, r, o)
-            for (s, r, o) in triplets
-            if s in active_names and o in active_names
-        ]
-
-    # list of (sentence_idx, sentence_text, subj, rel, obj, subj_active, obj_active, intro_sentence_idx) for all triplets in current sent
-    def capture_sentence_triplets(
-        self,
-        original_text: str,
-        current_sentence_index: int,
-        explicit_nodes: Set["Node"],
-        nodes_with_active_edges: Set["Node"],
-        sentence_triplets: List,
+    def record_decay_decisions(
+        self, sentence_index: int, decisions: List[DecayDecision]
     ) -> None:
-        current_nodes = explicit_nodes | nodes_with_active_edges
-        for subj, rel, obj in self.reconstruct_semantic_triplets(
-            only_active=False, restrict_nodes=current_nodes
-        ):
-            sentence_triplets.append(
-                (
-                    current_sentence_index,
-                    original_text,
-                    subj,
-                    rel,
-                    obj,
-                    True,
-                    True,
-                    self._triplet_intro.get((subj, rel, obj), -1),
-                )
+        for record in self._sentence_records:
+            if record.sentence_index == sentence_index:
+                record.decay_decisions = decisions
+                return
+        logging.warning(
+            f"record_decay_decisions: no record for sentence {sentence_index}"
+        )
+
+
+def graph_edges_to_triplets(
+    graph: "Graph", only_active: bool = False
+) -> List[Tuple[str, str, str]]:
+    triplets = []
+    for edge in graph.edges:
+        if only_active and not edge.active:
+            continue
+        if not edge.label or not str(edge.label).strip():
+            continue
+        if edge.source_node == edge.dest_node:
+            continue
+        triplets.append(
+            (
+                edge.source_node.get_text_representer(),
+                edge.label,
+                edge.dest_node.get_text_representer(),
             )
+        )
+    return triplets
+
+
+def get_edge_activation_scores(
+    graph: "Graph",
+) -> Dict[Tuple, int]:
+    scores = {}
+    for edge in graph.edges:
+        key = (
+            edge.source_node.get_text_representer(),
+            edge.dest_node.get_text_representer(),
+            edge.label,
+        )
+        scores[key] = edge.visibility_score
+        scores[(key[0], key[1])] = edge.visibility_score
+    return scores
