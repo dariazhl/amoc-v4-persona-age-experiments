@@ -41,15 +41,17 @@ CSV_HEADERS = [
     "regime",
     "persona_text",
     "model_name",
-    "sentence_index",
-    "introduced_at",
+    "sentence_idx",
     "sentence_text",
     "subject",
     "relation",
     "object",
-    "triplet_origin",
-    "triplet_state",
-    "carryover_decision",
+    "subject_source",
+    "object_source",
+    "triplet_source",
+    "edge_visibility",
+    "explicit_carryover",
+    "decay_explanation",
 ]
 
 
@@ -218,7 +220,15 @@ def process_persona_csv(
                 )
 
                 try:
-                    final_triplets, sentence_triplets, _ = engine.run(
+                    engine.set_recorder_metadata(
+                        original_index=row_idx,
+                        age_refined=age_refined_int,
+                        regime=regime,
+                        persona_text=persona_text,
+                        model_name=model_name,
+                    )
+
+                    final_triplets, sentence_triplets, edge_records = engine.run(
                         persona_text=persona_text,
                         age_refined=age_refined_int,
                         replace_pronouns=replace_pronouns,
@@ -234,101 +244,48 @@ def process_persona_csv(
                         force_node=force_node,
                         checkpoint=False,
                         collect_plot_states=generate_reverse_plots,
+                        return_records=True,
                     )
 
-                    def _make_record(origin, state, s, r, o, sent_idx, sent_text, carryover_decision=""):
-                        s, r, o = repair_triplet(s, r, o)
-                        return {
-                            "original_index": row_idx,
-                            "age_refined": age_refined_int,
-                            "persona_text": persona_text,
-                            "model_name": model_name,
-                            "sentence_index": int(sent_idx),
-                            "introduced_at": -1,
-                            "sentence_text": sent_text,
-                            "subject": s,
-                            "relation": r,
-                            "object": o,
-                            "regime": regime,
-                            "triplet_origin": origin,
-                            "triplet_state": state,
-                            "carryover_decision": carryover_decision,
-                        }
+                    if edge_records:
+                        record_dicts = []
+                        for record in edge_records:
+                            s, r, o = repair_triplet(record.subject, record.relation, record.object)
+                            record_dicts.append({
+                                "original_index": record.original_index,
+                                "age_refined": record.age_refined,
+                                "regime": record.regime,
+                                "persona_text": record.persona_text,
+                                "model_name": record.model_name,
+                                "sentence_idx": record.sentence_idx,
+                                "sentence_text": record.sentence_text,
+                                "subject": s,
+                                "relation": r,
+                                "object": o,
+                                "subject_source": record.subject_source,
+                                "object_source": record.object_source,
+                                "triplet_source": record.triplet_source,
+                                "edge_visibility": record.edge_visibility,
+                                "explicit_carryover": record.explicit_carryover,
+                                "decay_explanation": record.decay_explanation,
+                            })
 
-                    sentence_records = []
-                    for record in sentence_triplets:
-                        # SentenceTripletRecord dataclass
-                        if hasattr(record, "sentence_index"):
-                            sent_idx = record.sentence_index
-                            sent_text = record.sentence_text
-
-                            # Build lookup: triplet → reasoning from decay decisions
-                            decay_lookup = {}
-                            for dd in record.decay_decisions:
-                                decay_lookup[dd.triplet] = dd.reasoning
-
-                            for origin, state, triplet_list in [
-                                ("text", "explicit", record.explicit_text_triplets),
-                                ("inferred", "explicit", record.explicit_inferred_triplets),
-                                ("text", "carryover", record.carryover_text_triplets),
-                                ("inferred", "carryover", record.carryover_inferred_triplets),
-                                ("text", "inactive", record.inactive_text_triplets),
-                                ("inferred", "inactive", record.inactive_inferred_triplets),
-                            ]:
-                                for s, r, o in triplet_list:
-                                    # Carryover/inactive get decay reasoning; explicit stays blank
-                                    if state in ("carryover", "inactive"):
-                                        decision = decay_lookup.get((s, r, o), "")
-                                    else:
-                                        decision = ""
-                                    sentence_records.append(
-                                        _make_record(
-                                            origin, state, s, r, o,
-                                            sent_idx, sent_text, decision,
-                                        )
-                                    )
-                        else:
-                            # Legacy 8-tuple fallback
-                            if len(record) == 8:
-                                (
-                                    sent_idx,
-                                    sent_text,
-                                    s,
-                                    r,
-                                    o,
-                                    active,
-                                    _anchor_kept,
-                                    introduced_at,
-                                ) = record
-                            else:
-                                continue
-                            rec = _make_record(
-                                "text",
-                                "explicit" if active else "inactive",
-                                s, r, o, sent_idx, sent_text,
-                            )
-                            rec["introduced_at"] = int(introduced_at)
-                            sentence_records.append(rec)
-
-                    if sentence_records:
                         seen_sent = set()
                         deduped_sent = []
-                        for rec in sentence_records:
+                        for rec in record_dicts:
                             key = (
-                                rec["sentence_index"],
+                                rec["sentence_idx"],
                                 rec["subject"],
                                 rec["relation"],
                                 rec["object"],
-                                rec["triplet_origin"],
-                                rec["triplet_state"],
+                                rec["explicit_carryover"],
                             )
                             if key in seen_sent:
                                 continue
                             seen_sent.add(key)
                             deduped_sent.append(rec)
-                        sentence_records = deduped_sent
 
-                        pd.DataFrame(sentence_records).to_csv(
+                        pd.DataFrame(deduped_sent).to_csv(
                             sentence_output_path,
                             mode="a",
                             header=False,
@@ -337,71 +294,63 @@ def process_persona_csv(
                             encoding="utf-8",
                         )
 
-                    # Final state = last sentence's explicit + carryover triplets (no inactive)
-                    final_records = (
-                        [
+                        max_sent_idx = max(rec["sentence_idx"] for rec in deduped_sent)
+                        final_records = [
                             rec
-                            for rec in sentence_records
-                            if rec["triplet_state"] in ("explicit", "carryover")
-                            and rec["sentence_index"]
-                            == max(r["sentence_index"] for r in sentence_records)
+                            for rec in deduped_sent
+                            if rec["explicit_carryover"] in ("explicit", "carryover")
+                            and rec["sentence_idx"] == max_sent_idx
                         ]
-                        if sentence_records
-                        else []
-                    )
 
-                    if final_records:
-                        seen_final = set()
-                        deduped_final = []
-                        for rec in final_records:
-                            key = (
-                                rec["original_index"],
-                                rec["subject"],
-                                rec["relation"],
-                                rec["object"],
-                                rec["triplet_origin"],
-                            )
-                            if key in seen_final:
-                                continue
-                            seen_final.add(key)
-                            deduped_final.append(rec)
-
-                        if final_output_path.exists():
-                            existing = pd.read_csv(final_output_path)
-                            existing_keys = set(
-                                zip(
-                                    existing["original_index"],
-                                    existing["subject"],
-                                    existing["relation"],
-                                    existing["object"],
-                                    existing["triplet_origin"],
+                        if final_records:
+                            seen_final = set()
+                            deduped_final = []
+                            for rec in final_records:
+                                key = (
+                                    rec["original_index"],
+                                    rec["subject"],
+                                    rec["relation"],
+                                    rec["object"],
                                 )
-                            )
-                        else:
-                            existing_keys = set()
+                                if key in seen_final:
+                                    continue
+                                seen_final.add(key)
+                                deduped_final.append(rec)
 
-                        deduped_final = [
-                            rec
-                            for rec in deduped_final
-                            if (
-                                rec["original_index"],
-                                rec["subject"],
-                                rec["relation"],
-                                rec["object"],
-                                rec["triplet_origin"],
-                            )
-                            not in existing_keys
-                        ]
+                            if final_output_path.exists():
+                                existing = pd.read_csv(final_output_path)
+                                existing_keys = set(
+                                    zip(
+                                        existing["original_index"],
+                                        existing["subject"],
+                                        existing["relation"],
+                                        existing["object"],
+                                    )
+                                )
+                            else:
+                                existing_keys = set()
 
-                        if deduped_final:
-                            pd.DataFrame(deduped_final).to_csv(
-                                final_output_path,
-                                mode="a",
-                                header=False,
-                                index=False,
-                                columns=CSV_HEADERS,
-                                encoding="utf-8",
-                            )
+                            deduped_final = [
+                                rec
+                                for rec in deduped_final
+                                if (
+                                    rec["original_index"],
+                                    rec["subject"],
+                                    rec["relation"],
+                                    rec["object"],
+                                )
+                                not in existing_keys
+                            ]
+
+                            if deduped_final:
+                                pd.DataFrame(deduped_final).to_csv(
+                                    final_output_path,
+                                    mode="a",
+                                    header=False,
+                                    index=False,
+                                    columns=CSV_HEADERS,
+                                    encoding="utf-8",
+                                )
 
                     personas_processed += 1
                     processed_indices.add(row_idx)

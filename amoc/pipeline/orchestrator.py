@@ -14,7 +14,7 @@ from amoc.runtime.per_sentence import (
 from amoc.llm.vllm_client import VLLMClient
 from amoc.pipeline.wiring import wire_core_dependencies
 from amoc.config.constants import MAX_DISTANCE_FROM_ACTIVE_NODES
-from amoc.output.recorder import graph_edges_to_triplets
+from amoc.output.recorder import TripletRecorderV2, graph_edges_to_triplets, EdgeRecord
 
 
 class AMoCv4:
@@ -536,19 +536,35 @@ class AMoCv4:
         )
 
     def capture_sentence_triplets_wrapper(self, original_text: str) -> None:
-        self._triplet_ops.capture_sentence_triplets(
+        decisions = self._activation_ops.get_decay_decisions_with_triplets()
+        if decisions:
+            self._triplet_ops.set_decay_decisions(decisions)
+
+        self._triplet_ops.capture_sentence_edges(
             sentence_index=self._current_sentence_index,
             sentence_text=original_text,
             explicit_nodes=self._explicit_nodes_current_sentence,
             carryover_nodes=self._carryover_nodes_current_sentence,
         )
-        # Attach decay decisions from the most recent decay pass
-        decisions = self._activation_ops.get_last_decay_decisions()
-        if decisions:
-            self._triplet_ops.record_decay_decisions(
-                sentence_index=self._current_sentence_index,
-                decisions=decisions,
-            )
+
+    def set_recorder_metadata(
+        self,
+        original_index: int,
+        age_refined: int,
+        regime: str,
+        persona_text: str,
+        model_name: str,
+    ) -> None:
+        self._triplet_ops.set_metadata(
+            original_index=original_index,
+            age_refined=age_refined,
+            regime=regime,
+            persona_text=persona_text,
+            model_name=model_name,
+        )
+
+    def get_edge_records(self) -> List[EdgeRecord]:
+        return self._triplet_ops.get_all_records()
 
     def capture_state_only_wrapper(
         self,

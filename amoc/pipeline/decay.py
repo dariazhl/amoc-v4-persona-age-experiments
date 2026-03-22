@@ -1,10 +1,19 @@
 import logging
-from typing import TYPE_CHECKING, Optional, List, Set, Dict
+from typing import TYPE_CHECKING, Optional, List, Set, Dict, Tuple
 from collections import deque
 import networkx as nx
 from amoc.core.node import NodeSource
 from amoc.config.constants import MAX_CARRYOVER, MAX_TRIPLETS
-from amoc.output.models import DecayDecision
+from dataclasses import dataclass
+
+
+@dataclass
+class DecayDecision:
+    triplet: Tuple[str, str, str]
+    score: int
+    action: str
+    was_connectivity_critical: bool
+    reasoning: str = ""
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
@@ -1018,6 +1027,13 @@ class Decay:
 
     def get_last_decay_decisions(self) -> List[DecayDecision]:
         return self._last_decay_decisions
+
+    def get_decay_decisions_with_triplets(self) -> List[Tuple[Tuple[str, str, str], str]]:
+        result = []
+        for decision in self._last_decay_decisions:
+            if decision.action in ("removed", "decayed", "protected", "maintained"):
+                result.append((decision.triplet, decision.reasoning))
+        return result
 
     def post_sentence_cleanup(self, prev_sentences):
         # First run semantic decay

@@ -1,23 +1,41 @@
 import logging
 from typing import TYPE_CHECKING, List, Tuple, Set, Optional, Dict
-from amoc.output.models import DecayDecision, SentenceTripletRecord
+from dataclasses import dataclass, field
 
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
     from amoc.core.node import Node
     from amoc.core.edge import Edge
 
-# Re-export for callers that import from this module
 __all__ = [
-    "DecayDecision",
-    "SentenceTripletRecord",
-    "TripletRecorder",
+    "EdgeRecord",
+    "TripletRecorderV2",
     "graph_edges_to_triplets",
     "get_edge_activation_scores",
 ]
 
 
-class TripletRecorder:
+@dataclass
+class EdgeRecord:
+    original_index: int = -1
+    age_refined: int = -1
+    regime: str = ""
+    persona_text: str = ""
+    model_name: str = ""
+    sentence_idx: int = -1
+    sentence_text: str = ""
+    subject: str = ""
+    relation: str = ""
+    object: str = ""
+    subject_source: str = ""
+    object_source: str = ""
+    triplet_source: str = ""
+    edge_visibility: int = 0
+    explicit_carryover: str = ""
+    decay_explanation: str = ""
+
+
+class TripletRecorderV2:
     def __init__(
         self,
         graph_ref: "Graph",
@@ -25,107 +43,106 @@ class TripletRecorder:
     ):
         self._graph = graph_ref
         self._triplet_intro = triplet_intro_ref
-        self._sentence_records: List[SentenceTripletRecord] = []
+        self._sentence_records: List[List[EdgeRecord]] = []
+        self._current_decay_decisions: Dict[Tuple[str, str, str], str] = {}
+
+        self._original_index: int = -1
+        self._age_refined: int = -1
+        self._regime: str = ""
+        self._persona_text: str = ""
+        self._model_name: str = ""
+
+    def set_metadata(
+        self,
+        original_index: int,
+        age_refined: int,
+        regime: str,
+        persona_text: str,
+        model_name: str,
+    ) -> None:
+        self._original_index = original_index
+        self._age_refined = age_refined
+        self._regime = regime
+        self._persona_text = persona_text
+        self._model_name = model_name
 
     def reset(self) -> None:
         self._sentence_records.clear()
+        self._current_decay_decisions.clear()
 
-    def get_sentence_records(self) -> List[SentenceTripletRecord]:
-        return self._sentence_records
+    def set_decay_decisions(self, decisions: List[Tuple[Tuple[str, str, str], str]]) -> None:
+        self._current_decay_decisions.clear()
+        for triplet, reasoning in decisions:
+            self._current_decay_decisions[triplet] = reasoning
 
-    def capture_sentence_triplets(
+    def capture_sentence_edges(
         self,
         sentence_index: int,
         sentence_text: str,
         explicit_nodes: Set["Node"],
         carryover_nodes: Set["Node"],
     ) -> None:
-        from amoc.core.node import NodeSource
-
-        explicit_text = []
-        explicit_inferred = []
-        carryover_text = []
-        carryover_inferred = []
-        inactive_text = []
-        inactive_inferred = []
+        records = []
 
         for edge in self._graph.edges:
-            # Skip empty labels
             if not edge.label or not str(edge.label).strip():
                 continue
-            # Skip self-loops
             if edge.source_node == edge.dest_node:
                 continue
 
             src = edge.source_node
             dst = edge.dest_node
-            triplet = (
-                src.get_text_representer(),
-                edge.label,
-                dst.get_text_representer(),
-            )
 
-            src_is_explicit = src in explicit_nodes
-            dst_is_explicit = dst in explicit_nodes
-            src_is_carryover = src in carryover_nodes
-            dst_is_carryover = dst in carryover_nodes
+            subject = src.get_text_representer()
+            obj = dst.get_text_representer()
+            relation = edge.label
 
-            is_inferred = (
-                src.node_source == NodeSource.INFERENCE_BASED
-                and dst.node_source == NodeSource.INFERENCE_BASED
-            )
+            triplet = (subject, relation, obj)
 
-            # Determine state
+            src_in_explicit = src in explicit_nodes
+            dst_in_explicit = dst in explicit_nodes
+
             if not edge.active:
-                if not (
-                    src_is_explicit
-                    or dst_is_explicit
-                    or src_is_carryover
-                    or dst_is_carryover
-                ):
-                    continue
-                if is_inferred:
-                    inactive_inferred.append(triplet)
-                else:
-                    inactive_text.append(triplet)
-            elif src_is_explicit or dst_is_explicit:
-                if is_inferred:
-                    explicit_inferred.append(triplet)
-                else:
-                    explicit_text.append(triplet)
-            elif src_is_carryover and dst_is_carryover:
-                if is_inferred:
-                    carryover_inferred.append(triplet)
-                else:
-                    carryover_text.append(triplet)
-            elif src_is_carryover or dst_is_carryover:
-                if is_inferred:
-                    carryover_inferred.append(triplet)
-                else:
-                    carryover_text.append(triplet)
+                explicit_carryover = "inactive"
+            elif src_in_explicit or dst_in_explicit:
+                explicit_carryover = "explicit"
+            else:
+                explicit_carryover = "carryover"
 
-        record = SentenceTripletRecord(
-            sentence_index=sentence_index,
-            sentence_text=sentence_text,
-            explicit_text_triplets=explicit_text,
-            explicit_inferred_triplets=explicit_inferred,
-            carryover_text_triplets=carryover_text,
-            carryover_inferred_triplets=carryover_inferred,
-            inactive_text_triplets=inactive_text,
-            inactive_inferred_triplets=inactive_inferred,
-        )
-        self._sentence_records.append(record)
+            decay_reasoning = ""
+            if explicit_carryover in ("carryover", "inactive"):
+                decay_reasoning = self._current_decay_decisions.get(triplet, "")
 
-    def record_decay_decisions(
-        self, sentence_index: int, decisions: List[DecayDecision]
-    ) -> None:
-        for record in self._sentence_records:
-            if record.sentence_index == sentence_index:
-                record.decay_decisions = decisions
-                return
-        logging.warning(
-            f"record_decay_decisions: no record for sentence {sentence_index}"
-        )
+            record = EdgeRecord(
+                original_index=self._original_index,
+                age_refined=self._age_refined,
+                regime=self._regime,
+                persona_text=self._persona_text,
+                model_name=self._model_name,
+                sentence_idx=sentence_index,
+                sentence_text=sentence_text,
+                subject=subject,
+                relation=relation,
+                object=obj,
+                subject_source=src.node_source.name,
+                object_source=dst.node_source.name,
+                triplet_source="INFERRED" if (src.node_source.name == "INFERENCE_BASED" and dst.node_source.name == "INFERENCE_BASED") else "TEXT_BASED",
+                edge_visibility=edge.visibility_score,
+                explicit_carryover=explicit_carryover,
+                decay_explanation=decay_reasoning,
+            )
+            records.append(record)
+
+        self._sentence_records.append(records)
+
+    def get_all_records(self) -> List[EdgeRecord]:
+        all_records = []
+        for sentence_records in self._sentence_records:
+            all_records.extend(sentence_records)
+        return all_records
+
+    def get_sentence_records(self) -> List[List[EdgeRecord]]:
+        return self._sentence_records
 
 
 def graph_edges_to_triplets(

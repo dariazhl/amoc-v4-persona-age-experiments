@@ -7,7 +7,7 @@ from amoc.extraction.linguistic import LinguisticProcessing
 from amoc.extraction.inference import Inference
 from amoc.output.plotter import GraphPlotter
 from amoc.output.finalizer import OutputFinalizer
-from amoc.output.recorder import TripletRecorder, graph_edges_to_triplets, get_edge_activation_scores
+from amoc.output.recorder import TripletRecorderV2, graph_edges_to_triplets, get_edge_activation_scores
 from amoc.runtime.state_manager import ProjectionStateManager
 from amoc.runtime.sentence_runtime import SentenceRuntime
 from amoc.pipeline.decay import Decay
@@ -41,7 +41,7 @@ def wire_core_dependencies(core) -> None:
         sents, create_unexistent_nodes=create_unexistent_nodes
     )
 
-    core._triplet_ops = TripletRecorder(
+    core._triplet_ops = TripletRecorderV2(
         graph_ref=core.graph,
         triplet_intro_ref=core._triplet_intro,
     )

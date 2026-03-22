@@ -3,6 +3,7 @@ from typing import List, Tuple, Iterable, Optional
 import pandas as pd
 
 from amoc.pipeline.orchestrator import AMoCv4
+from amoc.output.recorder import EdgeRecord
 from amoc.llm.vllm_client import VLLMClient
 from amoc.config.constants import (
     MAX_DISTANCE_FROM_ACTIVE_NODES,
@@ -21,10 +22,26 @@ class AgeAwareAMoCEngine:
         self.vllm_client = vllm_client
         self.spacy_nlp = spacy_nlp
         self.last_amoc: Optional["AMoCv4"] = None
+        self._pending_metadata: Optional[dict] = None
 
     def build_analysis_text(self, persona_text: str, age_refined_int: int) -> str:
-        # This is the text that both AMoC and the LLM see as "persona"
         return f"Age: {age_refined_int} years old.\n{persona_text}"
+
+    def set_recorder_metadata(
+        self,
+        original_index: int,
+        age_refined: int,
+        regime: str,
+        persona_text: str,
+        model_name: str,
+    ) -> None:
+        self._pending_metadata = {
+            "original_index": original_index,
+            "age_refined": age_refined,
+            "regime": regime,
+            "persona_text": persona_text,
+            "model_name": model_name,
+        }
 
     def run(
         self,
@@ -43,6 +60,7 @@ class AgeAwareAMoCEngine:
         force_node: bool = False,
         checkpoint: bool = False,
         collect_plot_states: bool = False,
+        return_records: bool = False,
     ) -> List[Tuple[str, str, str]]:
 
         try:
@@ -73,6 +91,11 @@ class AgeAwareAMoCEngine:
             checkpoint=checkpoint,
         )
         self.last_amoc = amoc
+
+        if self._pending_metadata:
+            amoc.set_recorder_metadata(**self._pending_metadata)
+            self._pending_metadata = None
+
         if collect_plot_states and hasattr(amoc, "_plot_ops"):
             amoc._plot_ops.enable_state_collection(True)
         final_triplets, sentence_triplets, cumulative_triplets = amoc.analyze(
@@ -83,4 +106,9 @@ class AgeAwareAMoCEngine:
             largest_component_only=largest_component_only,
             force_node=force_node,
         )
-        return final_triplets, sentence_triplets, cumulative_triplets
+
+        edge_records = []
+        if return_records:
+            edge_records = amoc.get_edge_records()
+
+        return final_triplets, sentence_triplets, edge_records
