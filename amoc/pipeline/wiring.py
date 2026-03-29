@@ -44,6 +44,7 @@ def wire_core_dependencies(core) -> None:
     core._triplet_ops = TripletRecorderV2(
         graph_ref=core.graph,
         triplet_intro_ref=core._triplet_intro,
+        edge_visibility=core.edge_visibility,
     )
     core._edge_ops = EdgeAdmission(
         graph_ref=core.graph,

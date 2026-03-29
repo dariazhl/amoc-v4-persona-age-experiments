@@ -22,8 +22,8 @@ class EdgeRecord:
     regime: str = ""
     persona_text: str = ""
     model_name: str = ""
-    sentence_idx: int = -1
     sentence_text: str = ""
+    sentence_idx: int = -1
     subject: str = ""
     relation: str = ""
     object: str = ""
@@ -33,6 +33,7 @@ class EdgeRecord:
     edge_visibility: int = 0
     explicit_carryover: str = ""
     decay_explanation: str = ""
+    edge_status: str = ""
 
 
 class TripletRecorderV2:
@@ -40,9 +41,11 @@ class TripletRecorderV2:
         self,
         graph_ref: "Graph",
         triplet_intro_ref: Dict[Tuple[str, str, str], int],
+        edge_visibility: int = 2,
     ):
         self._graph = graph_ref
         self._triplet_intro = triplet_intro_ref
+        self._edge_visibility = edge_visibility
         self._sentence_records: List[List[EdgeRecord]] = []
         self._current_decay_decisions: Dict[Tuple[str, str, str], str] = {}
 
@@ -99,15 +102,23 @@ class TripletRecorderV2:
 
             triplet = (subject, relation, obj)
 
-            src_in_explicit = src in explicit_nodes
-            dst_in_explicit = dst in explicit_nodes
+            was_inactive = edge._visibility_at_sentence_start <= 0
 
             if not edge.active:
                 explicit_carryover = "inactive"
-            elif src_in_explicit or dst_in_explicit:
+                edge_status = "inactive"
+            elif was_inactive and edge.visibility_score == self._edge_visibility:
+                explicit_carryover = "reactivate"
+                edge_status = "reactivated"
+            elif edge.visibility_score == self._edge_visibility:
                 explicit_carryover = "explicit"
-            else:
+                edge_status = "asserted" if edge.asserted_this_sentence else "explicit"
+            elif edge.visibility_score > 0:
                 explicit_carryover = "carryover"
+                edge_status = "carryover"
+            else:
+                explicit_carryover = "inactive"
+                edge_status = "inactive"
 
             decay_reasoning = ""
             if explicit_carryover in ("carryover", "inactive"):
@@ -130,6 +141,7 @@ class TripletRecorderV2:
                 edge_visibility=edge.visibility_score,
                 explicit_carryover=explicit_carryover,
                 decay_explanation=decay_reasoning,
+                edge_status=edge_status,
             )
             records.append(record)
 

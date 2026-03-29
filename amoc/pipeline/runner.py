@@ -41,8 +41,8 @@ CSV_HEADERS = [
     "regime",
     "persona_text",
     "model_name",
-    "sentence_idx",
     "sentence_text",
+    "sentence_index",
     "subject",
     "relation",
     "object",
@@ -50,8 +50,9 @@ CSV_HEADERS = [
     "object_source",
     "triplet_source",
     "edge_visibility",
-    "explicit_carryover",
+    "edge_state",
     "decay_explanation",
+    "edge_status",
 ]
 
 
@@ -250,31 +251,36 @@ def process_persona_csv(
                     if edge_records:
                         record_dicts = []
                         for record in edge_records:
-                            s, r, o = repair_triplet(record.subject, record.relation, record.object)
-                            record_dicts.append({
-                                "original_index": record.original_index,
-                                "age_refined": record.age_refined,
-                                "regime": record.regime,
-                                "persona_text": record.persona_text,
-                                "model_name": record.model_name,
-                                "sentence_idx": record.sentence_idx,
-                                "sentence_text": record.sentence_text,
-                                "subject": s,
-                                "relation": r,
-                                "object": o,
-                                "subject_source": record.subject_source,
-                                "object_source": record.object_source,
-                                "triplet_source": record.triplet_source,
-                                "edge_visibility": record.edge_visibility,
-                                "explicit_carryover": record.explicit_carryover,
-                                "decay_explanation": record.decay_explanation,
-                            })
+                            s, r, o = repair_triplet(
+                                record.subject, record.relation, record.object
+                            )
+                            record_dicts.append(
+                                {
+                                    "original_index": record.original_index,
+                                    "age_refined": record.age_refined,
+                                    "regime": record.regime,
+                                    "persona_text": record.persona_text,
+                                    "model_name": record.model_name,
+                                    "sentence_index": record.sentence_idx,
+                                    "sentence_text": record.sentence_text,
+                                    "subject": s,
+                                    "relation": r,
+                                    "object": o,
+                                    "subject_source": record.subject_source,
+                                    "object_source": record.object_source,
+                                    "triplet_source": record.triplet_source,
+                                    "edge_visibility": record.edge_visibility,
+                                    "explicit_carryover": record.explicit_carryover,
+                                    "decay_explanation": record.decay_explanation,
+                                    "edge_status": record.edge_status,
+                                }
+                            )
 
                         seen_sent = set()
                         deduped_sent = []
                         for rec in record_dicts:
                             key = (
-                                rec["sentence_idx"],
+                                rec["sentence_index"],
                                 rec["subject"],
                                 rec["relation"],
                                 rec["object"],
@@ -294,12 +300,14 @@ def process_persona_csv(
                             encoding="utf-8",
                         )
 
-                        max_sent_idx = max(rec["sentence_idx"] for rec in deduped_sent)
+                        max_sent_idx = max(
+                            rec["sentence_index"] for rec in deduped_sent
+                        )
                         final_records = [
                             rec
                             for rec in deduped_sent
                             if rec["explicit_carryover"] in ("explicit", "carryover")
-                            and rec["sentence_idx"] == max_sent_idx
+                            and rec["sentence_index"] == max_sent_idx
                         ]
 
                         if final_records:
