@@ -243,6 +243,7 @@ class EdgeAdmission:
             if old_label.strip().lower() == label.strip().lower():
                 existing_edge.label = label
                 existing_edge.visibility_score = edge_forget
+                existing_edge.active = existing_edge.visibility_score > 0
                 existing_edge.created_at_sentence = use_sentence
                 existing_edge.mark_as_current_sentence(reset_score=True)
 

@@ -134,8 +134,11 @@ class ConnectivityRepair:
                     if edge_data:
                         edge = edge_data.get("edge")
                         if edge and not edge.active:
-                            edge.active = True
-                            edge.visibility_score = max(edge.visibility_score, 1)
+                            if edge.visibility_score == 0:
+                                edge.visibility_score = 2  # true reactivation
+
+                            # always enforce consistency
+                            edge.active = edge.visibility_score > 0
                             reactivated.add(edge)
                 focus_comp.update(comp)
 
@@ -224,8 +227,11 @@ class ConnectivityRepair:
                     ):
                         continue
 
-                    e.active = True
-                    e.visibility_score = max(e.visibility_score, 1)
+                    if e.visibility_score == 0:
+                        e.visibility_score = 2  # true reactivation
+
+                    # always enforce consistency
+                    e.active = e.visibility_score > 0
 
                     G = self.build_active_graph()
                     sub = G.subgraph(carryover_nodes)

@@ -72,6 +72,7 @@ class Edge:
 
         self.forced_connection: bool = False
         self.checkpoint: bool = False
+        self._visibility_at_sentence_start: int = visibility_score
 
     def mark_as_reactivated(
         self, reset_score: bool = True, new_visibility: int = None
@@ -82,6 +83,7 @@ class Edge:
         self.activation_role = "reactivated"
         if new_visibility is not None:
             self.visibility_score = new_visibility
+            self.active = self.visibility_score > 0
 
     def mark_as_current_sentence(self, reset_score: bool = True) -> None:
         self.active = True
@@ -90,19 +92,21 @@ class Edge:
         self.activation_role = "current_sentence"
 
     def reset_for_sentence_start(self) -> None:
+        self._visibility_at_sentence_start = self.visibility_score
         self.asserted_this_sentence = False
         self.reactivated_this_sentence = False
         self.activation_role = None
         # Keep active state based on visibility — no nuclear reset
-        if self.visibility_score <= 0:
-            self.active = False
+        self.active = self.visibility_score > 0
 
     def reduce_visibility(self) -> None:
-        if self.visibility_score > 0:
-            self.visibility_score -= DECAY_STEP
-            if self.visibility_score <= 0:
-                self.visibility_score = 0
-                self.active = False
+        self.visibility_score -= 1
+
+        if self.visibility_score <= 0:
+            self.visibility_score = 0
+            self.active = False
+        else:
+            self.active = True
 
     def is_property_edge(self) -> bool:
         return (
