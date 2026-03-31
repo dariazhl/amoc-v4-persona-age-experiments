@@ -60,9 +60,21 @@ class Decay:
     def set_decay_sentence_context(
         self, idx: int, text: str = None
     ):  # Added text parameter
+        # Do NOT reset flags here — they are already reset at sentence start
+        # via reset_sentence_state() → deactivate_all_edges() → reset_for_sentence_start().
+        # A second reset here would wipe asserted_this_sentence flags set during extraction.
         self._current_sentence_index = idx
         if text:
             self._current_sentence_text = text
+
+    def reset_sentence_flags(self) -> None:
+        asserted_count = sum(1 for e in self._graph.edges if e.asserted_this_sentence)
+        logging.info(
+            f"RESET FLAGS: {len(self._graph.edges)} edges reset "
+            f"(clearing {asserted_count} asserted flags)"
+        )
+        for edge in self._graph.edges:
+            edge.reset_for_sentence_start()
 
     # global decay = fade edges that are never reinforced in cumulative graph
     def apply_global_edge_decay(self) -> None:
@@ -98,10 +110,10 @@ class Decay:
 
         # Step 4: Process each edge
         stats = {
-            "reinforce": 0,
             "maintain": 0,
             "decay": 0,
-            "decay_immediate": 0,
+            "removed": 0,
+            "reactivated": 0,
             "protected": 0,
         }
         decisions: List[DecayDecision] = []
@@ -110,23 +122,43 @@ class Decay:
             triplet_str = edge_to_triplet[edge]
             score = self.normalize_score(scores.get(triplet_str, 2))
             is_critical = not self.can_remove_edge(edge, connectivity_map)
+            old_vis = edge.visibility_score
             triplet = (
                 edge.source_node.get_text_representer(),
                 edge.label,
                 edge.dest_node.get_text_representer(),
             )
 
+            # SCORE 0: REMOVE (lowest relevance) — gradual decay, never skip vis=1
             if score == 0:
-                # Always decay gradually (no hard deletion)
-                edge.reduce_visibility()
+                if is_critical:
+                    # Protect connectivity - decay instead
+                    edge.reduce_visibility()
+                    stats["protected"] += 1
+                    action = "protected"
+                else:
+                    edge.reduce_visibility()
+                    stats["removed"] += 1
+                    action = "removed"
 
+                decisions.append(
+                    DecayDecision(
+                        triplet=triplet,
+                        score=score,
+                        action=action,
+                        was_connectivity_critical=is_critical,
+                        reasoning=reasoning_text,
+                    )
+                )
+
+            # SCORE 1: DECAY (low relevance)
+            elif score == 1:
+                edge.reduce_visibility()
                 if edge.visibility_score <= 0:
                     edge.visibility_score = 0
                     edge.active = False
-
-                if is_critical:
-                    stats["protected"] += 1
-                    action = "protected"
+                    stats["removed"] += 1
+                    action = "removed"
                 else:
                     stats["decay"] += 1
                     action = "decayed"
@@ -141,73 +173,23 @@ class Decay:
                     )
                 )
 
-            # if score == 0:
-            #     if is_critical:
-            #         edge.reduce_visibility()
-            #         stats["protected"] += 1
-            #         decisions.append(
-            #             DecayDecision(
-            #                 triplet=triplet,
-            #                 score=score,
-            #                 action="protected",
-            #                 was_connectivity_critical=True,
-            #                 reasoning=reasoning_text,
-            #             )
-            #         )
-            #     else:
-            #         edge.visibility_score = 0
-            #         edge.active = False
-            #         stats["decay_immediate"] += 1
-            #         decisions.append(
-            #             DecayDecision(
-            #                 triplet=triplet,
-            #                 score=score,
-            #                 action="removed",
-            #                 was_connectivity_critical=False,
-            #                 reasoning=reasoning_text,
-            #             )
-            #         )
-
-            elif score == 1:
-                if is_critical:
-                    edge.reduce_visibility()
-                    # edge.reduce_visibility()
-                    stats["protected"] += 1
-                    decisions.append(
-                        DecayDecision(
-                            triplet=triplet,
-                            score=score,
-                            action="protected",
-                            was_connectivity_critical=True,
-                            reasoning=reasoning_text,
-                        )
-                    )
+            # SCORE 2: REACTIVATE (from inactive) or DECAY (if active)
+            elif score == 2:
+                if edge.visibility_score <= 0:
+                    # Reactivate to full visibility
+                    edge.visibility_score = self._edge_visibility
+                    edge.active = True
+                    edge.mark_as_reactivated(reset_score=False)
+                    edge.protected_until_next_sentence = True
+                    stats["reactivated"] = stats.get("reactivated", 0) + 1
                 else:
+                    # Active edge — still decays by 1 like all other scores
                     edge.reduce_visibility()
                     if edge.visibility_score <= 0:
                         edge.visibility_score = 0
                         edge.active = False
-                    stats["decay"] += 1
-                    logging.info(
-                        f"immediately deactivated edge {triplet_str} (score=1)"
-                    )
-                    decisions.append(
-                        DecayDecision(
-                            triplet=triplet,
-                            score=score,
-                            action="decayed",
-                            was_connectivity_critical=False,
-                            reasoning=reasoning_text,
-                        )
-                    )
+                    stats["decay"] = stats.get("decay", 0) + 1
 
-            elif score == 2:
-                edge.visibility_score = max(0, edge.visibility_score - 1)
-                edge.active = edge.visibility_score > 0
-                stats["maintain"] += 1
-                logging.info(
-                    f"fast decay for edge {triplet_str} (score=2, new score={edge.visibility_score})"
-                )
                 decisions.append(
                     DecayDecision(
                         triplet=triplet,
@@ -217,20 +199,10 @@ class Decay:
                         reasoning=reasoning_text,
                     )
                 )
-
-            elif score == 3:
-                if not edge.active:
-                    edge.visibility_score = self._edge_visibility  # → 2
-                else:
-                    edge.visibility_score = min(
-                        edge.visibility_score + 1, self._edge_visibility
-                    )
-
-                edge.mark_as_reactivated(reset_score=False)
-
+            # Fallback (should not happen)
             else:
                 edge.reduce_visibility()
-                logging.info(
+                logging.warning(
                     f"fallback decay for edge {triplet_str} (unexpected score={score})"
                 )
                 decisions.append(
@@ -243,14 +215,22 @@ class Decay:
                     )
                 )
 
+            logging.info(
+                f"DECAY S{self._current_sentence_index}: {triplet_str} | "
+                f"score={score} | vis {old_vis}→{edge.visibility_score} | "
+                f"critical={is_critical}"
+            )
+
         # Step 5: Log stats
         logging.info(
-            f"decay stats - reinforce: {stats['reinforce']}, "
-            f"maintain: {stats['maintain']}, gradual decay: {stats['decay']}, "
-            f"immediate decay: {stats['decay_immediate']}, protected: {stats['protected']}"
+            f"decay stats - maintain: {stats['maintain']}, "
+            f"decay: {stats['decay']}, removed: {stats['removed']}, "
+            f"reactivated: {stats['reactivated']}, "
+            f"protected: {stats['protected']}"
         )
-
-        self.reinforce_multi_hop_chains()
+        # Step 0: reinforce inference chains first
+        # TODO: uncomment it
+        # self.reinforce_multi_hop_chains()
         return decisions
 
     def collect_decay_candidates(self):
@@ -261,7 +241,11 @@ class Decay:
         for edge in self._graph.edges:
             if edge.created_at_sentence == self._current_sentence_index:
                 continue
-            if edge.asserted_this_sentence or edge.reactivated_this_sentence:
+
+            if edge.asserted_this_sentence:
+                continue
+
+            if edge.reactivated_this_sentence and edge.visibility_score <= 0:
                 continue
 
             triplet = f"({edge.source_node.get_text_representer()}, {edge.label}, {edge.dest_node.get_text_representer()})"
@@ -300,8 +284,8 @@ class Decay:
             score = int(score)
             if score < 0:
                 return 0
-            if score > 3:
-                return 3
+            if score > 2:
+                return 2
             return score
         except:
             return 2
@@ -334,7 +318,7 @@ class Decay:
             return
 
         logging.info(
-            f"current size {len(all_active_triplets)}, target {threshold_for_pruning}"
+            f"pruning: current size {len(all_active_triplets)}, target {threshold_for_pruning}"
         )
 
         # Get story context
@@ -370,8 +354,8 @@ class Decay:
         # Build connectivity map for protection
         connectivity_map = self.build_connectivity_map()
 
-        # Deactivate pruned edges with connectivity protection
-        deactivated = 0
+        # Process edges for pruning
+        removed = 0
         protected = 0
         explicit_protected = 0
 
@@ -386,22 +370,29 @@ class Decay:
                     or dest_name in explicit_node_names
                 ):
                     explicit_protected += 1
-                    # Still decay it a bit
-                    edge.reduce_visibility()
+                    # Explicit edges are protected from pruning entirely
+                    # Semantic decay already handles visibility reduction
                     continue
 
                 # Check if removing would break connectivity
                 if self.can_remove_edge(edge, connectivity_map):
-                    edge.active = False
+                    old_vis = edge.visibility_score
+                    # Hard removal — pruning is a cut, not gradual decay
                     edge.visibility_score = 0
-                    deactivated += 1
+                    edge.active = False
+                    removed += 1
+                    logging.info(
+                        f"PRUNING S{self._current_sentence_index}: {triplet_str} | "
+                        f"vis {old_vis}→0"
+                    )
                 else:
+                    # Critical edge - protect it, keep current visibility
                     protected += 1
-                    # Still decay it a bit
-                    edge.reduce_visibility()
+                    # DO NOT decay - just keep as-is
+                    logging.debug(f"protected critical edge: {triplet_str}")
 
         logging.info(
-            f"pruning deactivated {deactivated} edges, "
+            f"pruning: removed {removed} edges, "
             f"protected {protected} critical edges, "
             f"protected {explicit_protected} explicit edges"
         )
@@ -562,15 +553,14 @@ class Decay:
                     queue.append((neighbor, dist + 1))
 
         for edge in chain_edges:
-            edge.visibility_score = self._edge_visibility
-            edge.active = edge.visibility_score > 0
-            # slightly bumps visibility for multi-chain
-            # edge.visibility_score = min(
-            #    edge.visibility_score + 1, self._edge_visibility
-            # )
-            if not edge.is_property_edge():
-                edge.mark_as_reactivated(reset_score=False)
-            reinforced_count += 1
+            # Only reinforce if not already at max
+            if edge.visibility_score < self._edge_visibility:
+                edge.visibility_score = self._edge_visibility
+                edge.active = True
+                # Only mark as reactivated if it was inactive
+                if not edge.reactivated_this_sentence:
+                    edge.mark_as_reactivated(reset_score=True)
+                reinforced_count += 1
 
         if reinforced_count > 0:
             logging.info(f"reinforced {reinforced_count} edges in inference chains")
@@ -843,9 +833,11 @@ class Decay:
             for edge in edges:
                 if edge.is_property_edge():
                     continue
-                edge.mark_as_reactivated(
-                    reset_score=False, new_visibility=self._edge_visibility
-                )
+                # Only reactivate inactive edges — don't override active visibility
+                if edge.visibility_score <= 0:
+                    edge.mark_as_reactivated(
+                        reset_score=False, new_visibility=self._edge_visibility
+                    )
                 if self._record_edge_fn and (
                     edge.is_asserted() or edge.is_reactivated()
                 ):
@@ -873,9 +865,17 @@ class Decay:
             selected = set(valid_indices)
             for i in selected:
                 edge = edges[i - 1]
-                edge.visibility_score = self._edge_visibility
-                edge.active = edge.visibility_score > 0
-                if not edge.is_property_edge():
+                # Only reactivate edges that are inactive (vis=0).
+                # Active edges follow the natural decay curve.
+                if edge.visibility_score <= 0:
+                    edge.visibility_score = self._edge_visibility
+                    edge.active = True
+                    logging.info(
+                        f"REACTIVATE: ({edge.source_node.get_text_representer()}, "
+                        f"{edge.label}, {edge.dest_node.get_text_representer()}) "
+                        f"vis 0→{self._edge_visibility}"
+                    )
+                if edge.is_property_edge():
                     continue
                 if self._record_edge_fn:
                     self._record_edge_fn(edge, self._current_sentence_index)
@@ -887,9 +887,14 @@ class Decay:
             if idx in selected or edge in newly_added_edges:
                 if edge.is_property_edge():
                     continue
-                edge.mark_as_reactivated(
-                    reset_score=False, new_visibility=self._edge_visibility
-                )
+                # Only reactivate inactive edges — don't override active visibility.
+                # Re-extracted existing edges leak into newly_added_edges via
+                # edge_admission returning the matched edge, so the vis=0 guard
+                # must apply to ALL edges here, not just LLM-selected ones.
+                if edge.visibility_score <= 0:
+                    edge.mark_as_reactivated(
+                        reset_score=False, new_visibility=self._edge_visibility
+                    )
                 if self._record_edge_fn and (
                     edge.is_asserted() or edge.is_reactivated()
                 ):
@@ -921,8 +926,10 @@ class Decay:
         edges_to_reactivate = set()
         for i in selected_indices:
             edge = edges[i - 1]
-            edge.visibility_score = self._edge_visibility
-            edge.active = edge.visibility_score > 0
+            # Only reactivate inactive edges — don't override active visibility
+            if edge.visibility_score <= 0:
+                edge.visibility_score = self._edge_visibility
+                edge.active = True
             if edge.is_property_edge():
                 if self._record_edge_fn:
                     self._record_edge_fn(edge, self._current_sentence_index)
@@ -950,14 +957,15 @@ class Decay:
             if edge in edges_to_reactivate:
                 if edge.is_property_edge():
                     continue
-                edge.mark_as_reactivated(
-                    reset_score=False, new_visibility=self._edge_visibility
-                )
+                # Only reactivate inactive edges — don't override active visibility
+                if edge.visibility_score <= 0:
+                    edge.mark_as_reactivated(
+                        reset_score=False, new_visibility=self._edge_visibility
+                    )
                 if self._record_edge_fn and (
                     edge.is_asserted() or edge.is_reactivated()
                 ):
                     self._record_edge_fn(edge, self._current_sentence_index)
-            # No decay here — apply_global_edge_decay handles it
 
     def propagate_activation_from_edges(self) -> None:
         pass
@@ -1107,39 +1115,3 @@ class Decay:
         # Enforce active/visibility invariant (post-pruning safety net)
         for edge in self._graph.edges:
             edge.active = edge.visibility_score > 0
-
-        # # # node cap
-        # explicit_nodes = (
-        #     self._get_explicit_nodes()
-        #     if hasattr(self, "_get_explicit_nodes")
-        #     else set()
-        # )
-        # explicit_names = {n.get_text_representer() for n in explicit_nodes}
-
-        # # Get all active carryover nodes
-        # carryover_nodes = []
-        # for n in self._graph.nodes:
-        #     if not n.active or n.get_text_representer() in explicit_names:
-        #         continue
-        #     # Check if node has any active edge with score > 0
-        #     has_active_edge = any(e.active and e.visibility_score > 0 for e in n.edges)
-        #     if has_active_edge:
-        #         carryover_nodes.append(n)
-
-        # # If too many, keep only those with most edges
-        # if len(carryover_nodes) > MAX_CARRYOVER:
-        #     # Sort by number of active edges (descending)
-        #     carryover_nodes.sort(
-        #         key=lambda n: sum(1 for e in n.edges if e.active), reverse=True
-        #     )
-
-        #     # Keep top MAX_CARRYOVER, deactivate rest
-        #     to_keep = carryover_nodes[:MAX_CARRYOVER]
-        #     to_prune = carryover_nodes[MAX_CARRYOVER:]
-
-        #     for node in to_prune:
-        #         for edge in list(node.edges):
-        #             if edge.active:
-        #                 edge.active = False
-        #                 edge.visibility_score = 0
-        #         logging.info(f"Capped carryover node: {node.get_text_representer()}")

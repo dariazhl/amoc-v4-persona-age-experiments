@@ -241,11 +241,10 @@ class EdgeAdmission:
             old_label = existing_edge.label
 
             if old_label.strip().lower() == label.strip().lower():
+                # Existing edge with same label — do NOT refresh visibility or
+                # mark as asserted.  Let semantic decay handle the natural curve.
+                # Only update the label casing.
                 existing_edge.label = label
-                existing_edge.visibility_score = edge_forget
-                existing_edge.active = existing_edge.visibility_score > 0
-                existing_edge.created_at_sentence = use_sentence
-                existing_edge.mark_as_current_sentence(reset_score=True)
 
                 if self._debug:
                     logging.info(
@@ -266,7 +265,11 @@ class EdgeAdmission:
                         use_sentence if use_sentence is not None else -1
                     )
 
-                return existing_edge
+                # Return None — this is NOT a new edge. Returning the existing
+                # edge would add it to newly_added_edges, causing
+                # reactivate_relevant_edges() to mark it as "reactivated"
+                # even when it's active and should follow the decay curve.
+                return None
             self._graph.remove_edge(existing_edge)
         # edge duplication ie. knight - forest - forest
         if (

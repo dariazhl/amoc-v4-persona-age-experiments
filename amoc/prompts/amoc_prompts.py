@@ -501,7 +501,7 @@ Return a JSON with:
 3. "corrected_triple": [subject, relation, object] if fixable, else null
 """
 
-# Simplified with 1-3 scale
+# Simplified with 0-2 scale
 NARRATIVE_RELEVANCE_PROMPT = """You are maintaining a knowledge graph of a story. Your task is to score each relationship by how important it is for understanding the current narrative.
 
 Story context (previous sentences):
@@ -513,66 +513,74 @@ Current sentence being processed:
 Active relationships in the reader's memory:
 {active_triplets}
 
-SCORING GUIDE (0-3):
+SCORING GUIDE (0-2):
 
-SCORE 3 - HIGH RELEVANCE (Essential to keep)
-- Involves main characters (Charlemagne, his family, kingdoms, key figures)
-- Directly describes actions or states in the current sentence
-- Bridges concepts to explicit story elements - these bridging edges are CRITICAL to preserve
+CRITICAL RULE - HIGHEST PRIORITY:
+For an edge to get SCORE 2, the RELATION or OBJECT must appear EXPLICITLY in the sentence.
+If only the SUBJECT appears, the score CANNOT be 2.
 
-SCORE 2 - MEDIUM RELEVANCE (Useful context)
-- Background information about secondary characters
-- Generic but meaningful relations ("lives_in", "travels_to", "works_with")
-- Provides supporting details not central to current events
+SCORE 2 - RELEVANT (Keep as-is, no decay)
+- The RELATION or OBJECT appears EXACTLY or as a clear synonym in the current sentence
+- Example: For edge (charlemagne, is, king), the sentence MUST contain "king", "monarch", or "ruler"
+- Example: For edge (charlemagne, wears, attire), the sentence MUST contain "attire" or "clothes"
+- The edge directly describes an action or state explicitly mentioned in the current sentence
+- The edge bridges concepts to explicit story elements that appear in the current sentence
 
-SCORE 1 - LOW RELEVANCE (Can be removed)
-- Semantically incomplete triples (action verb + adjective without noun):
-  (charlemagne, prefers, simple) - what does he prefer?
-  (charlemagne, wears, traditional) - wears WHAT?
-  (charlemagne, finds, interesting) - finds WHAT interesting?
-- Vague relations with no specific meaning:
-  (pride, relates_to, ability) - how do they relate?
-  (x, associated_with, y) - in what way?
-- Semantic duplicates when a better form exists:
-  If both (charlemagne, is, skilled) AND (charlemagne, has, skill) exist, the "has" version is score 1
-  Prefer "is + adjective" (score 3) over "has + noun" (score 1) for the same attribute
+SCORE 1 - LOW RELEVANCE (Decay gradually)
+- Only the SUBJECT appears in the sentence, but the RELATION or OBJECT does NOT
+- Example: (charlemagne, is, king) when sentence has "Charlemagne" but not "king" = score 1
+- Generic background information about main characters that is not directly mentioned
 - Minor details from early sentences no longer connected to current narrative
 
-SCORE 0 - COMPLETELY IRRELEVANT (Remove immediately)
+SCORE 0 - IRRELEVANT (Remove immediately)
+- Neither subject, relation, nor object appears in the sentence
+- Semantically incomplete triples
+- Vague relations with no specific meaning
+- Semantic duplicates (worse form)
 - Semantically incoherent or garbage triples
-- Complete non-sequiturs that have no connection to the current narrative
-- Triplets that are clearly errors or hallucinations
-- Must check connectivity protection - only remove if node remains connected
 
 CRITICAL RULES:
 1. CONTEXT AWARENESS:
    - A triple's score can CHANGE based on later context
-   - Example: (pride, relates_to, ability) in sentence 1 with no context = score 1
-   - If sentence 3 discusses how pride affects ability, that same triple becomes score 3
+   - Example: (pride, relates_to, ability) in sentence 1 with no context = score 0
+   - If sentence 3 discusses how pride affects ability, that same triple becomes score 2
 
 2. CONNECTIVITY PROTECTION:
    - NEVER assign score 0 to an edge if removing it would disconnect a node from the graph
-   - Score 0 means immediate removal in the current sentence
+   - The system will automatically protect critical edges, so focus on semantic relevance
+   - Score 0 means immediate removal
    - Score 1 means gradual decay over multiple sentences
-   - Check if the node has other connections before marking for removal
+
+3. DUPLICATE RESOLUTION:
+   - When multiple edges represent the same fact, keep only the best form
+   - Prefer "is + adjective" over "has + noun" for attributes
+   - Score the worse form as 0 (immediate removal)
 
 SCORING EXAMPLES:
-Context: First sentence "Charlemagne preferred simple living."
+Context: "The king rode into battle."
 Active triplets:
-- (charlemagne, preferred, simple) → SCORE 1 (incomplete - preferred WHAT?)
-- (charlemagne, is, simple) → SCORE 3 (valid property of main character)
-- (charlemagne, has, simplicity) → SCORE 1 (duplicate of "is simple" - worse form)
+- (charlemagne, is, king) → SCORE 2 (Both subject and object implied by context)
+
+Context: "Charlemagne preferred simple living."
+Active triplets:
+- (charlemagne, preferred, simple) → SCORE 0 (incomplete - preferred WHAT?)
+- (charlemagne, is, simple) → SCORE 2 (valid property of main character)
+- (charlemagne, has, simplicity) → SCORE 0 (duplicate of "is simple" - worse form)
 
 Context: Later sentence "He wore traditional Frankish attire."
 Active triplets:
-- (charlemagne, wore, traditional) → SCORE 1 (incomplete - wore WHAT?)
-- (charlemagne, wore, attire) → SCORE 3 (complete, connects to main character)
-- (attire, is, traditional) → SCORE 3 (complete property)
+- (charlemagne, wore, traditional) → SCORE 0 (incomplete - wore WHAT?)
+- (charlemagne, wore, attire) → SCORE 2 (complete, connects to main character)
+- (attire, is, traditional) → SCORE 2 (complete property)
+
+Context: "Pride affects a person's ability to succeed."
+Active triplets:
+- (pride, relates_to, ability) → SCORE 2 (now directly connected to current narrative)
 
 Return a JSON object with:
 {{
     "scores": {{
-        "(subject1, relation1, object1)": 3,
+        "(subject1, relation1, object1)": 2,
         "(subject2, relation2, object2)": 1,
         ...
     }},

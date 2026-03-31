@@ -103,19 +103,23 @@ class TripletRecorderV2:
 
             was_inactive = edge._visibility_at_sentence_start <= 0
 
-            if not edge.active:
+            if edge.visibility_score <= 0:
                 edge_status = "inactive"
-            elif was_inactive and edge.visibility_score == self._edge_visibility:
+            elif edge.created_at_sentence == sentence_index:
+                edge_status = "asserted"
+            elif edge.asserted_this_sentence:
+                edge_status = "explicit"
+            elif edge.reactivated_this_sentence:
                 edge_status = "reactivated"
-            elif edge.visibility_score == self._edge_visibility:
-                edge_status = "asserted" if edge.asserted_this_sentence else "explicit"
-            elif edge.visibility_score > 0:
+            elif edge.visibility_score == 1:
+                edge_status = "decaying"
+            elif edge.visibility_score >= 2:
                 edge_status = "carryover"
             else:
                 edge_status = "inactive"
 
             decay_reasoning = ""
-            if edge_status in ("carryover", "inactive"):
+            if edge_status in ("carryover", "decaying", "inactive"):
                 decay_reasoning = self._current_decay_decisions.get(triplet, "")
 
             record = EdgeRecord(

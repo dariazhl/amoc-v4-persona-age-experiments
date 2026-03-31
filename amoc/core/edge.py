@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 from typing import TYPE_CHECKING, Optional
 from difflib import SequenceMatcher
 from amoc.core.node import NodeType
@@ -86,6 +87,11 @@ class Edge:
             self.active = self.visibility_score > 0
 
     def mark_as_current_sentence(self, reset_score: bool = True) -> None:
+        logging.info(
+            f"MARK ASSERTED: ({self.source_node.get_text_representer()}, "
+            f"{self.label}, {self.dest_node.get_text_representer()}) "
+            f"vis={self.visibility_score} created_at={self.created_at_sentence}"
+        )
         self.active = True
         self.asserted_this_sentence = True
         self.reactivated_this_sentence = False
