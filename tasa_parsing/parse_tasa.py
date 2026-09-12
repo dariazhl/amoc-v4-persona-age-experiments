@@ -1,5 +1,9 @@
 import re
 import csv
+from pathlib import Path
+
+TOP_PARAGRAPHS = 10
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 #redesign 
 def drp_to_grade(drp: float) -> str:
@@ -70,8 +74,8 @@ def recreate_paragraphs(text: str):
 
 
 if __name__ == "__main__":
-    input_path = "tasa.txt"
-    output_path = "output.csv"
+    input_path = SCRIPT_DIR / "tasa.txt"
+    output_path = SCRIPT_DIR / "output.csv"
 
     # 1. Read full file
     with open(input_path, "r", encoding="utf-8") as f:
@@ -100,7 +104,7 @@ if __name__ == "__main__":
         level = drp_to_grade(drp)
         groups.setdefault(level, []).append((drp, para))
 
-    min_output_path = output_path.replace(".csv", "_min_drp_per_group.csv")
+    min_output_path = output_path.with_name(output_path.stem + "_min_drp_per_group.csv")
     with open(min_output_path, "w", encoding="utf-8", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(["drp", "level", "paragraph"])
@@ -109,7 +113,7 @@ if __name__ == "__main__":
             if level not in groups:
                 print(f"Warning: no paragraphs found for group '{level}'")
                 continue
-            top3 = sorted(groups[level], key=lambda x: x[0])[:3]
+            top3 = sorted(groups[level], key=lambda x: x[0])[:TOP_PARAGRAPHS]
             for drp, para in top3:
                 writer.writerow([f"{drp:.5f}", level, para])
 

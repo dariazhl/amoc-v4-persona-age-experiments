@@ -8,7 +8,7 @@ pytest.ini
 *.pyc
 *.json
 *.csv
-!personas_dfs/personas_refined_age/chunks_balanced/*.csv
+!personas_dfs/personas_refined_age/chunks_balanced/*csv
 *.pdf
 *.def
 *.png
@@ -36,3 +36,6 @@ patches/
 me_learning/
 tests/*
 local_tests/
+paper/
+study_results/
+diagrams/

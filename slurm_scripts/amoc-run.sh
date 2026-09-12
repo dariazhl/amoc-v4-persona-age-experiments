@@ -19,13 +19,22 @@ echo "Project root: $PROJECT_ROOT"
 echo "Input: $INPUT_DIR"
 echo "Output: $OUTPUT_DIR"
 
-export HF_HOME="/export/projects/nlp/.cache"
+export HF_HOME="$HOME/.cache/huggingface"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-/export/projects/nlp/.cache}"
+export HF_TOKEN_PATH="${HF_HOME}/token"
+unset TRANSFORMERS_CACHE
+mkdir -p "${HF_HOME}"
 
 apptainer exec --nv \
+    --env HF_HOME="${HF_HOME}" \
+    --env HF_TOKEN_PATH="${HF_TOKEN_PATH}" \
+    --env HF_HUB_CACHE="${HF_HUB_CACHE}" \
+    --env HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}" \
     -B "${PROJECT_ROOT}:${PROJECT_ROOT}" \
     -B "${INPUT_DIR}:${INPUT_DIR}" \
     -B "${OUTPUT_DIR}:${OUTPUT_DIR}" \
     -B "${HF_HOME}:${HF_HOME}" \
+    -B "${HF_HUB_CACHE}:${HF_HUB_CACHE}" \
     "$SIF_IMAGE" \
     bash -c '
         cd "$1" || exit 1
