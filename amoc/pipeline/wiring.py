@@ -21,6 +21,7 @@ def wire_core_dependencies(core) -> None:
         get_carryover_nodes=core._get_carryover_nodes,
         edge_visibility=core.edge_visibility,
         llm_extractor=core.client,
+        spacy_nlp=core.spacy_nlp,
     )
     core._text_filter_ops = TextNormalizer(
         spacy_nlp=core.spacy_nlp,

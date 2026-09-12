@@ -40,25 +40,40 @@
 #     main(sys.argv[1:])
 # download_model_not_in_cache.py
 import os
+
+os.environ.setdefault("HF_HOME", "/export/projects/nlp/.cache")
+
 from huggingface_hub import snapshot_download
 
-os.environ["HF_HOME"] = "/export/projects/nlp/.cache"
 
 def main():
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name", required=True)
-    args = parser.parse_args()
-    
-    print(f"Downloading {args.model_name} to cache...")
-    
-    snapshot_download(
-        repo_id=args.model_name,
-        resume_download=True,
-        local_files_only=False
+    parser.add_argument(
+        "--cache-dir",
+        dest="cache_dir",
+        default=os.environ.get("HF_HUB_CACHE"),
     )
-    
-    print(f"Download complete!")
+    args = parser.parse_args()
+
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HF_TOKEN_DOWNLOAD")
+    target = args.cache_dir or os.path.join(os.environ["HF_HOME"], "hub")
+
+    print(f"HF_HOME={os.environ['HF_HOME']}")
+    print(f"Downloading {args.model_name} -> {target}")
+    if not token:
+        print("WARNING: no HF_TOKEN set; gated repos will fail")
+
+    path = snapshot_download(
+        repo_id=args.model_name,
+        cache_dir=args.cache_dir,
+        token=token,
+    )
+
+    print(f"Download complete: {path}")
+
 
 if __name__ == "__main__":
     main()

@@ -131,6 +131,12 @@ def discover_files(input_dir: Union[str, List[str]], model_name: str) -> List[st
                 if raw_safe_tag.lower() in os.path.basename(p).lower()
                 and "final_triplets" in os.path.basename(p).lower()
             )
+        if not found:
+            found = sorted(
+                p for p in glob.glob(os.path.join(d, "**", "*.csv"), recursive=True)
+                if raw_safe_tag.lower() in os.path.basename(p).lower()
+                and "quantile_trimmed" in os.path.basename(p).lower()
+            )
         files.extend(found)
     seen, out = set(), []
     for p in files:

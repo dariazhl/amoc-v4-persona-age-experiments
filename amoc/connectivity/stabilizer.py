@@ -12,9 +12,6 @@ from amoc.prompts.amoc_prompts import FORCED_CONNECTIVITY_EDGE_PROMPT
 from amoc.admission.triplet_validator import TripletValidator
 
 
-# Old code: no connectivity enforced
-# New code: same principle applied on new code creates fragmentation
-# Design: enforce connectivity at sentence level, with repair + fallback
 class ConnectivityStabilizer:
     def __init__(
         self,
@@ -44,14 +41,6 @@ class ConnectivityStabilizer:
     def _validate_forced_relation(
         self, subj_text: str, relation: str, obj_text: str
     ) -> Optional[str]:
-        """Run a forced-connectivity relation through the same grammatical
-        checks the normal triplet-extraction path uses (TripletValidator),
-        so a dangling property/adjective node (e.g. "faithful") can't become
-        the subject of an invented verb, and vague relations like "has"
-        can't reconnect two otherwise-unrelated nodes. Returns the
-        (possibly corrected) relation label, or None if the triplet should
-        be rejected outright.
-        """
         if not self._validator.is_valid_relation_label(relation):
             logging.info(
                 f"FORCED_EDGE rejected (invalid label): "
@@ -93,10 +82,6 @@ class ConnectivityStabilizer:
     def is_cumulative_connected_wrapper(self) -> bool:
         return self._graph.is_cumulative_connected()
 
-    # Main pipeline to enforce connectivity with repair and fallback
-    # Step 1. Deterministic repair
-    # Step 2. LLM repair - try twice
-    # Step 3. Final fallback with "relates_to" edges
     def run_connectivity_pipeline(
         self,
         prev_sentences: list,
@@ -107,7 +92,6 @@ class ConnectivityStabilizer:
         carryover_nodes = self._get_carryover_nodes()
         required_nodes = explicit_nodes | carryover_nodes
 
-        # Deterministic repair via ConnectivityRepair (reactivate cumulative edges)
         if self._graph.enforce_connectivity(required_nodes, allow_reactivation=True):
             if (
                 self.is_active_connected_wrapper()
@@ -115,7 +99,6 @@ class ConnectivityStabilizer:
             ):
                 return False
 
-        # LLM repair - try 2x
         for attempt in range(2):
             create_forced_edges_fn(
                 story_context=(
@@ -133,7 +116,6 @@ class ConnectivityStabilizer:
         ):
             return False
 
-        # Final fallback "relates_to" edges
         self.apply_relates_to_fallback(required_nodes)
 
         if not self.is_active_connected_wrapper():
@@ -154,13 +136,9 @@ class ConnectivityStabilizer:
         )
         return (-degree, node.get_text_representer())
 
-    # fallback = if deterministic + LLM repair fair, add generic "relates_to" edges
-    # this is a last resort before rolling back to previous sentence state
     def apply_relates_to_fallback(self, required_nodes: set) -> None:
-        # find disconnected components
         components, _ = self._graph.get_disconnected_components_wrapper(required_nodes)
 
-        # Include required nodes that have no active edges as separate components
         all_required_nodes = set(required_nodes)
         covered_nodes = set().union(*components) if components else set()
         for node in all_required_nodes - covered_nodes:
@@ -169,7 +147,6 @@ class ConnectivityStabilizer:
         if len(components) <= 1:
             return
 
-        # sort components by size
         components = sorted(components, key=len, reverse=True)
         largest_component = set(components[0])
 
@@ -194,14 +171,11 @@ class ConnectivityStabilizer:
                 key=lambda n: n.get_text_representer(),
             )
             if explicit_in_comp:
-                # if explicit nodes exist, pick the first one
                 node_small = explicit_in_comp[0]
             else:
-                # else pick the node with the smallest degree
                 node_small = min(
                     comp_set, key=lambda n: self.node_sort_key(n, active_edge_pool)
                 )
-            # create generic edge
             edge = self._graph.add_edge(
                 node_small,
                 backbone_node,
@@ -215,7 +189,6 @@ class ConnectivityStabilizer:
                 edge.mark_as_current_sentence(reset_score=True)
                 largest_component.update(comp_set)
 
-    # ensure cumulative graph is connected
     def connect_cumulative_components(self) -> None:
         G_full = self._graph.to_networkx()
 
@@ -226,14 +199,11 @@ class ConnectivityStabilizer:
         if len(components) <= 1:
             return
 
-        # Sort by size: largest first
         components = sorted(components, key=len, reverse=True)
         largest = set(components[0])
 
-        # Deterministic representative node
         node_large = min(largest, key=lambda n: n.get_text_representer())
 
-        # Connect smallest - largest
         for comp in sorted(components[1:], key=len):
             node_small = min(comp, key=lambda n: n.get_text_representer())
             edge = self._graph.add_edge(
@@ -272,8 +242,6 @@ class ConnectivityStabilizer:
                 return False
         return True
 
-    # issue: some explicit and carryover nodes in the graph are isolated
-    # purpose: handle nodes that appear in the per‑sentence view but have no edges at all in the current active graph
     def repair_dangling_nodes(
         self,
         per_sentence_view,
@@ -287,7 +255,6 @@ class ConnectivityStabilizer:
         active_nodes = set(per_sentence_view.explicit_nodes) | set(
             per_sentence_view.carryover_nodes
         )
-        # find dangling nodes with no edges in the active graph
         dangling_nodes = []
         for node in active_nodes:
             has_edge = any(
@@ -301,7 +268,6 @@ class ConnectivityStabilizer:
             return False
 
         any_repair_failed = False
-        # find anchor candidates from active nodes with edges, sorted by degree
         for node in dangling_nodes:
             repair_success = False
 
@@ -325,7 +291,6 @@ class ConnectivityStabilizer:
                 any_repair_failed = True
                 continue
 
-            # Try LLM repair - 2 attemptS
             for _ in range(2):
                 result = self._llm.get_forced_connectivity_edge_label(
                     node_a=node.get_text_representer(),
@@ -349,7 +314,6 @@ class ConnectivityStabilizer:
                 )
                 if not relation:
                     continue
-                # if valid relation returned, add edge to graph with inferred=True
                 edge = self._graph.add_edge(
                     node,
                     anchor,
@@ -366,7 +330,6 @@ class ConnectivityStabilizer:
             if not repair_success:
                 any_repair_failed = True
 
-        # return True if any repair failed - caller should invoke enforce_connectivity
         return any_repair_failed
 
     def repair_connectivity_callback(
@@ -388,7 +351,6 @@ class ConnectivityStabilizer:
         sorted_components = sorted(components, key=len, reverse=True)
         main_component = sorted_components[0]
 
-        # DETERMINISTIC: Select anchor from main component
         anchor_node = min(
             [n for n in main_component if n in active_nodes],
             key=lambda n: self.node_sort_key(n, active_edges),
@@ -400,7 +362,6 @@ class ConnectivityStabilizer:
         edges_created = set()
 
         for comp in sorted_components[1:]:
-            # DETERMINISTIC: Select representative from small component
             candidates = [n for n in comp if n in active_nodes]
             if not candidates:
                 continue
@@ -416,7 +377,6 @@ class ConnectivityStabilizer:
             )
 
             try:
-                # no persona injection for connectivity repair
                 response = self._llm.generate_raw(
                     prompt_text=prompt_text,
                     temperature=temperature,
@@ -427,7 +387,6 @@ class ConnectivityStabilizer:
 
                 response = response.strip()
 
-                # Expect direct JSON
                 data = json.loads(response)
                 label = data.get("label")
 
@@ -456,8 +415,6 @@ class ConnectivityStabilizer:
         if not self.is_cumulative_connected_wrapper():
             logging.warning("Cumulative graph disconnected - plots may show fragments")
 
-    # Run all connectivity repairs in sequence after decay
-    # Inside ConnectivityStabilizer class
     def run_repair_pipeline(
         self,
         per_sentence_view,
@@ -469,7 +426,6 @@ class ConnectivityStabilizer:
     ) -> None:
         self._persona = persona
 
-        # Step 1: Connect isolated explicit nodes
         self.connect_isolated_explicit_node(
             per_sentence_view,
             prev_sentences,
@@ -477,34 +433,27 @@ class ConnectivityStabilizer:
             normalize_edge_label_fn,
         )
 
-        # Step 2: LLM repair for any remaining isolated explicit nodes
         self.repair_isolated_explicit_nodes(
             per_sentence_view, current_sentence_text, normalize_edge_label_fn
         )
 
-        # Step 3: Deterministic reactivation of existing cumulative edges
         required_nodes = set(per_sentence_view.explicit_nodes) | set(
             per_sentence_view.carryover_nodes
         )
         self._graph.enforce_connectivity(required_nodes, allow_reactivation=True)
 
-        # Step 4: LLM forced‑edge repair
         self.create_forced_edges_via_llm(
             prev_sentences, current_sentence_text, create_forced_edges_fn
         )
 
-        # Step 5: Fallback "relates_to" edges
         self.apply_relates_to_fallback(required_nodes)
 
-        # Step 6: Ensure cumulative graph connected
         self.connect_cumulative_components()
 
-        # Step 7: Repair dangling nodes
         self.repair_dangling_nodes(
             per_sentence_view, prev_sentences, normalize_edge_label_fn, persona
         )
 
-    # Connect a single isolated explicit node using LLM with FORCED_CONNECTIVITY_EDGE_PROMPT
     def connect_isolated_explicit_node(
         self,
         per_sentence_view,
@@ -518,9 +467,8 @@ class ConnectivityStabilizer:
         node = next(iter(explicit_nodes))
         active_nodes = self.get_nodes_with_active_edges()
         if node in active_nodes or not active_nodes:
-            return  # already connected or no anchor
+            return
 
-        # Choose anchor: highest degree among active nodes
         anchor = max(
             active_nodes,
             key=lambda n: sum(
@@ -532,10 +480,8 @@ class ConnectivityStabilizer:
         if anchor == node:
             return
 
-        # Build story context from previous sentences
         story_context = " ".join(prev_sentences[:-1]) if len(prev_sentences) > 1 else ""
 
-        # Call LLM to get relation label
         result = self._llm.get_forced_connectivity_edge_label(
             node_a=node.get_text_representer(),
             node_b=anchor.get_text_representer(),
@@ -545,7 +491,6 @@ class ConnectivityStabilizer:
         )
         relation = result.get("label") if isinstance(result, dict) else result
         if not relation:
-            # Fallback to generic "relates_to" if LLM fails
             relation = "relates_to"
 
         relation = normalize_edge_label_fn(relation)
@@ -567,7 +512,6 @@ class ConnectivityStabilizer:
         if edge:
             edge.mark_as_current_sentence(reset_score=True)
 
-    # Use LLM to connect isolated explicit nodes, forcing the isolated node as subject
     def repair_isolated_explicit_nodes(
         self,
         per_sentence_view,
@@ -583,9 +527,8 @@ class ConnectivityStabilizer:
                 e.source_node == node or e.dest_node == node
                 for e in per_sentence_view.active_edges
             ):
-                continue  # already connected
+                continue
 
-            # Choose anchor: highest degree among active nodes
             anchor = max(
                 active_nodes,
                 key=lambda n: sum(
@@ -597,8 +540,7 @@ class ConnectivityStabilizer:
             if anchor == node:
                 continue
 
-            # Build story context from previous sentences (if needed)
-            story_context = ""  # you may need to pass prev_sentences to this method, or store it in self
+            story_context = ""
 
             result = self._llm.get_forced_connectivity_edge_label(
                 node_a=node.get_text_representer(),
@@ -630,7 +572,6 @@ class ConnectivityStabilizer:
             if edge:
                 edge.mark_as_current_sentence(reset_score=True)
 
-    # Try twice to connect disconnected components using LLM
     def create_forced_edges_via_llm(
         self,
         prev_sentences: list,
