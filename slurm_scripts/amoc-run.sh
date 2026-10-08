@@ -30,6 +30,8 @@ apptainer exec --nv \
     --env HF_TOKEN_PATH="${HF_TOKEN_PATH}" \
     --env HF_HUB_CACHE="${HF_HUB_CACHE}" \
     --env HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}" \
+    --env SLURM_ARRAY_TASK_ID="${SLURM_ARRAY_TASK_ID:-0}" \
+    --env SLURM_ARRAY_TASK_COUNT="${SLURM_ARRAY_TASK_COUNT:-1}" \
     -B "${PROJECT_ROOT}:${PROJECT_ROOT}" \
     -B "${INPUT_DIR}:${INPUT_DIR}" \
     -B "${OUTPUT_DIR}:${OUTPUT_DIR}" \

@@ -24,7 +24,8 @@ fi
 
 export HF_HOME="/export/projects/nlp/.cache"
 export TRANSFORMERS_CACHE="$HF_HOME"
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+# Do NOT hardcode CUDA_VISIBLE_DEVICES: Slurm sets it to the GPUs allocated to
+# this array task. Overriding it breaks tasks that share a node.
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
 RUN_ID="run_${SLURM_ARRAY_JOB_ID}"
@@ -60,7 +61,19 @@ fi
 echo "Running Llama-3.3-70B"
 echo "SLURM ARRAY TASK ID: ${SLURM_ARRAY_TASK_ID}"
 echo "Processing chunk file: ${INPUT_FILE}"
-echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+echo "Node: $(hostname)"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}  SLURM_JOB_GPUS=${SLURM_JOB_GPUS:-unset}"
+
+# Fail fast with a clear message if this task can't see its GPUs
+# (instead of vLLM's misleading "Device string must not be empty").
+if ! nvidia-smi -L; then
+    echo "ERROR: nvidia-smi failed on host $(hostname); GPU allocation/node is broken"
+    exit 2
+fi
+if ! apptainer exec --nv /export/projects/nlp/containers/daria-vllm-updated.sif nvidia-smi -L; then
+    echo "ERROR: GPUs visible on host $(hostname) but not inside the container"
+    exit 3
+fi
 
 if [[ -n "${STORY_FILE}" ]]; then
     echo "Using story file: ${STORY_FILE}"
