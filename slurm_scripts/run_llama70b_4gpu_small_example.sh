@@ -4,6 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:tesla_a100:4
+#SBATCH --exclude=dgxa100-ncit-wn04  # GPU 3 faulted ("GPU requires reset"), 2026-10-11
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=256G
 #SBATCH --array=0-7%2
