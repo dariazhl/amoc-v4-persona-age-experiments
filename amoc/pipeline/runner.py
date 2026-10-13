@@ -10,7 +10,7 @@ from pathlib import Path
 import pandas as pd
 
 from amoc.pipeline import AgeAwareAMoCEngine
-from amoc.llm.vllm_client import VLLMClient
+from amoc.llm.vllm_client import ServerUnavailableError, VLLMClient
 from amoc.config.constants import DEBUG
 from amoc.config.paths import OUTPUT_ANALYSIS_DIR
 from datetime import datetime
@@ -286,6 +286,7 @@ def run_single_persona(
     highlight_nodes: Optional[List[str]],
     reverse_plots_base_dir: str,
 ):
+    server_failures_before = getattr(engine.vllm_client, "server_failures", 0)
     engine.set_recorder_metadata(
         original_index=row_idx,
         age_refined=age_refined_int,
@@ -303,6 +304,10 @@ def run_single_persona(
         return_records=True,
         **run_kwargs,
     )
+    if getattr(engine.vllm_client, "server_failures", 0) > server_failures_before:
+        raise ServerUnavailableError(
+            f"vllm server failed while processing persona {row_idx}; aborting run"
+        )
     record_dicts = edge_records_to_dicts(edge_records) if edge_records else []
 
     # Reverse plots are per-persona: generate them here, while
@@ -530,12 +535,13 @@ def process_persona_csv(
         try:
             if parallel:
                 print(f"[{model_name}] running {len(tasks)} personas with {workers} workers")
-                with ProcessPoolExecutor(
+                pool = ProcessPoolExecutor(
                     max_workers=min(workers, len(tasks)) or 1,
                     mp_context=multiprocessing.get_context("spawn"),
                     initializer=_init_persona_worker,
                     initargs=(model_name, server_url),
-                ) as pool:
+                )
+                with pool:
                     futures = {
                         pool.submit(_persona_worker_task, task): task for task in tasks
                     }
@@ -543,7 +549,8 @@ def process_persona_csv(
                         task = futures[future]
                         try:
                             record_dicts, made_reverse_plots = future.result()
-                        except BrokenProcessPool:
+                        except (BrokenProcessPool, ServerUnavailableError):
+                            pool.shutdown(wait=False, cancel_futures=True)
                             raise
                         except Exception as e:
                             on_failure(task, e)
@@ -560,6 +567,8 @@ def process_persona_csv(
                         record_dicts, made_reverse_plots = run_single_persona(
                             engine=engine, **task
                         )
+                    except ServerUnavailableError:
+                        raise
                     except Exception as e:
                         on_failure(task, e)
                         continue

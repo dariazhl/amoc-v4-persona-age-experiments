@@ -20,6 +20,7 @@ from amoc.config import (
     STORY_TEXT,
 )
 from amoc.pipeline.runner import process_persona_csv
+from amoc.llm.vllm_client import ServerUnavailableError
 from amoc.analysis.statistics import run_statistical_analysis, canonicalize_model_name
 from amoc.utils.spacy_utils import load_spacy
 from amoc.utils.highlights import blue_nodes_from_text
@@ -84,10 +85,10 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
     p.add_argument(
         "--server-url",
-        default=os.environ.get("AMOC_VLLM_URL"),
+        default=None,
         help=(
             "URL of a running `vllm serve` instance (e.g. http://127.0.0.1:8000). "
-            "If set, the model is not loaded in-process. Defaults to $AMOC_VLLM_URL"
+            "If set, the model is not loaded in-process"
         ),
     )
 
@@ -354,6 +355,7 @@ def main(argv: List[str]) -> None:
     else:
         graphs_output_dir = os.path.join(OUTPUT_ANALYSIS_DIR, "graphs")
 
+    server_failed = False
     try:
         for filename in files_to_process:
             print(f"\n=== Processing file: {os.path.basename(filename)} ===")
@@ -383,11 +385,15 @@ def main(argv: List[str]) -> None:
                 server_url=args.server_url,
                 workers=args.workers,
             )
+    except ServerUnavailableError:
+        server_failed = True
+        print("\nERROR: vLLM server failed; run aborted, skipping post-processing")
+        raise
     finally:
         elapsed = time.time() - total_start
         print(f"\nExtraction phase finished in {elapsed:.2f} seconds")
 
-        if args.post_process:
+        if args.post_process and not server_failed:
             sentinel_dir = os.path.join(output_dir, ".sentinels")
             os.makedirs(sentinel_dir, exist_ok=True)
             task_id = os.environ.get("SLURM_ARRAY_TASK_ID", "0")

@@ -90,7 +90,18 @@ fi
 MODEL="meta-llama/Llama-3.3-70B-Instruct"
 
 WORKERS="${WORKERS:-10}"
-VLLM_PORT=$((20000 + SLURM_JOB_ID % 20000))
+PORT_BASE=$((20000 + (SLURM_JOB_ID % 1000) * 40))
+VLLM_PORT=""
+for p in $(seq "${PORT_BASE}" $((PORT_BASE + 39))); do
+    if ! (echo > "/dev/tcp/127.0.0.1/${p}") 2>/dev/null; then
+        VLLM_PORT="${p}"
+        break
+    fi
+done
+if [[ -z "${VLLM_PORT}" ]]; then
+    echo "ERROR: no free port in ${PORT_BASE}-$((PORT_BASE + 39))"
+    exit 4
+fi
 VLLM_URL="http://127.0.0.1:${VLLM_PORT}"
 VLLM_LOG="/export/home/acs/stud/a/ana_daria.zahaleanu/exports/vllm_server_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}.log"
 
@@ -112,6 +123,11 @@ for _ in $(seq 1 360); do
 done
 if ! curl -sf "${VLLM_URL}/health" > /dev/null; then
     echo "ERROR: vLLM server not healthy after 60 minutes"
+    exit 4
+fi
+MODELS_JSON="$(curl -sf "${VLLM_URL}/v1/models" || true)"
+if ! kill -0 "${VLLM_PID}" 2>/dev/null || [[ "${MODELS_JSON}" != *"\"${MODEL}\""* ]]; then
+    echo "ERROR: server on ${VLLM_URL} is not serving ${MODEL}"
     exit 4
 fi
 echo "vLLM server ready"

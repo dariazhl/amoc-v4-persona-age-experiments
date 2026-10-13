@@ -1,5 +1,4 @@
 import logging
-import os
 import re
 import time
 from copy import deepcopy
@@ -38,6 +37,10 @@ if not call_log.handlers:
     call_log.propagate = False
 
 
+class ServerUnavailableError(RuntimeError):
+    pass
+
+
 class VLLMClient:
     def __init__(
         self,
@@ -49,8 +52,9 @@ class VLLMClient:
         self.debug = debug
         self.model_name = model_name
         self.tp_size = tp_size
-        self.server_url = (server_url or os.environ.get("AMOC_VLLM_URL") or "").rstrip("/") or None
+        self.server_url = (server_url or "").rstrip("/") or None
         self._session = None
+        self.server_failures = 0
 
         if debug:
             logging.getLogger().setLevel(logging.DEBUG)
@@ -177,6 +181,8 @@ class VLLMClient:
             if self.debug:
                 logging.debug(f"Cleaned response: {cleaned[:200]}")
             return cleaned
+        except ServerUnavailableError:
+            raise
         except Exception as e:
             logging.exception(f"VLLM runtime error: {e}")
             return "[]"
@@ -199,7 +205,9 @@ class VLLMClient:
             completion.finish_reason,
         )
 
-    def _generate_http(self, prompt: str, temperature: float, retries: int = 5):
+    def _generate_http(self, prompt: str, temperature: float, retries: int = 8):
+        if self.server_failures:
+            raise ServerUnavailableError(f"vllm server at {self.server_url} already failed")
         payload = {
             "model": self.model_name,
             "prompt": prompt,
@@ -222,12 +230,23 @@ class VLLMClient:
                     usage.get("completion_tokens"),
                     choice.get("finish_reason"),
                 )
-            except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as e:
-                if attempt == retries - 1:
+            except requests.HTTPError as e:
+                if e.response is not None and e.response.status_code < 500:
                     raise
-                wait = 2 ** attempt
-                logging.warning(f"vllm server request failed ({e}); retrying in {wait}s")
-                time.sleep(wait)
+                error = e
+            except requests.ConnectionError as e:
+                error = e
+            except requests.Timeout as e:
+                self.server_failures += 1
+                raise ServerUnavailableError(f"vllm server request timed out: {e}") from e
+            if attempt == retries - 1:
+                self.server_failures += 1
+                raise ServerUnavailableError(
+                    f"vllm server at {self.server_url} unreachable after {retries} attempts: {error}"
+                ) from error
+            wait = 2 ** attempt
+            logging.warning(f"vllm server request failed ({error}); retrying in {wait}s")
+            time.sleep(wait)
 
     def generate_raw(self, prompt_text: str, temperature: float = 0.0) -> str:
         messages = [{"role": "user", "content": prompt_text}]
