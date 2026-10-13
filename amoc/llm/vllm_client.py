@@ -1,10 +1,11 @@
 import logging
+import os
 import re
-import torch
+import time
 from copy import deepcopy
 from typing import List, Dict, Optional
 
-from vllm import LLM, SamplingParams
+import requests
 from transformers import AutoTokenizer
 
 from amoc.llm.parsing import (
@@ -28,6 +29,14 @@ from amoc.prompts.amoc_prompts import (
     PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE,
 )
 
+call_log = logging.getLogger("amoc.llm_calls")
+if not call_log.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s pid=%(process)d %(message)s"))
+    call_log.addHandler(_handler)
+    call_log.setLevel(logging.INFO)
+    call_log.propagate = False
+
 
 class VLLMClient:
     def __init__(
@@ -35,20 +44,35 @@ class VLLMClient:
         model_name: str = "meta-llama/Meta-Llama-3-8B-Instruct",
         tp_size: int = 1,
         debug: bool = False,
+        server_url: Optional[str] = None,
     ):
         self.debug = debug
         self.model_name = model_name
         self.tp_size = tp_size
+        self.server_url = (server_url or os.environ.get("AMOC_VLLM_URL") or "").rstrip("/") or None
+        self._session = None
 
         if debug:
             logging.getLogger().setLevel(logging.DEBUG)
         else:
             logging.getLogger().setLevel(logging.INFO)
 
-        logging.info(f"starting up vllm with model: {model_name}, tp_size={tp_size}")
-
         # Load tokenizer for chat template
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+
+        self.top_p = 0.95
+        self.max_tokens = 1024
+
+        if self.server_url:
+            logging.info(f"using vllm server at {self.server_url} for model: {model_name}")
+            self.llm = None
+            self._session = requests.Session()
+            return
+
+        import torch
+        from vllm import LLM
+
+        logging.info(f"starting up vllm with model: {model_name}, tp_size={tp_size}")
 
         self.llm = LLM(
             model=model_name,
@@ -58,14 +82,6 @@ class VLLMClient:
             max_model_len=8200,               
         )
 
-        # Default sampling params – temperature 0 for deterministic output
-        self.default_sampling_params = SamplingParams(
-            temperature=0.0,
-            top_p=0.95,
-            max_tokens=1024,
-        )
-
-        
         num_gpus = torch.cuda.device_count()
         if tp_size > num_gpus:
             raise ValueError(
@@ -136,21 +152,27 @@ class VLLMClient:
         messages: List[Dict[str, str]],
         temperature: float = 0.0,
     ) -> str:
-        if self.llm is None:
+        if self.llm is None and self.server_url is None:
             logging.error("VLLM not initialized.")
             return "[]"
 
         prompt = self._apply_chat_template(messages)
 
-        sampling_params = SamplingParams(
-            temperature=temperature,
-            top_p=self.default_sampling_params.top_p,
-            max_tokens=self.default_sampling_params.max_tokens,
-        )
-
         try:
-            outputs = self.llm.generate([prompt], sampling_params, use_tqdm=False)
-            raw_text = outputs[0].outputs[0].text.strip()
+            start = time.time()
+            if self.server_url:
+                raw_text, prompt_tokens, output_tokens, finish = self._generate_http(
+                    prompt, temperature
+                )
+            else:
+                raw_text, prompt_tokens, output_tokens, finish = self._generate_local(
+                    prompt, temperature
+                )
+            call_log.info(
+                f"llm_call prompt_tokens={prompt_tokens} output_tokens={output_tokens} "
+                f"finish={finish} latency={time.time() - start:.1f}s"
+            )
+            raw_text = raw_text.strip()
             cleaned = self._clean_response(raw_text)
             if self.debug:
                 logging.debug(f"Cleaned response: {cleaned[:200]}")
@@ -158,6 +180,54 @@ class VLLMClient:
         except Exception as e:
             logging.exception(f"VLLM runtime error: {e}")
             return "[]"
+
+    def _generate_local(self, prompt: str, temperature: float):
+        from vllm import SamplingParams
+
+        sampling_params = SamplingParams(
+            temperature=temperature,
+            top_p=self.top_p,
+            max_tokens=self.max_tokens,
+        )
+        outputs = self.llm.generate([prompt], sampling_params, use_tqdm=False)
+        out = outputs[0]
+        completion = out.outputs[0]
+        return (
+            completion.text,
+            len(out.prompt_token_ids or []),
+            len(completion.token_ids),
+            completion.finish_reason,
+        )
+
+    def _generate_http(self, prompt: str, temperature: float, retries: int = 5):
+        payload = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "temperature": temperature,
+            "top_p": self.top_p,
+            "max_tokens": self.max_tokens,
+        }
+        for attempt in range(retries):
+            try:
+                resp = self._session.post(
+                    f"{self.server_url}/v1/completions", json=payload, timeout=1800
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                choice = data["choices"][0]
+                usage = data.get("usage") or {}
+                return (
+                    choice["text"],
+                    usage.get("prompt_tokens"),
+                    usage.get("completion_tokens"),
+                    choice.get("finish_reason"),
+                )
+            except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as e:
+                if attempt == retries - 1:
+                    raise
+                wait = 2 ** attempt
+                logging.warning(f"vllm server request failed ({e}); retrying in {wait}s")
+                time.sleep(wait)
 
     def generate_raw(self, prompt_text: str, temperature: float = 0.0) -> str:
         messages = [{"role": "user", "content": prompt_text}]

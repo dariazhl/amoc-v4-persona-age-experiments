@@ -87,9 +87,39 @@ if [[ -n "${STORY_FILE}" ]]; then
     STORY_ARG="--story-text ${STORY_FILE}"
 fi
 
-bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
-    --models "meta-llama/Llama-3.3-70B-Instruct" \
-    --tp 4 \
+MODEL="meta-llama/Llama-3.3-70B-Instruct"
+
+WORKERS="${WORKERS:-10}"
+VLLM_PORT=$((20000 + SLURM_JOB_ID % 20000))
+VLLM_URL="http://127.0.0.1:${VLLM_PORT}"
+VLLM_LOG="/export/home/acs/stud/a/ana_daria.zahaleanu/exports/vllm_server_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}.log"
+
+echo "Starting vLLM server on ${VLLM_URL} (log: ${VLLM_LOG})"
+bash "${PROJECT_ROOT}/slurm_scripts/vllm-serve.sh" "${MODEL}" "${VLLM_PORT}" 4 > "${VLLM_LOG}" 2>&1 &
+VLLM_PID=$!
+trap 'kill ${VLLM_PID} 2>/dev/null || true; wait ${VLLM_PID} 2>/dev/null || true' EXIT
+
+for _ in $(seq 1 360); do
+    if curl -sf "${VLLM_URL}/health" > /dev/null; then
+        break
+    fi
+    if ! kill -0 "${VLLM_PID}" 2>/dev/null; then
+        echo "ERROR: vLLM server exited during startup; last lines of ${VLLM_LOG}:"
+        tail -n 50 "${VLLM_LOG}"
+        exit 4
+    fi
+    sleep 10
+done
+if ! curl -sf "${VLLM_URL}/health" > /dev/null; then
+    echo "ERROR: vLLM server not healthy after 60 minutes"
+    exit 4
+fi
+echo "vLLM server ready"
+
+OMP_NUM_THREADS=1 bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
+    --models "${MODEL}" \
+    --server-url "${VLLM_URL}" \
+    --workers "${WORKERS}" \
     --max-rows 10 \
     --plot-after-each-sentence \
     --output-dir "${RUN_OUTPUT_DIR}" \

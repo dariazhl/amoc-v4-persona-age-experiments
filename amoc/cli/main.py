@@ -83,6 +83,25 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     )
 
     p.add_argument(
+        "--server-url",
+        default=os.environ.get("AMOC_VLLM_URL"),
+        help=(
+            "URL of a running `vllm serve` instance (e.g. http://127.0.0.1:8000). "
+            "If set, the model is not loaded in-process. Defaults to $AMOC_VLLM_URL"
+        ),
+    )
+
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help=(
+            "Number of personas processed concurrently (requires --server-url). "
+            "vLLM batches their requests, so throughput scales with this"
+        ),
+    )
+
+    p.add_argument(
         "--resume-only",
         action="store_true",
         help="Only process personas not yet completed",
@@ -290,6 +309,12 @@ def main(argv: List[str]) -> None:
     if not args.file:
         raise SystemExit("--file is required for extraction")
 
+    if args.workers > 1:
+        if not args.server_url:
+            raise SystemExit("--workers > 1 requires --server-url")
+        if len(model_names) != 1:
+            raise SystemExit("--workers > 1 supports a single model (the one the server serves)")
+
     if args.post_process and not args.output_dir:
         raise SystemExit("--output-dir is required when --post-process is set")
 
@@ -355,6 +380,8 @@ def main(argv: List[str]) -> None:
                 checkpoint=args.checkpoint,
                 generate_reverse_plots=True,
                 reverse_plot_mode="both",
+                server_url=args.server_url,
+                workers=args.workers,
             )
     finally:
         elapsed = time.time() - total_start

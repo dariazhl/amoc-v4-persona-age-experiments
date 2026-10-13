@@ -1,6 +1,9 @@
 import os
 import time
 import logging
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
@@ -151,6 +154,189 @@ def generate_reverse_plots_for_amoc(
     return produced
 
 
+def edge_records_to_dicts(edge_records) -> List[Dict[str, Any]]:
+    record_dicts = []
+    for record in edge_records:
+        s, r, o = repair_triplet(record.subject, record.relation, record.object)
+        record_dicts.append(
+            {
+                "original_index": record.original_index,
+                "age_refined": record.age_refined,
+                "regime": record.regime,
+                "persona_text": record.persona_text,
+                "model_name": record.model_name,
+                "sentence_index": record.sentence_idx,
+                "sentence_text": record.sentence_text,
+                "subject": s,
+                "relation": r,
+                "object": o,
+                "subject_source": record.subject_source,
+                "object_source": record.object_source,
+                "triplet_source": record.triplet_source,
+                "edge_visibility": record.edge_visibility,
+                "edge_status": record.edge_status,
+                "decay_explanation": record.decay_explanation,
+                "context_shift": record.context_shift,
+            }
+        )
+    return record_dicts
+
+
+def write_persona_records(
+    record_dicts: List[Dict[str, Any]],
+    sentence_output_path: Path,
+    final_output_path: Path,
+) -> None:
+    if not record_dicts:
+        return
+
+    seen_sent = set()
+    deduped_sent = []
+    for rec in record_dicts:
+        key = (
+            rec["sentence_index"],
+            rec["subject"],
+            rec["relation"],
+            rec["object"],
+            rec["edge_status"],
+        )
+        if key in seen_sent:
+            continue
+        seen_sent.add(key)
+        deduped_sent.append(rec)
+
+    pd.DataFrame(deduped_sent).to_csv(
+        sentence_output_path,
+        mode="a",
+        header=False,
+        index=False,
+        columns=CSV_HEADERS,
+        encoding="utf-8",
+    )
+
+    max_sent_idx = max(rec["sentence_index"] for rec in deduped_sent)
+    final_records = [
+        rec
+        for rec in deduped_sent
+        if rec["edge_status"] in ("explicit", "asserted", "carryover")
+        and rec["sentence_index"] == max_sent_idx
+    ]
+    if not final_records:
+        return
+
+    seen_final = set()
+    deduped_final = []
+    for rec in final_records:
+        key = (
+            rec["original_index"],
+            rec["subject"],
+            rec["relation"],
+            rec["object"],
+        )
+        if key in seen_final:
+            continue
+        seen_final.add(key)
+        deduped_final.append(rec)
+
+    if final_output_path.exists():
+        existing = pd.read_csv(final_output_path)
+        existing_keys = set(
+            zip(
+                existing["original_index"],
+                existing["subject"],
+                existing["relation"],
+                existing["object"],
+            )
+        )
+    else:
+        existing_keys = set()
+
+    deduped_final = [
+        rec
+        for rec in deduped_final
+        if (
+            rec["original_index"],
+            rec["subject"],
+            rec["relation"],
+            rec["object"],
+        )
+        not in existing_keys
+    ]
+
+    if deduped_final:
+        pd.DataFrame(deduped_final).to_csv(
+            final_output_path,
+            mode="a",
+            header=False,
+            index=False,
+            columns=CSV_HEADERS,
+            encoding="utf-8",
+        )
+
+
+def run_single_persona(
+    engine: AgeAwareAMoCEngine,
+    row_idx,
+    persona_text: str,
+    age_refined_int: int,
+    regime: str,
+    model_name: str,
+    run_kwargs: Dict[str, Any],
+    generate_reverse_plots: bool,
+    highlight_nodes: Optional[List[str]],
+    reverse_plots_base_dir: str,
+):
+    engine.set_recorder_metadata(
+        original_index=row_idx,
+        age_refined=age_refined_int,
+        regime=regime,
+        persona_text=persona_text,
+        model_name=model_name,
+    )
+
+    _, _, edge_records = engine.run(
+        persona_text=persona_text,
+        age_refined=age_refined_int,
+        highlight_nodes=highlight_nodes,
+        checkpoint=False,
+        collect_plot_states=generate_reverse_plots,
+        return_records=True,
+        **run_kwargs,
+    )
+    record_dicts = edge_records_to_dicts(edge_records) if edge_records else []
+
+    # Reverse plots are per-persona: generate them here, while
+    # engine.last_amoc still holds THIS persona's run. Doing it
+    # after the loop would only ever plot the final persona.
+    made_reverse_plots = False
+    if generate_reverse_plots:
+        made_reverse_plots = generate_reverse_plots_for_amoc(
+            amoc=engine.last_amoc,
+            persona_text=persona_text,
+            age_refined_int=age_refined_int,
+            model_name=model_name,
+            highlight_nodes=highlight_nodes,
+            base_output_dir=reverse_plots_base_dir,
+            persona_index=row_idx,
+        )
+    return record_dicts, made_reverse_plots
+
+
+_WORKER_ENGINE: Optional[AgeAwareAMoCEngine] = None
+
+
+def _init_persona_worker(model_name: str, server_url: str) -> None:
+    global _WORKER_ENGINE
+    from amoc.utils.spacy_utils import load_spacy
+
+    client = VLLMClient(model_name=model_name, debug=DEBUG, server_url=server_url)
+    _WORKER_ENGINE = AgeAwareAMoCEngine(vllm_client=client, spacy_nlp=load_spacy())
+
+
+def _persona_worker_task(kwargs: Dict[str, Any]):
+    return run_single_persona(engine=_WORKER_ENGINE, **kwargs)
+
+
 def process_persona_csv(
     filename: str,
     model_names: List[str],
@@ -174,6 +360,8 @@ def process_persona_csv(
     checkpoint: bool = False,  # deprecated, used to save progress in analysis run
     generate_reverse_plots: bool = False,
     reverse_plot_mode: str = "paper",
+    server_url: Optional[str] = None,
+    workers: int = 1,
 ) -> None:
     short_filename = os.path.basename(filename)
     print(f"Processing: {short_filename}")
@@ -202,15 +390,23 @@ def process_persona_csv(
         print(f"Skipping {short_filename}: no valid rows.")
         return
 
+    parallel = workers > 1
+    if parallel and not server_url:
+        raise ValueError("workers > 1 requires a vLLM server URL (--server-url)")
+
     # 2. Initialize engines
-    engines: Dict[str, AgeAwareAMoCEngine] = {}
+    engines: Dict[str, Optional[AgeAwareAMoCEngine]] = {}
 
     for model_name in model_names:
+        if parallel:
+            engines[model_name] = None
+            continue
         if model_name not in VLLM_CLIENT_CACHE:
             VLLM_CLIENT_CACHE[model_name] = VLLMClient(
                 model_name=model_name,
                 tp_size=tensor_parallel_size,
                 debug=DEBUG,
+                server_url=server_url,
             )
 
         engines[model_name] = AgeAwareAMoCEngine(
@@ -219,6 +415,20 @@ def process_persona_csv(
         )
     # 3. For each model, collect triplets into a table (incremental write)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    run_kwargs = dict(
+        replace_pronouns=replace_pronouns,
+        plot_after_each_sentence=plot_after_each_sentence,
+        graphs_output_dir=graphs_output_dir,
+        largest_component_only=plot_largest_component_only,
+        strict_reactivate_function=strict_reactivate_function,
+        single_anchor_hub=single_anchor_hub,
+        story_text=story_text,
+        edge_visibility=edge_visibility,
+        matrix_dir_base=str(output_dir),
+        force_node=force_node,
+    )
+    reverse_plots_base_dir = str(graphs_output_dir or output_dir)
 
     # 3. Process per model
     for model_name, engine in engines.items():
@@ -266,198 +476,94 @@ def process_persona_csv(
             )
 
         start_model_time = time.time()
-        total_rows = len(df)
         reverse_plot_folders = 0
 
-        try:
-            for idx, (row_idx, row) in enumerate(df.iterrows(), start=1):
-                if checkpoint and row_idx in processed_indices:
-                    continue
-
-                persona_text = str(row["persona_text"])
-                age_refined_int = (
-                    int(row["age_refined"]) if pd.notna(row["age_refined"]) else -1
+        tasks = []
+        for row_idx, row in df.iterrows():
+            if checkpoint and row_idx in processed_indices:
+                continue
+            tasks.append(
+                dict(
+                    row_idx=row_idx,
+                    persona_text=str(row["persona_text"]),
+                    age_refined_int=(
+                        int(row["age_refined"]) if pd.notna(row["age_refined"]) else -1
+                    ),
+                    regime=regime,
+                    model_name=model_name,
+                    run_kwargs=run_kwargs,
+                    generate_reverse_plots=generate_reverse_plots,
+                    highlight_nodes=highlight_nodes,
+                    reverse_plots_base_dir=reverse_plots_base_dir,
                 )
+            )
 
-                try:
-                    engine.set_recorder_metadata(
-                        original_index=row_idx,
-                        age_refined=age_refined_int,
-                        regime=regime,
-                        persona_text=persona_text,
-                        model_name=model_name,
-                    )
+        def on_success(task, record_dicts, made_reverse_plots):
+            nonlocal personas_processed, reverse_plot_folders
+            write_persona_records(record_dicts, sentence_output_path, final_output_path)
+            if made_reverse_plots:
+                reverse_plot_folders += 1
+            personas_processed += 1
+            processed_indices.add(task["row_idx"])
+            if checkpoint:
+                ckpt["personas_processed"] = personas_processed
+                ckpt["processed_indices"] = sorted(processed_indices)
+                save_checkpoint(ckpt_path, ckpt)
 
-                    final_triplets, sentence_triplets, edge_records = engine.run(
-                        persona_text=persona_text,
-                        age_refined=age_refined_int,
-                        replace_pronouns=replace_pronouns,
-                        plot_after_each_sentence=plot_after_each_sentence,
-                        graphs_output_dir=graphs_output_dir,
-                        highlight_nodes=highlight_nodes,
-                        largest_component_only=plot_largest_component_only,
-                        strict_reactivate_function=strict_reactivate_function,
-                        single_anchor_hub=single_anchor_hub,
-                        story_text=story_text,
-                        edge_visibility=edge_visibility,
-                        matrix_dir_base=str(output_dir),
-                        force_node=force_node,
-                        checkpoint=False,
-                        collect_plot_states=generate_reverse_plots,
-                        return_records=True,
-                    )
+        def on_failure(task, e):
+            logging.error(
+                f"Failure idx={task['row_idx']}, model={model_name}",
+                exc_info=e,
+            )
+            if checkpoint:
+                failures.append(
+                    {
+                        "row_index": int(task["row_idx"]),
+                        "persona_snippet": task["persona_text"][:80],
+                        "error": str(e),
+                        "time": datetime.utcnow().isoformat(),
+                    }
+                )
+                ckpt["failures"] = failures
+                save_checkpoint(ckpt_path, ckpt)
 
-                    if edge_records:
-                        record_dicts = []
-                        for record in edge_records:
-                            s, r, o = repair_triplet(
-                                record.subject, record.relation, record.object
-                            )
-                            record_dicts.append(
-                                {
-                                    "original_index": record.original_index,
-                                    "age_refined": record.age_refined,
-                                    "regime": record.regime,
-                                    "persona_text": record.persona_text,
-                                    "model_name": record.model_name,
-                                    "sentence_index": record.sentence_idx,
-                                    "sentence_text": record.sentence_text,
-                                    "subject": s,
-                                    "relation": r,
-                                    "object": o,
-                                    "subject_source": record.subject_source,
-                                    "object_source": record.object_source,
-                                    "triplet_source": record.triplet_source,
-                                    "edge_visibility": record.edge_visibility,
-                                    "edge_status": record.edge_status,
-                                    "decay_explanation": record.decay_explanation,
-                                    "context_shift": record.context_shift,
-                                }
-                            )
-
-                        seen_sent = set()
-                        deduped_sent = []
-                        for rec in record_dicts:
-                            key = (
-                                rec["sentence_index"],
-                                rec["subject"],
-                                rec["relation"],
-                                rec["object"],
-                                rec["edge_status"],
-                            )
-                            if key in seen_sent:
-                                continue
-                            seen_sent.add(key)
-                            deduped_sent.append(rec)
-
-                        pd.DataFrame(deduped_sent).to_csv(
-                            sentence_output_path,
-                            mode="a",
-                            header=False,
-                            index=False,
-                            columns=CSV_HEADERS,
-                            encoding="utf-8",
+        try:
+            if parallel:
+                print(f"[{model_name}] running {len(tasks)} personas with {workers} workers")
+                with ProcessPoolExecutor(
+                    max_workers=min(workers, len(tasks)) or 1,
+                    mp_context=multiprocessing.get_context("spawn"),
+                    initializer=_init_persona_worker,
+                    initargs=(model_name, server_url),
+                ) as pool:
+                    futures = {
+                        pool.submit(_persona_worker_task, task): task for task in tasks
+                    }
+                    for future in as_completed(futures):
+                        task = futures[future]
+                        try:
+                            record_dicts, made_reverse_plots = future.result()
+                        except BrokenProcessPool:
+                            raise
+                        except Exception as e:
+                            on_failure(task, e)
+                            continue
+                        on_success(task, record_dicts, made_reverse_plots)
+                        print(
+                            f"[{model_name}] persona {task['row_idx']} done "
+                            f"({personas_processed}/{len(tasks)}, "
+                            f"{format_seconds(time.time() - start_model_time)} elapsed)"
                         )
-
-                        max_sent_idx = max(
-                            rec["sentence_index"] for rec in deduped_sent
+            else:
+                for task in tasks:
+                    try:
+                        record_dicts, made_reverse_plots = run_single_persona(
+                            engine=engine, **task
                         )
-                        final_records = [
-                            rec
-                            for rec in deduped_sent
-                            if rec["edge_status"] in ("explicit", "asserted", "carryover")
-                            and rec["sentence_index"] == max_sent_idx
-                        ]
-
-                        if final_records:
-                            seen_final = set()
-                            deduped_final = []
-                            for rec in final_records:
-                                key = (
-                                    rec["original_index"],
-                                    rec["subject"],
-                                    rec["relation"],
-                                    rec["object"],
-                                )
-                                if key in seen_final:
-                                    continue
-                                seen_final.add(key)
-                                deduped_final.append(rec)
-
-                            if final_output_path.exists():
-                                existing = pd.read_csv(final_output_path)
-                                existing_keys = set(
-                                    zip(
-                                        existing["original_index"],
-                                        existing["subject"],
-                                        existing["relation"],
-                                        existing["object"],
-                                    )
-                                )
-                            else:
-                                existing_keys = set()
-
-                            deduped_final = [
-                                rec
-                                for rec in deduped_final
-                                if (
-                                    rec["original_index"],
-                                    rec["subject"],
-                                    rec["relation"],
-                                    rec["object"],
-                                )
-                                not in existing_keys
-                            ]
-
-                            if deduped_final:
-                                pd.DataFrame(deduped_final).to_csv(
-                                    final_output_path,
-                                    mode="a",
-                                    header=False,
-                                    index=False,
-                                    columns=CSV_HEADERS,
-                                    encoding="utf-8",
-                                )
-
-                    # Reverse plots are per-persona: generate them here, while
-                    # engine.last_amoc still holds THIS persona's run. Doing it
-                    # after the loop would only ever plot the final persona.
-                    if generate_reverse_plots:
-                        if generate_reverse_plots_for_amoc(
-                            amoc=engine.last_amoc,
-                            persona_text=persona_text,
-                            age_refined_int=age_refined_int,
-                            model_name=model_name,
-                            highlight_nodes=highlight_nodes,
-                            base_output_dir=str(graphs_output_dir or output_dir),
-                            persona_index=row_idx,
-                        ):
-                            reverse_plot_folders += 1
-
-                    personas_processed += 1
-                    processed_indices.add(row_idx)
-
-                    if checkpoint:
-                        ckpt["personas_processed"] = personas_processed
-                        ckpt["processed_indices"] = sorted(processed_indices)
-                        save_checkpoint(ckpt_path, ckpt)
-
-                except Exception as e:
-                    logging.error(
-                        f"Failure idx={row_idx}, model={model_name}",
-                        exc_info=True,
-                    )
-                    if checkpoint:
-                        failures.append(
-                            {
-                                "row_index": int(row_idx),
-                                "persona_snippet": persona_text[:80],
-                                "error": str(e),
-                                "time": datetime.utcnow().isoformat(),
-                            }
-                        )
-                        ckpt["failures"] = failures
-                        save_checkpoint(ckpt_path, ckpt)
+                    except Exception as e:
+                        on_failure(task, e)
+                        continue
+                    on_success(task, record_dicts, made_reverse_plots)
         finally:
             # Reverse plots are now generated per-persona inside the loop above
             # (see generate_reverse_plots_for_amoc), so each persona gets its own
