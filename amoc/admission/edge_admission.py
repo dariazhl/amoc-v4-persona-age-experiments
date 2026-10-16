@@ -5,6 +5,7 @@ from amoc.core.graph import Graph
 from amoc.core.node import Node, NodeType, NodeSource
 from amoc.core.edge import Edge
 from amoc.admission.text_normalizer import TextNormalizer
+from amoc.config.constants import allow_inferred_chains
 from amoc.utils.spacy_utils import clean_label
 
 if TYPE_CHECKING:
@@ -76,8 +77,6 @@ class EdgeAdmission:
             triplet_intro=core._triplet_intro,
         )
 
-    # TODO: remove these lists from here
-    # Negation phrases that should never appear as edge labels
     _NEGATION_PHRASES = frozenset(
         {
             "not related",
@@ -127,7 +126,6 @@ class EdgeAdmission:
     def set_edge_sentence_context(self, idx: int):
         self._current_sentence_index = idx
 
-    # helper method
     def build_edge_triplet_key(self, edge: "Edge") -> Tuple[str, str, str]:
         return (
             edge.source_node.get_text_representer(),
@@ -185,19 +183,16 @@ class EdgeAdmission:
         justification=None,
         persona_influenced: bool = False,
     ) -> Optional["Edge"]:
-        # Reject self-loops bc S-V-O triplets require distinct subject and object
         if source_node == dest_node:
             return None
 
-        # Safety net: reject negation relations that slipped past upstream validation
         if self.is_negation_label(label):
             logging.info(f"EDGE_ADMISSION: rejected negation edge label: '{label}'")
             return None
 
-        # Reject floating inferred-to-inferred edges — both nodes must not be inference-based,
-        # as these produce concepts disconnected from the actual text (e.g. "ability relates_to skill")
         if (
-            source_node.node_source == NodeSource.INFERENCE_BASED
+            not allow_inferred_chains()
+            and source_node.node_source == NodeSource.INFERENCE_BASED
             and dest_node.node_source == NodeSource.INFERENCE_BASED
         ):
             logging.info(
@@ -206,20 +201,14 @@ class EdgeAdmission:
             )
             return None
 
-        # If both nodes are explicit in the current sentence, always allow
         explicit_nodes = self._get_explicit_nodes()
         both_explicit = source_node in explicit_nodes and dest_node in explicit_nodes
 
-        # Also allow if this is the first sentence and we have explicit nodes.
-        # The analyze() loop is 1-based (sentence_counter starts at 1), so the
-        # first processed sentence has _current_sentence_index == 1.
         is_first_sentence = self._current_sentence_index == 1
         has_explicit_nodes = len(explicit_nodes) > 0
         if both_explicit or (is_first_sentence and has_explicit_nodes):
-            # Skip attachment constraint entirely
             pass
         else:
-            # check attachment constraint
             attachable = (
                 self._get_attachable_nodes() if self._get_attachable_nodes else set()
             )
@@ -240,7 +229,6 @@ class EdgeAdmission:
                 dest_text,
             )
             return None
-        # clean label
         label = clean_label(label)
         if not label:
             return None
@@ -255,9 +243,6 @@ class EdgeAdmission:
             old_label = existing_edge.label
 
             if old_label.strip().lower() == label.strip().lower():
-                # Existing edge with same label — do NOT refresh visibility or
-                # mark as asserted.  Let semantic decay handle the natural curve.
-                # Only update the label casing.
                 existing_edge.label = label
 
                 if self._debug:
@@ -279,19 +264,13 @@ class EdgeAdmission:
                         use_sentence if use_sentence is not None else -1
                     )
 
-                # Return None — this is NOT a new edge. Returning the existing
-                # edge would add it to newly_added_edges, causing
-                # reactivate_relevant_edges() to mark it as "reactivated"
-                # even when it's active and should follow the decay curve.
                 return None
             self._graph.remove_edge(existing_edge)
-        # edge duplication ie. knight - forest - forest
         if (
             label == source_node.get_text_representer()
             or label == dest_node.get_text_representer()
         ):
             return None
-        # add edge
         edge = self.insert_normalized_edge(
             source_node,
             dest_node,
@@ -301,7 +280,6 @@ class EdgeAdmission:
             relation_class=relation_class,
             justification=justification,
         )
-        # mark edge as part of current sentence with full activation
         if edge:
             if use_sentence == self._current_sentence_index:
                 edge.mark_as_current_sentence(reset_score=True)
@@ -318,7 +296,6 @@ class EdgeAdmission:
 
         return edge
 
-    # used in stabilizer.py as fallback if edge is rejected by the LLM to prevent disconnection (last resort)
     def create_forced_connectivity_edges(
         self,
         story_context: Optional[str] = None,
@@ -327,17 +304,14 @@ class EdgeAdmission:
         persona: str = "",
         normalize_edge_label_fn: callable = None,
     ) -> List["Edge"]:
-        # distinguish between active and cumulative graph
         if mode == "active":
             protected_nodes = self._get_explicit_nodes() | self._get_carryover_nodes()
         else:
             protected_nodes = set(self._graph.nodes)
-        # find disconnected components
         components, _ = self._graph.get_disconnected_components_wrapper(protected_nodes)
 
         if len(components) <= 1:
             return []
-        # sort fragments by size
         if mode == "active":
             components = sorted(
                 components,
@@ -346,7 +320,6 @@ class EdgeAdmission:
             )
         else:
             components = sorted(components, key=len, reverse=True)
-        # find the largest component
         backbone = set(components[0])
         forced_edges = []
 
@@ -354,7 +327,6 @@ class EdgeAdmission:
             node_a = next(iter(backbone))
             node_b = next(iter(comp))
 
-            # try LLM repair (2 attempts) to repair edge
             for _ in range(2):
                 result = self._llm.get_forced_connectivity_edge_label(
                     node_a=node_a.get_text_representer(),
@@ -380,7 +352,6 @@ class EdgeAdmission:
                     self._edge_visibility,
                     inferred=True,
                 )
-                # add edge to backbone component
                 if edge:
                     edge.mark_as_current_sentence(reset_score=True)
                     forced_edges.append(edge)
@@ -394,7 +365,6 @@ class EdgeAdmission:
         edge: "Edge",
         sentence_idx: Optional[int],
     ) -> None:
-        """Track when each triplet was first introduced."""
         u, v, lbl = self.build_edge_triplet_key(edge)
 
         if not lbl or not lbl.strip():

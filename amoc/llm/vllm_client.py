@@ -12,7 +12,14 @@ from amoc.llm.parsing import (
     extract_list_from_string,
 )
 
+from amoc.config.constants import allow_inferred_chains, persona_mode
 from amoc.prompts.amoc_prompts import (
+    LEGACY_FRAME,
+    LEGACY_LEVEL_BLOCK,
+    NEUTRAL_FRAME,
+    READER_FRAME,
+    READER_LEVEL_BLOCK,
+    VALIDATOR_RULE_6,
     NEW_RELATIONSHIPS_PROMPT,
     NEW_RELATIONSHIPS_FOR_FIRST_SENTENCE_PROMPT,
     INFER_OBJECTS_AND_PROPERTIES_PROMPT,
@@ -27,6 +34,11 @@ from amoc.prompts.amoc_prompts import (
     NARRATIVE_RELEVANCE_PROMPT,
     PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE,
 )
+
+
+def level_block() -> str:
+    return READER_LEVEL_BLOCK if persona_mode() == "reader" else LEGACY_LEVEL_BLOCK
+
 
 call_log = logging.getLogger("amoc.llm_calls")
 if not call_log.handlers:
@@ -61,7 +73,6 @@ class VLLMClient:
         else:
             logging.getLogger().setLevel(logging.INFO)
 
-        # Load tokenizer for chat template
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
         self.top_p = 0.95
@@ -102,7 +113,6 @@ class VLLMClient:
             return prompt
         except Exception as e:
             logging.warning(f"apply_chat_template failed: {e}, using fallback Qwen format")
-            # Manual Qwen format
             parts = []
             for m in messages:
                 role = m.get("role", "user")
@@ -112,21 +122,15 @@ class VLLMClient:
             return "\n".join(parts)
 
     def _clean_response(self, raw_text: str) -> str:
-        # Remove <think>...</think> blocks (including multi-line)
         raw_text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL)
-        # Remove any leftover </think>
         raw_text = re.sub(r'</think>', '', raw_text)
-        # Remove markdown code fences
         raw_text = re.sub(r'```(?:json|python)?\n?', '', raw_text)
         raw_text = re.sub(r'```\n?', '', raw_text)
-        # Remove single backticks
         raw_text = re.sub(r'`', '', raw_text)
-        # Find the first '[' or '{'
         match = re.search(r'[\[\{]', raw_text)
         if not match:
             return ""
         start = match.start()
-        # Find matching closing bracket/brace
         stack = []
         end = start
         for i, ch in enumerate(raw_text[start:], start=start):
@@ -143,7 +147,6 @@ class VLLMClient:
                     end = i + 1
                     break
         if end == start:
-            # fallback: find last occurrence
             end = raw_text.rfind(']') if raw_text[start] == '[' else raw_text.rfind('}')
             if end == -1:
                 end = len(raw_text)
@@ -252,10 +255,13 @@ class VLLMClient:
         messages = [{"role": "user", "content": prompt_text}]
         return self.generate(messages, temperature=temperature)
 
-    def call_vllm(self, prompt: str, persona: str) -> str:
-        full_prompt = f"""You are a knowledge graph builder. Output ONLY the requested Python list or JSON object. Do not add explanations, thinking process, or extra text.
-        Persona (for focus only, do not add extra concepts): {persona}
-        {prompt}"""
+    def call_vllm(self, prompt: str, persona: str, role: str = "reader") -> str:
+        if persona_mode() == "legacy":
+            full_prompt = LEGACY_FRAME.format(persona=persona, prompt=prompt)
+        elif role == "neutral":
+            full_prompt = NEUTRAL_FRAME.format(prompt=prompt)
+        else:
+            full_prompt = READER_FRAME.format(persona=persona, prompt=prompt)
         messages = [{"role": "user", "content": full_prompt}]
         return self.generate(messages, temperature=0.0)
 
@@ -263,6 +269,7 @@ class VLLMClient:
         self, nodes_from_text, nodes_from_graph, edges_from_graph, text, persona
     ):
         prompt = NEW_RELATIONSHIPS_PROMPT.format(
+            level_block=level_block(),
             nodes_from_text=nodes_from_text,
             nodes_from_graph=nodes_from_graph,
             edges_from_graph=edges_from_graph,
@@ -273,6 +280,7 @@ class VLLMClient:
 
     def get_new_relationships_first_sentence(self, nodes_from_text, text, persona):
         prompt = NEW_RELATIONSHIPS_FOR_FIRST_SENTENCE_PROMPT.format(
+            level_block=level_block(),
             nodes_from_text=nodes_from_text, text=text
         )
         response = self.call_vllm(prompt, persona)
@@ -282,6 +290,7 @@ class VLLMClient:
         self, nodes_from_text, nodes_from_graph, edges_from_graph, text, persona
     ):
         prompt = INFER_OBJECTS_AND_PROPERTIES_PROMPT.format(
+            level_block=level_block(),
             nodes_from_text=nodes_from_text,
             nodes_from_graph=nodes_from_graph,
             edges_from_graph=edges_from_graph,
@@ -301,6 +310,7 @@ class VLLMClient:
         persona,
     ):
         prompt = GENERATE_NEW_INFERRED_RELATIONSHIPS_PROMPT.format(
+            level_block=level_block(),
             nodes_from_text=nodes_from_text,
             nodes_from_graph=nodes_from_graph,
             edges_from_graph=edges_from_graph,
@@ -315,6 +325,7 @@ class VLLMClient:
         self, nodes_from_text, text, persona
     ):
         prompt = INFER_OBJECTS_AND_PROPERTIES_FIRST_SENTENCE_PROMPT.format(
+            level_block=level_block(),
             nodes_from_text=nodes_from_text, text=text
         )
         response = self.call_vllm(prompt, persona)
@@ -325,6 +336,7 @@ class VLLMClient:
         self, nodes_from_text, concepts, properties, text, persona
     ):
         prompt = GENERATE_NEW_INFERRED_RELATIONSHIPS_FIRST_SENTENCE_PROMPT.format(
+            level_block=level_block(),
             nodes_from_text=nodes_from_text,
             concepts=concepts,
             properties=properties,
@@ -338,12 +350,9 @@ class VLLMClient:
         response = self.call_vllm(prompt, persona)
         return extract_list_from_string(response)
 
-    # Old design: Ask LLM to re-write entire sentence
-    # Issue: risk of contamination with LLM garbage text
-    # New design: Identify pronouns and store them in a dict: {"He": "Charlemagne", "his": "Charlemagne"}
     def resolve_pronouns(self, sentence, context, persona):
         prompt = PRONOUN_RESOLUTION_PROMPT.format(context=context, sentence=sentence)
-        response = self.call_vllm(prompt, persona)
+        response = self.call_vllm(prompt, persona, role="neutral")
         result = parse_for_dict(response)
         if not isinstance(result, dict):
             return {}
@@ -391,7 +400,6 @@ class VLLMClient:
         current_sentence: str,
         persona: str,
     ) -> Dict[str, str]:
-        # call method when the activate graph is disconnected
         prompt = FORCED_CONNECTIVITY_EDGE_PROMPT.format(
             node_a=node_a,
             node_b=node_b,
@@ -401,7 +409,6 @@ class VLLMClient:
         response = self.call_vllm(prompt, persona)
         result = parse_for_dict(response)
         if not isinstance(result, dict) or not result.get("label"):
-            # Fallback
             logging.warning(
                 " LLM failed to generate edge label for %s -> %s, using fallback",
                 node_a,
@@ -416,7 +423,6 @@ class VLLMClient:
             "explanation": result.get("explanation", ""),
         }
 
-    # Ask LLM to validate if a triple makes sense given the sentence
     def validate_triplet(
         self,
         sentence: str,
@@ -426,12 +432,13 @@ class VLLMClient:
         persona: str,
     ) -> Dict[str, any]:
         prompt = VALIDATE_TRIPLET_PROMPT.format(
+            rule_6="" if allow_inferred_chains() else VALIDATOR_RULE_6,
             sentence=sentence,
             subject=subject,
             relation=relation,
             object=object,
         )
-        response = self.call_vllm(prompt, persona)
+        response = self.call_vllm(prompt, persona, role="neutral")
         result = parse_for_dict(response)
         if not isinstance(result, dict):
             logging.warning(f"LLM validation returned invalid format: {response}")
@@ -446,7 +453,6 @@ class VLLMClient:
             "corrected_triple": result.get("corrected_triple", None),
         }
 
-    # call in sentrene builder before adding the edges
     def prune_irrelevant_triplets_by_narrative(
         self,
         story_context,
@@ -465,7 +471,6 @@ class VLLMClient:
         response = self.call_vllm(prompt, persona)
         return parse_for_dict(response)
 
-    # Check if a triple is narratively relevant to the story using LLM only
     def check_narrative_relevance(
         self, story_context, current_sentence, active_triplets, persona
     ):

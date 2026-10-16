@@ -10,26 +10,6 @@
 #SBATCH --output=/export/home/acs/stud/a/ana_daria.zahaleanu/exports/%x_%A_%a.out
 #SBATCH --error=/export/home/acs/stud/a/ana_daria.zahaleanu/exports/%x_%A_%a.err
 
-# Flat story sweep: one array task = one (persona chunk, story) pair.
-#
-#   task id  ->  chunk = id / NUM_STORIES,  story = id % NUM_STORIES
-#
-# With 8 chunks x 20 stories the array is 0-159. Each task runs ~2-3 h
-# (one model load + 10 personas), so every task fits the 24 h limit.
-# Output goes to a fixed tree per story dir, so resubmitting the same
-# array only runs the pairs that have no .done marker yet:
-#
-#   <BASE_OUTPUT_DIR>/sweep_<story_dir>/<story>/<chunk>/{triplets,graphs,matrix}
-#
-# Usage:
-#   sbatch slurm_scripts/run_story_sweep.sh                       # tusa_text/min_drp_texts
-#   sbatch slurm_scripts/run_story_sweep.sh tusa_text/other_dir   # different story set
-#   sbatch --array=0-159%4 slurm_scripts/run_story_sweep.sh       # different throttle
-#   DRY_RUN=1 SLURM_ARRAY_TASK_ID=17 bash slurm_scripts/run_story_sweep.sh   # show mapping only
-#
-# Final statistics are NOT run per task (the array is too large for the
-# sentinel logic in amoc.cli.main); aggregate once after the sweep finishes.
-
 set -euo pipefail
 
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
@@ -51,11 +31,9 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 OUTPUT_ROOT="${OUTPUT_ROOT:-/export/projects/nlp/daria_amoc_output}"
 export OUTPUT_DIR="${OUTPUT_ROOT}"
 BASE_OUTPUT_DIR="${OUTPUT_ROOT}/extracted_triplets/small_example_output_llama"
-# Fixed (not per-job) so that repeated submissions fill in the same tree.
 SWEEP_TAG="${SWEEP_TAG:-sweep_$(basename "${STORY_DIR}")}"
 RUN_OUTPUT_DIR="${RUN_OUTPUT_DIR:-${BASE_OUTPUT_DIR}/${SWEEP_TAG}}"
 
-# --- Build the (chunk, story) grid with a locale-independent order ---------
 SINGLE_FILE="${SINGLE_FILE:-}"
 if [[ -n "${SINGLE_FILE}" ]]; then
     if [[ "${SINGLE_FILE}" != /* ]]; then
@@ -72,7 +50,19 @@ else
     while IFS= read -r f; do CHUNK_FILES+=("$f"); done < <(ls "${CHUNKS_DIR}"/*.csv 2>/dev/null | LC_ALL=C sort)
 fi
 STORY_FILES=()
-while IFS= read -r f; do STORY_FILES+=("$f"); done < <(ls "${STORY_DIR}"/*.txt 2>/dev/null | LC_ALL=C sort)
+if [[ -n "${STORY_LIST:-}" ]]; then
+    IFS=',' read -r -a _stories <<< "${STORY_LIST}"
+    for s in "${_stories[@]}"; do
+        f="${STORY_DIR}/${s%.txt}.txt"
+        if [[ ! -f "${f}" ]]; then
+            echo "STORY_LIST entry not found: ${f}"
+            exit 1
+        fi
+        STORY_FILES+=("${f}")
+    done
+else
+    while IFS= read -r f; do STORY_FILES+=("$f"); done < <(ls "${STORY_DIR}"/*.txt 2>/dev/null | LC_ALL=C sort)
+fi
 
 NUM_CHUNKS=${#CHUNK_FILES[@]}
 NUM_STORIES=${#STORY_FILES[@]}
@@ -99,9 +89,6 @@ STORY_FILE="${STORY_FILES[$STORY_IDX]}"
 CHUNK_TAG="$(basename "${INPUT_FILE}" .csv)"
 STORY_TAG="$(basename "${STORY_FILE}" .txt)"
 
-# One directory per (story, chunk): the pipeline names reverse plots and
-# matrices by the chunk-local persona index (0..9), so chunks sharing a
-# directory would overwrite each other.
 TASK_OUTPUT_DIR="${RUN_OUTPUT_DIR}/${STORY_TAG}/${CHUNK_TAG}"
 DONE_MARKER="${TASK_OUTPUT_DIR}/.done"
 
@@ -125,19 +112,80 @@ fi
 mkdir -p "${TASK_OUTPUT_DIR}"
 START_TS=$(date +%s)
 
-# --post-process is kept deliberately: it makes amoc.cli.main write a
-# per-task sentinel and skip its leader-only statistics pass, which would
-# otherwise run on a single (story, chunk) directory for task 0.
-bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
-    --models "meta-llama/Llama-3.3-70B-Instruct" \
-    --tp 4 \
-    --max-rows 10 \
-    --plot-after-each-sentence \
-    --output-dir "${TASK_OUTPUT_DIR}" \
-    --file "${INPUT_FILE}" \
-    --strict-reactivate-function \
-    --post-process \
-    --story-text "${STORY_FILE}"
+MODEL="meta-llama/Llama-3.3-70B-Instruct"
+WORKERS="${WORKERS:-10}"
+
+if ! nvidia-smi -L; then
+    echo "ERROR: nvidia-smi failed on host $(hostname); GPU allocation/node is broken"
+    exit 2
+fi
+
+if [[ "${WORKERS}" -gt 1 ]]; then
+    PORT_BASE=$((20000 + (${SLURM_JOB_ID:-0} % 1000) * 40))
+    VLLM_PORT=""
+    for p in $(seq "${PORT_BASE}" $((PORT_BASE + 39))); do
+        if ! (echo > "/dev/tcp/127.0.0.1/${p}") 2>/dev/null; then
+            VLLM_PORT="${p}"
+            break
+        fi
+    done
+    if [[ -z "${VLLM_PORT}" ]]; then
+        echo "ERROR: no free port in ${PORT_BASE}-$((PORT_BASE + 39))"
+        exit 4
+    fi
+    VLLM_URL="http://127.0.0.1:${VLLM_PORT}"
+    VLLM_LOG="${VLLM_LOG_DIR:-/export/home/acs/stud/a/ana_daria.zahaleanu/exports}/vllm_server_${SLURM_ARRAY_JOB_ID:-local}_${TASK_ID}.log"
+
+    echo "Starting vLLM server on ${VLLM_URL} (log: ${VLLM_LOG}), workers=${WORKERS}"
+    bash "${PROJECT_ROOT}/slurm_scripts/vllm-serve.sh" "${MODEL}" "${VLLM_PORT}" 4 > "${VLLM_LOG}" 2>&1 &
+    VLLM_PID=$!
+    trap 'kill ${VLLM_PID} 2>/dev/null || true; wait ${VLLM_PID} 2>/dev/null || true' EXIT
+
+    for _ in $(seq 1 360); do
+        if curl -sf "${VLLM_URL}/health" > /dev/null; then
+            break
+        fi
+        if ! kill -0 "${VLLM_PID}" 2>/dev/null; then
+            echo "ERROR: vLLM server exited during startup; last lines of ${VLLM_LOG}:"
+            tail -n 50 "${VLLM_LOG}"
+            exit 4
+        fi
+        sleep 10
+    done
+    if ! curl -sf "${VLLM_URL}/health" > /dev/null; then
+        echo "ERROR: vLLM server not healthy after 60 minutes"
+        exit 4
+    fi
+    MODELS_JSON="$(curl -sf "${VLLM_URL}/v1/models" || true)"
+    if ! kill -0 "${VLLM_PID}" 2>/dev/null || [[ "${MODELS_JSON}" != *"\"${MODEL}\""* ]]; then
+        echo "ERROR: server on ${VLLM_URL} is not serving ${MODEL}"
+        exit 4
+    fi
+    echo "vLLM server ready"
+
+    OMP_NUM_THREADS=1 bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
+        --models "${MODEL}" \
+        --server-url "${VLLM_URL}" \
+        --workers "${WORKERS}" \
+        --max-rows 10 \
+        --plot-after-each-sentence \
+        --output-dir "${TASK_OUTPUT_DIR}" \
+        --file "${INPUT_FILE}" \
+        --strict-reactivate-function \
+        --post-process \
+        --story-text "${STORY_FILE}"
+else
+    bash "${PROJECT_ROOT}/slurm_scripts/amoc-run.sh" \
+        --models "${MODEL}" \
+        --tp 4 \
+        --max-rows 10 \
+        --plot-after-each-sentence \
+        --output-dir "${TASK_OUTPUT_DIR}" \
+        --file "${INPUT_FILE}" \
+        --strict-reactivate-function \
+        --post-process \
+        --story-text "${STORY_FILE}"
+fi
 
 ELAPSED=$(( $(date +%s) - START_TS ))
 echo "job=${SLURM_ARRAY_JOB_ID:-local} task=${TASK_ID} finished=$(date -Is) elapsed_s=${ELAPSED}" > "${DONE_MARKER}"

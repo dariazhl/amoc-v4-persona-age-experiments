@@ -21,6 +21,7 @@ from amoc.config import (
 )
 from amoc.pipeline.runner import process_persona_csv
 from amoc.llm.vllm_client import ServerUnavailableError
+from amoc.config.constants import PERSONA_MODES, allow_inferred_chains, persona_mode
 from amoc.analysis.statistics import run_statistical_analysis, canonicalize_model_name
 from amoc.utils.spacy_utils import load_spacy
 from amoc.utils.highlights import blue_nodes_from_text
@@ -212,10 +213,30 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Generate plots per regime after outlier removal for age",
     )
 
+    p.add_argument(
+        "--persona-mode",
+        choices=PERSONA_MODES,
+        default=None,
+        help=(
+            "legacy: prompts as in the published runs (persona 'for focus only'); "
+            "reader: the graph is built as the persona would understand the text. "
+            "Defaults to $AMOC_PERSONA_MODE, else legacy."
+        ),
+    )
+
+    p.add_argument(
+        "--allow-inferred-chains",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Admit inferred-to-inferred edges (validator rule 6 and edge admission). "
+            "Defaults to $AMOC_ALLOW_INFERRED_CHAINS, else off."
+        ),
+    )
+
     return p.parse_args(argv)
 
 
-# 2 tasks can be executed concurrenctly, only run statistics after the first one is done
 def is_leader() -> bool:
     return os.environ.get("SLURM_ARRAY_TASK_ID") in (None, "0")
 
@@ -291,7 +312,6 @@ def load_story_text_from_arg(story_text_arg: str) -> str:
         with open(story_text_arg, "r", encoding="utf-8") as f:
             text = f.read()
 
-        # Normalize line endings
         text = text.replace("\r\n", "\n").replace("\r", "\n")
         text = re.sub(r"\n{3,}", "\n\n", text)
 
@@ -318,6 +338,12 @@ def main(argv: List[str]) -> None:
 
     if args.post_process and not args.output_dir:
         raise SystemExit("--output-dir is required when --post-process is set")
+
+    if args.persona_mode is not None:
+        os.environ["AMOC_PERSONA_MODE"] = args.persona_mode
+    if args.allow_inferred_chains is not None:
+        os.environ["AMOC_ALLOW_INFERRED_CHAINS"] = "1" if args.allow_inferred_chains else "0"
+    print(f"Persona mode: {persona_mode()}  allow inferred chains: {allow_inferred_chains()}")
 
     spacy_nlp = load_spacy()
 
@@ -349,6 +375,10 @@ def main(argv: List[str]) -> None:
         print(f"Overriding output directory to: {output_dir}")
     else:
         output_dir = OUTPUT_DIR
+
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, "persona_mode.txt"), "w") as f:
+        f.write(f"persona_mode={persona_mode()}\nallow_inferred_chains={int(allow_inferred_chains())}\n")
 
     if args.output_dir:
         graphs_output_dir = os.path.join(args.output_dir, "graphs")

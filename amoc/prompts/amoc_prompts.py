@@ -12,11 +12,7 @@ Nodes (with their types, and a score of how central they are in the story (0 is 
 Edges (relationships between the nodes):
 {edges_from_graph}
 
-IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
-
-If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
-
-Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:
+{level_block}
 - which edges you choose to include (more concrete vs more abstract),
 - how you phrase the relation (e.g., 'plays_with' vs 'researches', 'learns_about' vs 'teaches').
 
@@ -40,11 +36,7 @@ The format for representing the graph is as follows: ('concept1', 'relation (edg
 I already extracted the nodes from the text and these ones you should use:
 {nodes_from_text}
 
-IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
-
-If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
-
-Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:
+{level_block}
 - which edges you choose to include (more concrete vs more abstract),
 - how you phrase the relation (e.g., 'plays_with' vs 'researches', 'learns_about' vs 'teaches').
 
@@ -69,11 +61,7 @@ Nodes (with their types, and a score of how central they are in the story (0 is 
 Edges (relationships between the nodes):
 {edges_from_graph}
 
-IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
-
-If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
-
-Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:
+{level_block}
 - which edges you choose to include (more concrete vs more abstract),
 - how you phrase the relation (e.g., 'plays_with' vs 'researches', 'learns_about' vs 'teaches').
 
@@ -104,11 +92,7 @@ And I already have additional concepts and properties that are in line with the 
 concepts: {concepts}
 properties: {properties}
 
-IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
-
-If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
-
-Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:
+{level_block}
 - which edges you choose to include (more concrete vs more abstract),
 - how you phrase the relation (e.g., 'plays_with' vs 'researches', 'learns_about' vs 'teaches').
 
@@ -130,11 +114,7 @@ The format for representing the graph is as follows: ('concept1', 'relation (edg
 I already extracted the nodes from the text:
 {nodes_from_text}
 
-IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
-
-If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
-
-Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:
+{level_block}
 - which edges you choose to include (more concrete vs more abstract),
 - how you phrase the relation (e.g., 'plays_with' vs 'researches', 'learns_about' vs 'teaches').
 
@@ -158,11 +138,7 @@ And I already have additional concepts and properties that are in line with the 
 concepts: {concepts}
 properties: {properties}
 
-IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
-
-If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
-
-Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:
+{level_block}
 - which edges you choose to include (more concrete vs more abstract),
 - how you phrase the relation (e.g., 'plays_with' vs 'researches', 'learns_about' vs 'teaches').
 
@@ -225,11 +201,7 @@ Nodes (with their types, and a score of how central they are in the story (0 is 
 Edges (relationships between the nodes):
 {edges_from_graph}
 
-IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
-
-If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
-
-Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:
+{level_block}
 - which edges you choose to include (more concrete vs more abstract),
 - how you phrase the relation (e.g., 'plays_with' vs 'researches', 'learns_about' vs 'teaches').
 
@@ -253,11 +225,7 @@ The format for representing the graph is as follows: ('concept1', 'relation (edg
 I already extracted the nodes from the text and these ones you should use:
 {nodes_from_text}
 
-IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
-
-If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
-
-Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:
+{level_block}
 - which edges you choose to include (more concrete vs more abstract),
 - how you phrase the relation (e.g., 'plays_with' vs 'researches', 'learns_about' vs 'teaches').
 
@@ -280,11 +248,7 @@ Nodes (with their types, and a score of how central they are in the story (0 is 
 Edges (relationships between the nodes):
 {edges_from_graph}
 
-IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
-
-If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
-
-Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:
+{level_block}
 - which edges you choose to include (more concrete vs more abstract),
 - how you phrase the relation (e.g., 'plays_with' vs 'researches', 'learns_about' vs 'teaches').
 
@@ -315,11 +279,7 @@ And I already have additional concepts and properties that are in line with the 
 concepts: {concepts}
 properties: {properties}
 
-IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
-
-If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
-
-Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:
+{level_block}
 - which edges you choose to include (more concrete vs more abstract),
 - how you phrase the relation (e.g., 'plays_with' vs 'researches', 'learns_about' vs 'teaches').
 
@@ -341,11 +301,7 @@ The format for representing the graph is as follows: ('concept1', 'relation (edg
 I already extracted the nodes from the text:
 {nodes_from_text}
 
-IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
-
-If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
-
-Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:
+{level_block}
 - which edges you choose to include (more concrete vs more abstract),
 - how you phrase the relation (e.g., 'plays_with' vs 'researches', 'learns_about' vs 'teaches').
 
@@ -369,11 +325,7 @@ And I already have additional concepts and properties that are in line with the 
 concepts: {concepts}
 properties: {properties}
 
-IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
-
-If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
-
-Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:
+{level_block}
 - which edges you choose to include (more concrete vs more abstract),
 - how you phrase the relation (e.g., 'plays_with' vs 'researches', 'learns_about' vs 'teaches').
 
@@ -478,12 +430,7 @@ VALIDATION RULES (apply in order):
    Valid: (charlemagne, fought, saxons)
    Invalid: (charlemagne, related to, saxons)
 
-6. NO INFERRED-TO-INFERRED CONNECTIONS:
-   If BOTH the subject AND object are inferred concepts (not explicitly mentioned in the sentence), the triple is INVALID.
-   A concept is "inferred" if it does NOT appear as a word or clear synonym in the sentence.
-   Valid: (charlemagne, is, king) - "charlemagne" and "king" appear in sentence
-   Invalid: (strategic, involves, reader) - neither "strategic" nor "reader" appears in sentence
-
+{rule_6}
 EXAMPLES:
 Input: (charlemagne, dresses in, beautiful)
 Output: {{"valid": false, "reason": "'dresses in' requires a noun object (what does he wear?)", "corrected_triple": null}}
@@ -509,7 +456,6 @@ Return a JSON with:
 3. "corrected_triple": [subject, relation, object] if fixable, else null
 """
 
-# Topical/scene continuity scale (0-2) — judges whether the STORY has moved on, not whether exact words are repeated
 NARRATIVE_RELEVANCE_PROMPT = """You are maintaining a knowledge graph of a story. Your task is to score each
 relationship by how much the story's CURRENT context still applies to it — not by whether its exact words
 are repeated in the current sentence.
@@ -578,3 +524,33 @@ REMOVE otherwise, including if only the subject appears.
 
 OUTPUT: {{"to_keep": ["(subject, relation, object)"], "reasoning": "..."}}
 """
+
+
+LEGACY_LEVEL_BLOCK = """IMPORTANT: Some concept nodes represent persons whose age or educational level is explicitly mentioned or strongly implied in the text (for example: "8-year-old boy", "primary school student", "high school student", "college freshman", "university student"). When you generate relationships, you must take this age or educational level into account so that the relationships reflect what that person is realistically able to understand.
+
+If the age or education level is not mentioned, do NOT invent it. In that case, just create reasonable relationships supported by the text without making assumptions about their level of understanding.
+
+Always base every edge strictly on information that is stated or clearly implied in the text. Age and education should influence:"""
+
+READER_LEVEL_BLOCK = """IMPORTANT: The graph represents what THE READER described above understands from the text, not an ideal analysis of it. Take the reader's age, educational level, vocabulary and background knowledge into account so that the graph reflects what this reader is realistically able to understand, notice and infer. A younger or less educated reader may miss abstract or technical relations and connect ideas through concrete, everyday knowledge; a more educated reader may recognise abstract, domain-specific or implied relations.
+
+Every edge must still be grounded in the text or in knowledge this reader would plausibly bring to it. The reader's age and education should influence:"""
+
+VALIDATOR_RULE_6 = """6. NO INFERRED-TO-INFERRED CONNECTIONS:
+   If BOTH the subject AND object are inferred concepts (not explicitly mentioned in the sentence), the triple is INVALID.
+   A concept is "inferred" if it does NOT appear as a word or clear synonym in the sentence.
+   Valid: (charlemagne, is, king) - "charlemagne" and "king" appear in sentence
+   Invalid: (strategic, involves, reader) - neither "strategic" nor "reader" appears in sentence
+"""
+
+LEGACY_FRAME = """You are a knowledge graph builder. Output ONLY the requested Python list or JSON object. Do not add explanations, thinking process, or extra text.
+        Persona (for focus only, do not add extra concepts): {persona}
+        {prompt}"""
+
+READER_FRAME = """You are simulating a specific reader building a mental model of a text, expressed as a knowledge graph. Output ONLY the requested Python list or JSON object. Do not add explanations, thinking process, or extra text.
+The reader: {persona}
+Build the graph as THIS reader would understand the text: include what they would notice, understand and infer, and leave out what they would not.
+{prompt}"""
+
+NEUTRAL_FRAME = """You are a careful annotation assistant. Output ONLY the requested Python list or JSON object. Do not add explanations, thinking process, or extra text.
+{prompt}"""
