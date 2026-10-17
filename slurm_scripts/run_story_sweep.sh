@@ -47,7 +47,13 @@ if [[ -n "${SINGLE_FILE}" ]]; then
     echo "SINGLE_FILE override -> only chunk: ${SINGLE_FILE}"
 else
     CHUNK_FILES=()
-    while IFS= read -r f; do CHUNK_FILES+=("$f"); done < <(ls "${CHUNKS_DIR}"/*.csv 2>/dev/null | LC_ALL=C sort)
+    while IFS=$'\t' read -r _ _ f; do CHUNK_FILES+=("$f"); done < <(
+        for f in "${CHUNKS_DIR}"/*.csv; do
+            [[ -e "$f" ]] || continue
+            b="$(basename "$f" .csv)"
+            printf '%s\t%s\t%s\n' "${b##*_}" "${b}" "${f}"
+        done | LC_ALL=C sort
+    )
 fi
 STORY_FILES=()
 if [[ -n "${STORY_LIST:-}" ]]; then
@@ -114,6 +120,11 @@ START_TS=$(date +%s)
 
 MODEL="meta-llama/Llama-3.3-70B-Instruct"
 WORKERS="${WORKERS:-10}"
+if [[ "${PLOTS:-1}" == "1" ]]; then
+    PLOT_ARGS=(--plot-after-each-sentence)
+else
+    PLOT_ARGS=(--no-reverse-plots)
+fi
 
 if ! nvidia-smi -L; then
     echo "ERROR: nvidia-smi failed on host $(hostname); GPU allocation/node is broken"
@@ -168,7 +179,7 @@ if [[ "${WORKERS}" -gt 1 ]]; then
         --server-url "${VLLM_URL}" \
         --workers "${WORKERS}" \
         --max-rows 10 \
-        --plot-after-each-sentence \
+        "${PLOT_ARGS[@]}" \
         --output-dir "${TASK_OUTPUT_DIR}" \
         --file "${INPUT_FILE}" \
         --strict-reactivate-function \
@@ -179,7 +190,7 @@ else
         --models "${MODEL}" \
         --tp 4 \
         --max-rows 10 \
-        --plot-after-each-sentence \
+        "${PLOT_ARGS[@]}" \
         --output-dir "${TASK_OUTPUT_DIR}" \
         --file "${INPUT_FILE}" \
         --strict-reactivate-function \

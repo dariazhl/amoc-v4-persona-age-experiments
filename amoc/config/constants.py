@@ -46,5 +46,9 @@ def persona_mode() -> str:
     return mode
 
 
+def allow_persona_words() -> bool:
+    return os.environ.get("AMOC_ALLOW_PERSONA_WORDS", "0").strip().lower() in ("1", "true", "yes")
+
+
 def allow_inferred_chains() -> bool:
     return os.environ.get("AMOC_ALLOW_INFERRED_CHAINS", "0").strip().lower() in ("1", "true", "yes")

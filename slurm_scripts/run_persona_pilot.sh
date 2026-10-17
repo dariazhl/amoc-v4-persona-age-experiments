@@ -17,12 +17,15 @@ PROJECT_ROOT="${PROJECT_ROOT:-/export/home/acs/stud/a/ana_daria.zahaleanu/to_tra
 
 export AMOC_PERSONA_MODE="${PERSONA_MODE:-reader}"
 export AMOC_ALLOW_INFERRED_CHAINS="${INFERRED_CHAINS:-0}"
+export AMOC_ALLOW_PERSONA_WORDS="${PERSONA_WORDS:-0}"
 REP="${REP:-1}"
+export PLOTS="${PLOTS:-0}"
 
 TAG="pilot_${AMOC_PERSONA_MODE}"
 [[ "${AMOC_ALLOW_INFERRED_CHAINS}" == "1" ]] && TAG="${TAG}_chains"
+[[ "${AMOC_ALLOW_PERSONA_WORDS}" == "1" ]] && TAG="${TAG}_pwords"
 export SWEEP_TAG="${TAG}_rep${REP}"
 export STORY_LIST="${STORY_LIST:-primary_4,secondary_3,highschool_3,college_4}"
 
-echo "Persona pilot: mode=${AMOC_PERSONA_MODE} chains=${AMOC_ALLOW_INFERRED_CHAINS} rep=${REP} stories=${STORY_LIST}"
+echo "Persona pilot: mode=${AMOC_PERSONA_MODE} chains=${AMOC_ALLOW_INFERRED_CHAINS} persona_words=${AMOC_ALLOW_PERSONA_WORDS} rep=${REP} plots=${PLOTS} stories=${STORY_LIST}"
 exec bash "${PROJECT_ROOT}/slurm_scripts/run_story_sweep.sh" tusa_text/min_drp_texts

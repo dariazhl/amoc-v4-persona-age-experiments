@@ -57,6 +57,7 @@ class Edge:
         self.active: bool = active
         self.label: str = label
         self.visibility_score: int = visibility_score
+        self._hash: int = hash((tuple(source_node.lemmas), tuple(dest_node.lemmas), label, created_at_sentence))
 
         self.persona_influenced: bool = persona_influenced
         self.inferred: bool = inferred
@@ -145,7 +146,11 @@ class Edge:
         return self is other
 
     def __hash__(self) -> int:
-        return id(self)
+        h = self.__dict__.get("_hash")
+        if h is None:
+            h = hash((tuple(self.source_node.lemmas), tuple(self.dest_node.lemmas), self.label, self.created_at_sentence))
+            self._hash = h
+        return h
 
     def __str__(self) -> str:
         if self.active:

@@ -8,6 +8,10 @@ import re
 from typing import List
 import multiprocessing
 
+if __name__ == "__main__" and os.environ.get("PYTHONHASHSEED") != "0":
+    os.environ["PYTHONHASHSEED"] = "0"
+    os.execv(sys.executable, [sys.executable, "-m", "amoc.cli.main", *sys.argv[1:]])
+
 multiprocessing.set_start_method("spawn", force=True)
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 os.environ["HF_HOME"] = "/export/projects/nlp/.cache"
@@ -119,6 +123,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         "--plot-after-each-sentence",
         action="store_true",
         help="Plot a graph after each sentence for a specific persona",
+    )
+
+    p.add_argument(
+        "--no-reverse-plots",
+        action="store_true",
+        help="Skip the per-persona reverse plots",
     )
 
     p.add_argument(
@@ -410,7 +420,7 @@ def main(argv: List[str]) -> None:
                 story_text=story_text,
                 force_node=True,
                 checkpoint=args.checkpoint,
-                generate_reverse_plots=True,
+                generate_reverse_plots=not args.no_reverse_plots,
                 reverse_plot_mode="both",
                 server_url=args.server_url,
                 workers=args.workers,

@@ -130,7 +130,7 @@ class AMoCv4:
         active_nodes,
         active_edges,
         sentence_index,
-        temperature: float = 0.3,
+        temperature: float = 0.0,
         forced_pair=None,
     ):
         self._connectivity_ops.set_context(
