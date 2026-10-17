@@ -1,4 +1,5 @@
 from amoc.admission.edge_admission import EdgeAdmission
+from amoc.config.constants import allow_persona_words
 from amoc.admission.node_admission import NodeAdmission
 from amoc.admission.text_normalizer import TextNormalizer
 from amoc.construction.relationship_builder import RelationshipGraphBuilder
@@ -63,7 +64,7 @@ def wire_core_dependencies(core) -> None:
         graph_ref=core.graph,
         spacy_nlp=core.spacy_nlp,
         story_lemmas=core.story_lemmas,
-        persona_only_lemmas=core._persona_only_lemmas,
+        persona_only_lemmas=set() if allow_persona_words() else core._persona_only_lemmas,
         max_distance_from_active_nodes=core.max_distance_from_active_nodes,
         debug=core.debug,
     )

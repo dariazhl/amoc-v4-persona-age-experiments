@@ -40,10 +40,14 @@ PERSONA_MODES = ("legacy", "reader")
 
 
 def persona_mode() -> str:
-    mode = os.environ.get("AMOC_PERSONA_MODE", "legacy").strip().lower()
+    mode = os.environ.get("AMOC_PERSONA_MODE", "reader").strip().lower()
     if mode not in PERSONA_MODES:
         raise ValueError(f"AMOC_PERSONA_MODE must be one of {PERSONA_MODES}, got {mode!r}")
     return mode
+
+
+def allow_persona_words() -> bool:
+    return os.environ.get("AMOC_ALLOW_PERSONA_WORDS", "0").strip().lower() in ("1", "true", "yes")
 
 
 def allow_inferred_chains() -> bool:

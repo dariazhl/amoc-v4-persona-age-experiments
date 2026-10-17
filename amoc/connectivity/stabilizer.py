@@ -338,7 +338,7 @@ class ConnectivityStabilizer:
         active_nodes,
         active_edges,
         sentence_index,
-        temperature: float = 0.3,
+        temperature: float = 0.0,
         forced_pair=None,
     ):
         if forced_pair is not None:

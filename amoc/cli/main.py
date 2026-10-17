@@ -8,6 +8,10 @@ import re
 from typing import List
 import multiprocessing
 
+if __name__ == "__main__" and os.environ.get("PYTHONHASHSEED") != "0":
+    os.environ["PYTHONHASHSEED"] = "0"
+    os.execv(sys.executable, [sys.executable, "-m", "amoc.cli.main", *sys.argv[1:]])
+
 multiprocessing.set_start_method("spawn", force=True)
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 os.environ["HF_HOME"] = "/export/projects/nlp/.cache"
@@ -21,7 +25,7 @@ from amoc.config import (
 )
 from amoc.pipeline.runner import process_persona_csv
 from amoc.llm.vllm_client import ServerUnavailableError
-from amoc.config.constants import PERSONA_MODES, allow_inferred_chains, persona_mode
+from amoc.config.constants import PERSONA_MODES, allow_inferred_chains, allow_persona_words, persona_mode
 from amoc.analysis.statistics import run_statistical_analysis, canonicalize_model_name
 from amoc.utils.spacy_utils import load_spacy
 from amoc.utils.highlights import blue_nodes_from_text
@@ -119,6 +123,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         "--plot-after-each-sentence",
         action="store_true",
         help="Plot a graph after each sentence for a specific persona",
+    )
+
+    p.add_argument(
+        "--no-reverse-plots",
+        action="store_true",
+        help="Skip the per-persona reverse plots",
     )
 
     p.add_argument(
@@ -220,7 +230,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help=(
             "legacy: prompts as in the published runs (persona 'for focus only'); "
             "reader: the graph is built as the persona would understand the text. "
-            "Defaults to $AMOC_PERSONA_MODE, else legacy."
+            "Defaults to $AMOC_PERSONA_MODE, else reader."
         ),
     )
 
@@ -378,7 +388,7 @@ def main(argv: List[str]) -> None:
 
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "persona_mode.txt"), "w") as f:
-        f.write(f"persona_mode={persona_mode()}\nallow_inferred_chains={int(allow_inferred_chains())}\n")
+        f.write(f"persona_mode={persona_mode()}\nallow_inferred_chains={int(allow_inferred_chains())}\nallow_persona_words={int(allow_persona_words())}\n")
 
     if args.output_dir:
         graphs_output_dir = os.path.join(args.output_dir, "graphs")
@@ -410,7 +420,7 @@ def main(argv: List[str]) -> None:
                 story_text=story_text,
                 force_node=True,
                 checkpoint=args.checkpoint,
-                generate_reverse_plots=True,
+                generate_reverse_plots=not args.no_reverse_plots,
                 reverse_plot_mode="both",
                 server_url=args.server_url,
                 workers=args.workers,
