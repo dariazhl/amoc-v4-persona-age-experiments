@@ -4,7 +4,6 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:tesla_a100:4
-#SBATCH --exclude=dgxa100-ncit-wn04  # GPU 3 faulted ("GPU requires reset"), 2026-10-11
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=256G
 #SBATCH --array=0-7%2
@@ -25,8 +24,6 @@ fi
 
 export HF_HOME="/export/projects/nlp/.cache"
 export TRANSFORMERS_CACHE="$HF_HOME"
-# Do NOT hardcode CUDA_VISIBLE_DEVICES: Slurm sets it to the GPUs allocated to
-# this array task. Overriding it breaks tasks that share a node.
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
 RUN_ID="run_${SLURM_ARRAY_JOB_ID}"
@@ -65,8 +62,6 @@ echo "Processing chunk file: ${INPUT_FILE}"
 echo "Node: $(hostname)"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}  SLURM_JOB_GPUS=${SLURM_JOB_GPUS:-unset}"
 
-# Fail fast with a clear message if this task can't see its GPUs
-# (instead of vLLM's misleading "Device string must not be empty").
 if ! nvidia-smi -L; then
     echo "ERROR: nvidia-smi failed on host $(hostname); GPU allocation/node is broken"
     exit 2

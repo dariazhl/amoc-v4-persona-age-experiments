@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:tesla_a100:4
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=32G
+#SBATCH --mem=256G
 #SBATCH --array=0-7%2
 #SBATCH --output=/export/home/acs/stud/a/ana_daria.zahaleanu/exports/%x_%A_%a.out
 #SBATCH --error=/export/home/acs/stud/a/ana_daria.zahaleanu/exports/%x_%A_%a.err
@@ -41,9 +41,68 @@ STATS_OUTPUT="${RUN_OUTPUT_DIR}/lme_stats_chunk_${SLURM_ARRAY_TASK_ID}.csv"
 echo "Processing chunk: ${INPUT_FILE}"
 echo "Output: ${OUTPUT_CSV}"
 echo "Stats output: ${STATS_OUTPUT}"
+echo "Node: $(hostname)"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}  SLURM_JOB_GPUS=${SLURM_JOB_GPUS:-unset}"
 
 SIF_IMAGE="/export/projects/nlp/containers/daria-vllm-updated.sif"
+
+if ! nvidia-smi -L; then
+    echo "ERROR: nvidia-smi failed on host $(hostname); GPU allocation/node is broken"
+    exit 2
+fi
+if ! apptainer exec --nv "$SIF_IMAGE" nvidia-smi -L; then
+    echo "ERROR: GPUs visible on host $(hostname) but not inside the container"
+    exit 3
+fi
+
+MODEL="meta-llama/Llama-3.3-70B-Instruct"
+
+WORKERS="${WORKERS:-10}"
+PORT_BASE=$((20000 + (SLURM_JOB_ID % 1000) * 40))
+VLLM_PORT=""
+for p in $(seq "${PORT_BASE}" $((PORT_BASE + 39))); do
+    if ! (echo > "/dev/tcp/127.0.0.1/${p}") 2>/dev/null; then
+        VLLM_PORT="${p}"
+        break
+    fi
+done
+if [[ -z "${VLLM_PORT}" ]]; then
+    echo "ERROR: no free port in ${PORT_BASE}-$((PORT_BASE + 39))"
+    exit 4
+fi
+VLLM_URL="http://127.0.0.1:${VLLM_PORT}"
+VLLM_LOG="/export/home/acs/stud/a/ana_daria.zahaleanu/exports/vllm_server_keefe_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}.log"
+
+echo "Starting vLLM server on ${VLLM_URL} (log: ${VLLM_LOG})"
+bash "${PROJECT_ROOT}/slurm_scripts/vllm-serve.sh" "${MODEL}" "${VLLM_PORT}" 4 > "${VLLM_LOG}" 2>&1 &
+VLLM_PID=$!
+trap 'kill ${VLLM_PID} 2>/dev/null || true; wait ${VLLM_PID} 2>/dev/null || true' EXIT
+
+for _ in $(seq 1 360); do
+    if curl -sf "${VLLM_URL}/health" > /dev/null; then
+        break
+    fi
+    if ! kill -0 "${VLLM_PID}" 2>/dev/null; then
+        echo "ERROR: vLLM server exited during startup; last lines of ${VLLM_LOG}:"
+        tail -n 50 "${VLLM_LOG}"
+        exit 4
+    fi
+    sleep 10
+done
+if ! curl -sf "${VLLM_URL}/health" > /dev/null; then
+    echo "ERROR: vLLM server not healthy after 60 minutes"
+    exit 4
+fi
+MODELS_JSON="$(curl -sf "${VLLM_URL}/v1/models" || true)"
+if ! kill -0 "${VLLM_PID}" 2>/dev/null || [[ "${MODELS_JSON}" != *"\"${MODEL}\""* ]]; then
+    echo "ERROR: server on ${VLLM_URL} is not serving ${MODEL}"
+    exit 4
+fi
+echo "vLLM server ready"
+
 apptainer exec --nv \
+    --env PYTHONHASHSEED=0 \
+    --env OMP_NUM_THREADS=1 \
     -B "${PROJECT_ROOT}:${PROJECT_ROOT}" \
     -B "${CHUNKS_DIR}:${CHUNKS_DIR}" \
     -B "$(dirname "${OUTPUT_CSV}"):$(dirname "${OUTPUT_CSV}")" \
@@ -56,7 +115,8 @@ apptainer exec --nv \
             --keefe-json '$KEEFE_JSON' \
             --output-csv '$OUTPUT_CSV' \
             --stats-output '$STATS_OUTPUT' \
-            --model meta-llama/Llama-3.3-70B-Instruct \
-            --max-rows 10 \
-            --tp 4
+            --model '$MODEL' \
+            --server-url '$VLLM_URL' \
+            --workers '$WORKERS' \
+            --max-rows 10
     "
