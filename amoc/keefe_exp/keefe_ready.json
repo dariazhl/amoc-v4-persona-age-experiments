@@ -1,0 +1,322 @@
+[
+  {
+    "id": 32,
+    "target_word": "explode",
+    "target_lemma": "explode",
+    "control_text": "Once the bombs were stored safely on the ground, the plane dropped off its passenger, took off, and immediately hit turbulence.",
+    "predictive_text": "After being dropped from the plane, the bombs hit the ground.",
+    "explicit_text": "After being dropped from the plane, the bombs hit the ground and exploded."
+  },
+  {
+    "id": 35,
+    "target_word": "pay",
+    "target_lemma": "pay",
+    "control_text": "Jim called the restaurant to ask the waiter if he had left his wallet and the check on the table.",
+    "predictive_text": "At the restaurant, when dinner was finished and the waiter had left the check, Jim got out his wallet.",
+    "explicit_text": "At the restaurant, when dinner was finished and the waiter had left the check, Jim got out his wallet and paid the bill."
+  },
+  {
+    "id": 34,
+    "target_word": "bake",
+    "target_lemma": "bake",
+    "control_text": "The teacher was ready to leave for the party; she had stoked the wood stove and put the cake she was taking into the truck.",
+    "predictive_text": "The teacher was preparing the cake for the party; she carefully placed it in the wood stove.",
+    "explicit_text": "The teacher was preparing the cake for the party; she carefully placed it in the wood stove and baked it."
+  },
+  {
+    "id": 33,
+    "target_word": "fly",
+    "target_lemma": "fly",
+    "control_text": "The male robin jumped as the vet spread antiseptic on his broken wing.",
+    "predictive_text": "The male robin climbed out of the nest, spread his wings, and jumped.",
+    "explicit_text": "The male robin climbed out of the nest, spread his wings, and flew."
+  },
+  {
+    "id": 20,
+    "target_word": "flood",
+    "target_lemma": "flood",
+    "control_text": "George worked rapidly outside his riverside cabin on a shelter for his boat which bobbed on the waves of the river.",
+    "predictive_text": "George quickly left his riverside cabin and sought shelter on higher ground when the river began to rapidly rise.",
+    "explicit_text": "George quickly left his riverside home and sought shelter on higher ground when the river began to rapidly rise and cause a flood."
+  },
+  {
+    "id": 18,
+    "target_word": "collapse",
+    "target_lemma": "collapse",
+    "control_text": "Still fatigued from staying out too late, the jogger struggled to finish breakfast so he could get downtown in time to sign up for next week's marathon.",
+    "predictive_text": "Near the end of his first marathon, the fatigued jogger struggled to finish.",
+    "explicit_text": "Near the end of his first marathon, the fatigued jogger struggled to finish and then collapsed."
+  },
+  {
+    "id": 27,
+    "target_word": "touchdown",
+    "target_lemma": "touchdown",
+    "control_text": "In final seconds of the game, the receiver watched the football float out of bounds past the end zone.",
+    "predictive_text": "In the final seconds of the game, the football floated into the hands of the receiver in the end zone.",
+    "explicit_text": "In the final seconds of the game, the football floated into the hands of the receiver in the end zone to score a touchdown."
+  },
+  {
+    "id": 9,
+    "target_word": "fall",
+    "target_lemma": "fall",
+    "control_text": "The artist tightened his grip on the brush as he realized he was almost done with his depiction of the graceful trapeze act.",
+    "predictive_text": "The trapeze artist was very good, and attracted large crowds, but as tonight's audience watched, he suddenly lost his grip.",
+    "explicit_text": "The trapeze artist was very good, and attracted large crowds, but as tonight's audience watched, he suddenly lost his grip and fell."
+  },
+  {
+    "id": 11,
+    "target_word": "study",
+    "target_lemma": "study",
+    "control_text": "When he finished the test, the student closed his exam book.",
+    "predictive_text": "With his exam coming up, the student opened his book.",
+    "explicit_text": "With his exam coming up, the student opened his book to study."
+  },
+  {
+    "id": 7,
+    "target_word": "drink",
+    "target_lemma": "drink",
+    "control_text": "With his tongue hanging out, the dog ran over to a puddle and splashed about.",
+    "predictive_text": "After a day in the hot sun the dog ran, with its tongue hanging out, over to a puddle.",
+    "explicit_text": "After a day in the hot sun the dog ran, with its tongue hanging out, over to a puddle and took a long drink."
+  },
+  {
+    "id": 29,
+    "target_word": "flunk",
+    "target_lemma": "flunk",
+    "control_text": "Jerry had worried that he had a low grade in his class on the midterm.",
+    "predictive_text": "On the midterm, Jerry found out that he had gotten the lowest grade in the class.",
+    "explicit_text": "On the midterm, Jerry found out that he had gotten the lowest grade in the class, and had flunked."
+  },
+  {
+    "id": 16,
+    "target_word": "tear",
+    "target_lemma": "tear",
+    "control_text": "Don went to the store in his new flannel shirt to buy shingles to fix his roof, but he got caught up trying to decide w hat type of nails to buy.",
+    "predictive_text": "Don tried to be careful, but as he turned to fix a shingle, his new flannel shirt got caught on a nail.",
+    "explicit_text": "Don tried to be careful, but as he turned to fix a shingle, his new flannel shirt got caught on a nail, resulting in a tear."
+  },
+  {
+    "id": 6,
+    "target_word": "sit",
+    "target_lemma": "sit",
+    "control_text": "The tired speaker moved the chair that was in his way and walked to the podium to continue his three-hour debate.",
+    "predictive_text": "After standing through the three-hour debate, the tired speaker walked over to his chair.",
+    "explicit_text": "After standing through the three-hour debate, the tired speaker walked over to his chair and sat down."
+  },
+  {
+    "id": 28,
+    "target_word": "eat",
+    "target_lemma": "eat",
+    "control_text": "The teenager was choosing her bridal tableware; she still had to pick a napkin pattern and forks.",
+    "predictive_text": "The teenager was at the table; she put the napkin on her lap and then picked up a fork.",
+    "explicit_text": "The teenager was at the table; she put the napkin on her lap and then picked up a fork to eat."
+  },
+  {
+    "id": 17,
+    "target_word": "close",
+    "target_lemma": "close",
+    "control_text": "The decorator reclined amidst the piles of wallpaper, blinds and rugs, sunning himself and contemplating the den.",
+    "predictive_text": "The den was much sunnier than he liked, so the decorator walked over to the blinds.",
+    "explicit_text": "The den was much sunnier than he liked, so the decorator walked over and closed the blinds."
+  },
+  {
+    "id": 1,
+    "target_word": "cut",
+    "target_lemma": "cut",
+    "control_text": "While swimming in the shallow water near the rocks, Sharon found a strange piece of glass bearing an unusual inscription.",
+    "predictive_text": "While swimming in the shallow water near the rocks, Sharon stepped on a piece of glass.",
+    "explicit_text": "While swimming in the shallow water near the rocks, Sharon stepped on a piece of glass and cut her foot."
+  },
+  {
+    "id": 10,
+    "target_word": "wash",
+    "target_lemma": "wash",
+    "control_text": "The mechanic had worked all day to repair w hat had been a clean bathroom; for him the job was over.",
+    "predictive_text": "When the mechanic was done for the day, he went over to clean his hands in the bathroom.",
+    "explicit_text": "When the mechanic was done for the day, he went over to clean his hands in the bathroom and washed."
+  },
+  {
+    "id": 19,
+    "target_word": "applause",
+    "target_lemma": "applause",
+    "control_text": "The pianist wondered how far back one could sit in the audience at the competition and still get good reception.",
+    "predictive_text": "The pianist was overjoyed by the audience's warm reception.",
+    "explicit_text": "The pianist was overjoyed by the audience's warm applause."
+  },
+  {
+    "id": 26,
+    "target_word": "sleep",
+    "target_lemma": "sleep",
+    "control_text": "The day before Johnny's surgery, a doctor showed him around the operating room and let him play with the mask he would wear to get the anesthesia.",
+    "predictive_text": "Shortly after the patient was wheeled into the operating room, the doctor arrived and immediately placed a mask over the patient to give him anesthesia.",
+    "explicit_text": "Shortly after the patient was wheeled into the operating room, the doctor arrived and immediately placed the anesthesia mask on the patient to put him to sleep."
+  },
+  {
+    "id": 8,
+    "target_word": "write",
+    "target_lemma": "write",
+    "control_text": "The debutante's mother appreciated receiving the letter even though the paper was torn.",
+    "predictive_text": "The debutante owed a letter to her mother, so she picked up some paper and went to her desk.",
+    "explicit_text": "The debutante owed a letter to her mother, so she picked up some paper, went to her desk, and began to write."
+  },
+  {
+    "id": 21,
+    "target_word": "cry",
+    "target_lemma": "cry",
+    "control_text": "After overwhelming opposition, the contestant showed no emotion as he was announced the winner.",
+    "predictive_text": "After being announced the winner, the contestant was overwhelmed with emotion.",
+    "explicit_text": "After being announced the winner, the contestant was overwhelmed with emotion, and cried"
+  },
+  {
+    "id": 38,
+    "target_word": "lift",
+    "target_lemma": "lift",
+    "control_text": "The mover sat on the heavy box, rested his knees and arms, and caught his breath.",
+    "predictive_text": "The mover bent his knees, put his arms around the heavy box, and took a deep breath.",
+    "explicit_text": "The mover bent his knees, put his arms around the heavy box, took a deep breath, and began to lift."
+  },
+  {
+    "id": 36,
+    "target_word": "run",
+    "target_lemma": "run",
+    "control_text": "The star athlete was stretching his muscles, when he saw a line of soldiers fire a salute for the boat race.",
+    "predictive_text": "The star athlete stretched his muscles and assumed a ready position at the line and the race began.",
+    "explicit_text": "The star athlete stretched his muscles and assumed a ready position at the line, and when the race began he started to run."
+  },
+  {
+    "id": 31,
+    "target_word": "kiss",
+    "target_lemma": "kiss",
+    "control_text": "Most people are turned off by the notion of gay couples exchanging wedding vows.",
+    "predictive_text": "Having just finished reciting their wedding vows, Kristi and Tom were positively glowing as they turned toward each other.",
+    "explicit_text": "Having just finished reciting their wedding vows, Kristi and Tom were positively glowing as they kissed each other."
+  },
+  {
+    "id": 30,
+    "target_word": "ticket",
+    "target_lemma": "ticket",
+    "control_text": "Jan loved to make her friends nervous by having her dad pick her up from parties in his police car with its flashing red lights turned on.",
+    "predictive_text": "Jan was nervous when she saw the police car turn on its flashing red lights and wave her car over to the curb.",
+    "explicit_text": "Jan was nervous when she saw the police car turn on its flashing red lights and wave her car over to the curb to give her a ticket."
+  },
+  {
+    "id": 37,
+    "target_word": "water",
+    "target_lemma": "water",
+    "control_text": "with the turn of the seasons, Steve went outside, across the dry grass and brought in the hose.",
+    "predictive_text": "Steve saw that the grass was dry, and went outside to turn on the hose.",
+    "explicit_text": "Steve saw that the grass was dry, and went outside to turn on the hose and water the lawn."
+  },
+  {
+    "id": 39,
+    "target_word": "dead",
+    "target_lemma": "dead",
+    "control_text": "Suddenly, the director fell over the camera stand, interfering with the cameraman's efforts to shoot close-ups of the actress on the 14th floor.",
+    "predictive_text": "The director and the cameraman were preparing to shoot closeups of the actress on the edge of the roof of the 14th story building when suddenly the actress fell.",
+    "explicit_text": "The director and the cameraman were preparing to shoot closeups of the actress on the edge of the roof of the 14th story building when suddenly the actress fell and was pronounced dead."
+  },
+  {
+    "id": 24,
+    "target_word": "bend",
+    "target_lemma": "bend",
+    "control_text": "Superman grabbed his arch-enemy, Lex Luthor, and put him behind the prison bars.",
+    "predictive_text": "Superman grabbed the prison bars that enclosed him and started to slowly pull them apart.",
+    "explicit_text": "Superman grabbed the prison bars that enclosed him and started to slowly bend the bars."
+  },
+  {
+    "id": 23,
+    "target_word": "birth",
+    "target_lemma": "birth",
+    "control_text": "Mary, like others who work at hard labor, suffers more aches and pains and spends more time in the hospital than office workers.",
+    "predictive_text": "Mary was having hard labor pains, so she went to the hospital.",
+    "explicit_text": "Mary was having hard labor pains, so she went to the hospital to give birth."
+  },
+  {
+    "id": 4,
+    "target_word": "drill",
+    "target_lemma": "drill",
+    "control_text": "Ann opened her mouth for the dentist, hut there were no cavities.",
+    "predictive_text": "Ann opened her mouth as the dentist worked on her cavity.",
+    "explicit_text": "Ann opened her mouth as the dentist drilled her cavity."
+  },
+  {
+    "id": 15,
+    "target_word": "fire",
+    "target_lemma": "fire",
+    "control_text": "Mildred, a Las Vegas cigarette salesgirl, was driving carelessly one night, and tragically crashed her car into the woods.",
+    "predictive_text": "When Mildred, a Las Vegas salesgirl, carelessly dropped her cigarette near the woods, the result was tragic.",
+    "explicit_text": "When Mildred, a Las Vegas salesgirl, carelessly dropped her cigarette near the woods, the result was a tragic fire."
+  },
+  {
+    "id": 3,
+    "target_word": "sting",
+    "target_lemma": "sting",
+    "control_text": "Growing hostile, Joan complained to her employee that the bees had not been moved to their new hive.",
+    "predictive_text": "The hostile swarm of bees hurried out of the hive and landed on Joan's hand.",
+    "explicit_text": "The hostile swarm of bees hurried out of the hive and landed on Joan's hand, and began to sting."
+  },
+  {
+    "id": 12,
+    "target_word": "sink",
+    "target_lemma": "sink",
+    "control_text": "From the wooden sailing ship, they could see across the ice-cold sea to where two icebergs struck each other with a tremendous crunch.",
+    "predictive_text": "The wooden sailing ship cruised through the ice-cold sea, and struck the iceberg with a tremendous crunch.",
+    "explicit_text": "The wooden sailing ship cruised through the ice-cold sea, struck the iceberg with a tremendous crunch, and began to sink."
+  },
+  {
+    "id": 40,
+    "target_word": "flat",
+    "target_lemma": "flat",
+    "control_text": "While driving a large spike that was sticking up from a board at the construction site, Phil noticed that a tire had rolled onto the road.",
+    "predictive_text": "While driving around the construction site, Phil's tire rolled over a large spike sticking up out of the road.",
+    "explicit_text": "While driving around the construction site, Phil's tire rolled over a large spike sticking up out of the road and went flat."
+  },
+  {
+    "id": 2,
+    "target_word": "break",
+    "target_lemma": "break",
+    "control_text": "In one final attempt to win the delicate porcelain vase, the furious boyfriend hurled the ring at the bowling pins that stood against the wall.",
+    "predictive_text": "No longer able to control his fury, the boyfriend hurled the delicate porcelain vase against the wall.",
+    "explicit_text": "No longer able to control his fury, the boyfriend hurled the delicate porcelain vase against the wall and broke it."
+  },
+  {
+    "id": 13,
+    "target_word": "spill",
+    "target_lemma": "spill",
+    "control_text": "The clumsy workman kicked the ladder and then remembered that he had accidentally forgotten the paint bucket.",
+    "predictive_text": "The clumsy workman on the ladder accidentally kicked the paint bucket.",
+    "explicit_text": "The clumsy workman on the ladder accidentally kicked the paint bucket and spilled the paint."
+  },
+  {
+    "id": 5,
+    "target_word": "drive",
+    "target_lemma": "drive",
+    "control_text": "In the daytime, he repaired engines for all sorts of vehicles, while at night he was a thief prying open front doors of people's houses.",
+    "predictive_text": "The thief stuck a hanger in the vehicle's window, opened the door, and in no time at all was able to start the engine.",
+    "explicit_text": "The thief stuck a hanger in the vehicle's window, opened the door, and in no time at all was able to start the engine and drive away."
+  },
+  {
+    "id": 14,
+    "target_word": "throw",
+    "target_lemma": "throw",
+    "control_text": "After they had won the game, the outfielder aimed to give the player the final game ball; he raced toward him, grabbed his arm and pulled him out of the crowd.",
+    "predictive_text": "As the player headed toward home plate, the outfielder raced toward the ball, picked it up and drew back his arm.",
+    "explicit_text": "As the player headed toward home plate, the outfielder raced toward the ball, picked it up, drew back his arm, and threw the ball."
+  },
+  {
+    "id": 22,
+    "target_word": "shoot",
+    "target_lemma": "shoot",
+    "control_text": "The policeman explained to the reporter that his only aim was to find the suspect's gun.",
+    "predictive_text": "The policeman took out his gun and aimed it at the fleeing suspect.",
+    "explicit_text": "The policeman took out his gun, aimed it at the fleeing suspect and began to shoot."
+  },
+  {
+    "id": 25,
+    "target_word": "stab",
+    "target_lemma": "stab",
+    "control_text": "The wife wanted to finish off her block of cheese, but she and her spouse were angry to find that their temperamental cheese knife was broken.",
+    "predictive_text": "The angry wife could not hold her temper against her spouse, so she picked up a knife.",
+    "explicit_text": "The angry wife could not hold her temper against her spouse, so she picked up a knife and stabbed him."
+  }
+]
