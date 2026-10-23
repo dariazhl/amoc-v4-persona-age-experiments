@@ -4,6 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:tesla_a100:4
+#SBATCH --exclude=dgxa100-ncit-wn01
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=256G
 #SBATCH --array=0-7%2
@@ -21,7 +22,9 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 PROJECT_ROOT="/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments"
 CHUNKS_DIR="${PROJECT_ROOT}/personas_dfs/personas_refined_age/chunks_balanced"
 KEEFE_JSON="${PROJECT_ROOT}/amoc/keefe_exp/keefe_ready.json"
-BASE_OUTPUT_DIR="/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output/extracted_triplets/keefe_llama"
+OUTPUT_ROOT="${OUTPUT_ROOT:-/export/projects/nlp/daria_amoc_output}"
+export OUTPUT_DIR="${OUTPUT_ROOT}"
+BASE_OUTPUT_DIR="${OUTPUT_ROOT}/extracted_triplets/keefe_llama"
 RUN_ID="keefe_${SLURM_ARRAY_JOB_ID}"
 RUN_OUTPUT_DIR="${BASE_OUTPUT_DIR}/${RUN_ID}"
 mkdir -p "${RUN_OUTPUT_DIR}"
