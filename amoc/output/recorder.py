@@ -2,6 +2,8 @@ import logging
 from typing import TYPE_CHECKING, List, Tuple, Set, Optional, Dict
 from dataclasses import dataclass, field
 
+from amoc.config.constants import uses_relaxed_inference
+
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
     from amoc.core.node import Node
@@ -86,7 +88,7 @@ class TripletRecorderV2:
     def _triplet_source(self, src: "Node", dst: "Node") -> str:
         src_inferred = src.node_source.name == "INFERENCE_BASED"
         dst_inferred = dst.node_source.name == "INFERENCE_BASED"
-        if "qwen" in (self._model_name or "").lower():
+        if uses_relaxed_inference(self._model_name):
             is_inferred = src_inferred or dst_inferred
         else:
             is_inferred = src_inferred and dst_inferred

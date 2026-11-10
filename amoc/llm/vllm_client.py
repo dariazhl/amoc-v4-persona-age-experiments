@@ -9,10 +9,11 @@ from transformers import AutoTokenizer
 
 from amoc.llm.parsing import (
     parse_for_dict,
+    parse_for_dict_lenient,
     extract_list_from_string,
 )
 
-from amoc.config.constants import allow_inferred_chains, persona_mode
+from amoc.config.constants import allow_inferred_chains, persona_mode, uses_relaxed_inference
 from amoc.prompts.amoc_prompts import (
     LEGACY_FRAME,
     LEGACY_LEVEL_BLOCK,
@@ -33,11 +34,32 @@ from amoc.prompts.amoc_prompts import (
     VALIDATE_TRIPLET_PROMPT,
     NARRATIVE_RELEVANCE_PROMPT,
     PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE,
+    PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE_READER,
+    STRONG_LEVEL_BLOCK,
+    READER_MEMORY_BLOCK,
+    READER_REPAIR_BLOCK,
 )
 
 
 def level_block() -> str:
-    return READER_LEVEL_BLOCK if persona_mode() == "reader" else LEGACY_LEVEL_BLOCK
+    mode = persona_mode()
+    if mode == "strong":
+        return STRONG_LEVEL_BLOCK
+    if mode == "reader":
+        return READER_LEVEL_BLOCK
+    return LEGACY_LEVEL_BLOCK
+
+
+def with_strong_block(prompt: str, block: str) -> str:
+    if persona_mode() != "strong":
+        return prompt
+    return f"{block}\n\n{prompt}"
+
+
+def prune_prompt_template() -> str:
+    if persona_mode() == "strong":
+        return PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE_READER
+    return PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE
 
 
 call_log = logging.getLogger("amoc.llm_calls")
@@ -63,6 +85,7 @@ class VLLMClient:
     ):
         self.debug = debug
         self.model_name = model_name
+        self.relaxed_inference = uses_relaxed_inference(model_name)
         self.tp_size = tp_size
         self.server_url = (server_url or "").rstrip("/") or None
         self._session = None
@@ -251,6 +274,11 @@ class VLLMClient:
             logging.warning(f"vllm server request failed ({error}); retrying in {wait}s")
             time.sleep(wait)
 
+    def _parse_inference_dict(self, response):
+        if self.relaxed_inference:
+            return parse_for_dict_lenient(response)
+        return parse_for_dict(response)
+
     def generate_raw(self, prompt_text: str, temperature: float = 0.0) -> str:
         messages = [{"role": "user", "content": prompt_text}]
         return self.generate(messages, temperature=temperature)
@@ -297,7 +325,7 @@ class VLLMClient:
             text=text,
         )
         response = self.call_vllm(prompt, persona)
-        return parse_for_dict(response)
+        return self._parse_inference_dict(response)
 
     def generate_new_inferred_relationships(
         self,
@@ -319,7 +347,7 @@ class VLLMClient:
             text=text,
         )
         response = self.call_vllm(prompt, persona)
-        return parse_for_dict(response)
+        return self._parse_inference_dict(response)
 
     def infer_objects_and_properties_first_sentence(
         self, nodes_from_text, text, persona
@@ -330,7 +358,7 @@ class VLLMClient:
         )
         response = self.call_vllm(prompt, persona)
         logging.error(f"RAW INFERENCE RESPONSE (first 500 chars): {response[:500]}")
-        return parse_for_dict(response)
+        return self._parse_inference_dict(response)
 
     def generate_new_inferred_relationships_first_sentence(
         self, nodes_from_text, concepts, properties, text, persona
@@ -343,10 +371,11 @@ class VLLMClient:
             text=text,
         )
         response = self.call_vllm(prompt, persona)
-        return parse_for_dict(response)
+        return self._parse_inference_dict(response)
 
     def get_relevant_edges(self, edges_from_graph, text, persona):
         prompt = SELECT_RELEVANT_EDGES_PROMPT.format(edges=edges_from_graph, text=text)
+        prompt = with_strong_block(prompt, READER_MEMORY_BLOCK)
         response = self.call_vllm(prompt, persona)
         return extract_list_from_string(response)
 
@@ -383,6 +412,7 @@ class VLLMClient:
             node_b=node_b,
             sentence_text=sentence_text,
         )
+        prompt = with_strong_block(prompt, READER_REPAIR_BLOCK)
         response = self.call_vllm(prompt, persona)
         result = parse_for_dict(response)
         if not isinstance(result, dict):
@@ -406,6 +436,7 @@ class VLLMClient:
             story_context=story_context,
             current_sentence=current_sentence,
         )
+        prompt = with_strong_block(prompt, READER_REPAIR_BLOCK)
         response = self.call_vllm(prompt, persona)
         result = parse_for_dict(response)
         if not isinstance(result, dict) or not result.get("label"):
@@ -461,7 +492,7 @@ class VLLMClient:
         persona,
         aggressive=False,
     ):
-        prompt = PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE.format(
+        prompt = prune_prompt_template().format(
             story_context=story_context,
             current_sentence=current_sentence,
             active_triplets=active_triplets,
@@ -479,5 +510,6 @@ class VLLMClient:
             current_sentence=current_sentence,
             active_triplets=active_triplets,
         )
+        prompt = with_strong_block(prompt, READER_MEMORY_BLOCK)
         response = self.call_vllm(prompt, persona)
         return parse_for_dict(response)

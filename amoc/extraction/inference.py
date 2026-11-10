@@ -1,6 +1,8 @@
 from typing import TYPE_CHECKING, Optional, List, Tuple
 import logging
 
+from amoc.llm.parsing import coerce_triplet_list
+
 if TYPE_CHECKING:
     from amoc.core.graph import Graph
     from amoc.core.node import Node
@@ -26,6 +28,27 @@ class Inference:
         self._persona = persona
         self._append_adjectival_hints_fn = None
         self._get_sentences_text_based_nodes_fn = None
+
+    def _relaxed(self) -> bool:
+        return bool(getattr(self._llm, "relaxed_inference", False))
+
+    @staticmethod
+    def _has_concepts_or_properties(result) -> bool:
+        return isinstance(result, dict) and bool(
+            result.get("concepts") or result.get("properties")
+        )
+
+    def _relaxed_relationships(self, result):
+        if not isinstance(result, dict):
+            return None
+        concepts = coerce_triplet_list(result.get("concept_relationships", []))
+        properties = coerce_triplet_list(result.get("property_relationships", []))
+        if not concepts and not properties:
+            logging.warning(
+                f"Relaxed inference: no usable triplets in relationship response: {str(result)[:300]}"
+            )
+            return None
+        return concepts, properties
 
     def set_callbacks(
         self,
@@ -80,16 +103,28 @@ class Inference:
                 new_relationships = (
                     self._llm.generate_new_inferred_relationships_first_sentence(
                         nodes_from_text,
-                        object_properties_dict["concepts"][: self._max_new_concepts],
-                        object_properties_dict["properties"][
-                            : self._max_new_properties
-                        ],
+                        (
+                            object_properties_dict.get("concepts") or []
+                            if self._relaxed()
+                            else object_properties_dict["concepts"]
+                        )[: self._max_new_concepts],
+                        (
+                            object_properties_dict.get("properties") or []
+                            if self._relaxed()
+                            else object_properties_dict["properties"]
+                        )[: self._max_new_properties],
                         sent.text,
                         self._persona,
                     )
                 )
                 if not new_relationships:
                     continue
+                if self._relaxed():
+                    coerced = self._relaxed_relationships(new_relationships)
+                    if coerced is None:
+                        continue
+                    logging.info(f"Relationship generation attempt succeeded")
+                    return coerced
                 logging.info(f"Relationship generation attempt succeeded")
                 return (
                     new_relationships["concept_relationships"],
@@ -137,6 +172,14 @@ class Inference:
                     text,
                     self._persona,
                 )
+                if self._relaxed() and not self._has_concepts_or_properties(
+                    object_properties_dict
+                ):
+                    logging.warning(
+                        "Relaxed inference: unparseable concepts/properties response, retrying"
+                    )
+                    object_properties_dict = None
+                    continue
                 break
             except:
                 continue
@@ -150,11 +193,24 @@ class Inference:
                     nodes_from_text,
                     graph_nodes_representation,
                     graph_edges_representation,
-                    object_properties_dict["concepts"][: self._max_new_concepts],
-                    object_properties_dict["properties"][: self._max_new_properties],
+                    (
+                        object_properties_dict.get("concepts") or []
+                        if self._relaxed()
+                        else object_properties_dict["concepts"]
+                    )[: self._max_new_concepts],
+                    (
+                        object_properties_dict.get("properties") or []
+                        if self._relaxed()
+                        else object_properties_dict["properties"]
+                    )[: self._max_new_properties],
                     text,
                     self._persona,
                 )
+                if self._relaxed():
+                    coerced = self._relaxed_relationships(new_relationships)
+                    if coerced is None:
+                        continue
+                    return coerced
                 return (
                     new_relationships["concept_relationships"],
                     new_relationships["property_relationships"],
