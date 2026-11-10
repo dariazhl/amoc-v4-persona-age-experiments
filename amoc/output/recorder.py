@@ -83,6 +83,15 @@ class TripletRecorderV2:
     def set_context_shift(self, context_shift: bool) -> None:
         self._current_context_shift = context_shift
 
+    def _triplet_source(self, src: "Node", dst: "Node") -> str:
+        src_inferred = src.node_source.name == "INFERENCE_BASED"
+        dst_inferred = dst.node_source.name == "INFERENCE_BASED"
+        if "qwen" in (self._model_name or "").lower():
+            is_inferred = src_inferred or dst_inferred
+        else:
+            is_inferred = src_inferred and dst_inferred
+        return "INFERRED" if is_inferred else "TEXT_BASED"
+
     def capture_sentence_edges(
         self,
         sentence_index: int,
@@ -139,7 +148,7 @@ class TripletRecorderV2:
                 object=obj,
                 subject_source=src.node_source.name,
                 object_source=dst.node_source.name,
-                triplet_source="INFERRED" if (src.node_source.name == "INFERENCE_BASED" and dst.node_source.name == "INFERENCE_BASED") else "TEXT_BASED",
+                triplet_source=self._triplet_source(src, dst),
                 edge_visibility=edge.visibility_score,
                 edge_status=edge_status,
                 decay_explanation=decay_reasoning,
