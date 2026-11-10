@@ -362,7 +362,41 @@ Every edge must still be grounded in the text or in knowledge this reader would 
 - which edges you include,
 - how you phrase the relations."""
 
-VALIDATOR_RULE_6 = """6. NO INFERRED-TO-INFERRED CONNECTIONS:
+STRONG_LEVEL_BLOCK = """IMPORTANT: Build the graph strictly from THIS reader's perspective, not as an ideal analysis of the text.
+- Use only words and concepts this reader would know at their age; if a word in the text is likely unfamiliar to them, do not build inferences on its meaning.
+- Make only the inferences this reader would realistically make: a younger or less experienced reader makes fewer, more concrete inferences; an older or more experienced reader makes more, and more abstract ones.
+- Phrase relations in the reader's own vocabulary.
+
+Every edge must still be grounded in the text or in knowledge this reader would plausibly bring to it."""
+
+READER_MEMORY_BLOCK = """IMPORTANT: Judge this from THE READER's point of view, not as an ideal analyst: what would this reader still be holding in mind at this point in the text? Take their age and educational level into account: younger or less experienced readers keep fewer, more concrete and more recent ideas active; more experienced readers keep more, including their own inferences and links to earlier parts of the text."""
+
+READER_REPAIR_BLOCK = """IMPORTANT: Phrase the connecting relation the way THIS reader would understand it, in the reader's own vocabulary, and only connect the concepts in a way this reader could plausibly see."""
+
+PRUNE_IRRELEVANT_TRIPLETS_BY_NARRATIVE_READER = """You are maintaining the knowledge graph of what THIS reader currently holds in mind.
+
+Story so far:
+{story_context}
+
+Current sentence:
+{current_sentence}
+
+Active relationships:
+{active_triplets}
+
+Judge from THE READER's point of view: younger or less experienced readers keep fewer, more concrete and more recent ideas active; more experienced readers keep more, including their own inferences and links to earlier parts of the text.
+
+KEEP a relationship if:
+- The RELATION or OBJECT appears EXPLICITLY in the current sentence.
+- OR removing it would isolate a concept that appears in the current sentence.
+- OR THIS reader would still consider it part of what is going on (this can include their own inferences).
+
+REMOVE otherwise.
+
+OUTPUT: {{"to_keep": ["(subject, relation, object)"], "reasoning": "..."}}
+"""
+
+VALIDATOR_RULE_6 ="""6. NO INFERRED-TO-INFERRED CONNECTIONS:
    If BOTH the subject AND object are inferred concepts (not explicitly mentioned in the sentence), the triple is INVALID.
    A concept is "inferred" if it does NOT appear as a word or clear synonym in the sentence.
    Valid: (charlemagne, is, king) - "charlemagne" and "king" appear in sentence

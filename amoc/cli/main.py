@@ -229,7 +229,9 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         default=None,
         help=(
             "legacy: prompts as in the published runs (persona 'for focus only'); "
-            "reader: the graph is built as the persona would understand the text. "
+            "reader: the graph is built as the persona would understand the text (dose 4); "
+            "strong: reader plus a persona-aware working memory in decay, pruning "
+            "and repair (dose 5, see PERSONA_DOSE_DESIGN.md). "
             "Defaults to $AMOC_PERSONA_MODE, else reader."
         ),
     )

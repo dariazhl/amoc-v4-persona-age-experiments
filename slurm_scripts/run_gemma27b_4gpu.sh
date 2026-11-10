@@ -26,7 +26,7 @@ export TRANSFORMERS_CACHE="$HF_HOME"
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
 RUN_ID="run_${SLURM_ARRAY_JOB_ID}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/output}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-/export/projects/nlp/daria_amoc_output}"
 export OUTPUT_DIR="${OUTPUT_ROOT}"
 BASE_OUTPUT_DIR="${OUTPUT_ROOT}/extracted_triplets/small_example_output_gemma"
 RUN_OUTPUT_DIR="${BASE_OUTPUT_DIR}/${RUN_ID}"

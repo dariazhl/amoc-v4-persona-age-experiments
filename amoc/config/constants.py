@@ -36,7 +36,7 @@ BLUE_NODES = [
     "scorched",
 ]
 
-PERSONA_MODES = ("legacy", "reader")
+PERSONA_MODES = ("legacy", "reader", "strong")
 
 
 def persona_mode() -> str:
@@ -48,6 +48,14 @@ def persona_mode() -> str:
 
 def allow_persona_words() -> bool:
     return os.environ.get("AMOC_ALLOW_PERSONA_WORDS", "0").strip().lower() in ("1", "true", "yes")
+
+
+RELAXED_INFERENCE_MODEL_TAGS = ("qwen", "gemma", "phi")
+
+
+def uses_relaxed_inference(model_name) -> bool:
+    name = (model_name or "").lower()
+    return any(tag in name for tag in RELAXED_INFERENCE_MODEL_TAGS)
 
 
 def allow_inferred_chains() -> bool:
