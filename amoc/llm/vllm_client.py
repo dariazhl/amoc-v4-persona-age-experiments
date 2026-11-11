@@ -38,6 +38,9 @@ from amoc.prompts.amoc_prompts import (
     STRONG_LEVEL_BLOCK,
     READER_MEMORY_BLOCK,
     READER_REPAIR_BLOCK,
+    INFER_OBJECTS_AND_PROPERTIES_PROMPT_RELAXED,
+    INFER_OBJECTS_AND_PROPERTIES_FIRST_SENTENCE_PROMPT_RELAXED,
+    INFERENCE_NUDGE,
 )
 
 
@@ -314,16 +317,33 @@ class VLLMClient:
         response = self.call_vllm(prompt, persona)
         return extract_list_from_string(response)
 
+    def _with_nudge(self, prompt, nudge_previous):
+        if nudge_previous is None:
+            return prompt
+        return prompt + INFERENCE_NUDGE.format(previous=nudge_previous)
+
     def infer_objects_and_properties(
-        self, nodes_from_text, nodes_from_graph, edges_from_graph, text, persona
+        self,
+        nodes_from_text,
+        nodes_from_graph,
+        edges_from_graph,
+        text,
+        persona,
+        nudge_previous=None,
     ):
-        prompt = INFER_OBJECTS_AND_PROPERTIES_PROMPT.format(
+        template = (
+            INFER_OBJECTS_AND_PROPERTIES_PROMPT_RELAXED
+            if self.relaxed_inference
+            else INFER_OBJECTS_AND_PROPERTIES_PROMPT
+        )
+        prompt = template.format(
             level_block=level_block(),
             nodes_from_text=nodes_from_text,
             nodes_from_graph=nodes_from_graph,
             edges_from_graph=edges_from_graph,
             text=text,
         )
+        prompt = self._with_nudge(prompt, nudge_previous)
         response = self.call_vllm(prompt, persona)
         return self._parse_inference_dict(response)
 
@@ -350,12 +370,18 @@ class VLLMClient:
         return self._parse_inference_dict(response)
 
     def infer_objects_and_properties_first_sentence(
-        self, nodes_from_text, text, persona
+        self, nodes_from_text, text, persona, nudge_previous=None
     ):
-        prompt = INFER_OBJECTS_AND_PROPERTIES_FIRST_SENTENCE_PROMPT.format(
+        template = (
+            INFER_OBJECTS_AND_PROPERTIES_FIRST_SENTENCE_PROMPT_RELAXED
+            if self.relaxed_inference
+            else INFER_OBJECTS_AND_PROPERTIES_FIRST_SENTENCE_PROMPT
+        )
+        prompt = template.format(
             level_block=level_block(),
             nodes_from_text=nodes_from_text, text=text
         )
+        prompt = self._with_nudge(prompt, nudge_previous)
         response = self.call_vllm(prompt, persona)
         logging.error(f"RAW INFERENCE RESPONSE (first 500 chars): {response[:500]}")
         return self._parse_inference_dict(response)

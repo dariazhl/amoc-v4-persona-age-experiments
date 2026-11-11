@@ -396,6 +396,63 @@ REMOVE otherwise.
 OUTPUT: {{"to_keep": ["(subject, relation, object)"], "reasoning": "..."}}
 """
 
+INFER_OBJECTS_AND_PROPERTIES_FIRST_SENTENCE_PROMPT_RELAXED = """I want to build a knowledge graph using the provided text. The graph should consist of two types of nodes: concept nodes and property nodes. Concepts nodes represent objects or persons from the story and are generally represented by nouns in the text. Property nodes describe the concepts nodes and are generally represented by adjectives in the text. An edge connects a concept to another concept or a concept to a property, and it is described by a relationship between the connected nodes.
+
+The format for representing the graph is as follows: ('concept1', 'relation (edge)', 'concept2') or ('concept1', 'relation (edge)', 'property1').
+
+I already extracted the nodes from the text:
+{nodes_from_text}
+
+{level_block}
+
+Generate 2 to 4 concepts and 2 to 4 properties that are in line with the overall coherence and sense within the given text, but they are not in the text: things this reader would bring to the text from their own knowledge.
+Do NOT repeat any of the extracted nodes listed above, and do not use any word that appears in the text.
+
+Example: for the text "A girl walked to the old mill." good answers are concepts like "river", "wheel", "flour" and properties like "curious", "quiet"; "girl", "mill" and "old" are NOT allowed because they are already in the text.
+
+The text is:
+{text}
+
+List them in the following format:
+{{
+    "concepts": ["concept1", "concept2", ...],
+    "properties": ["property1", "property2", ...]
+}}"""
+
+INFER_OBJECTS_AND_PROPERTIES_PROMPT_RELAXED = """I want to build a knowledge graph using the provided text. The graph should consist of two types of nodes: concept nodes and property nodes. Concepts nodes represent objects or persons from the story and are generally represented by nouns in the text. Property nodes describe the concepts nodes and are generally represented by adjectives in the text. An edge connects a concept to another concept or a concept to a property, and it is described by a relationship between the connected nodes.
+
+The format for representing the graph is as follows: ('concept1', 'relation (edge)', 'concept2') or ('concept1', 'relation (edge)', 'property1').
+
+I already extracted the nodes from the text:
+{nodes_from_text}
+
+I also have the current knowledge graph:
+Nodes (with their types, and a score of how central they are in the story (0 is most central, 1 less central, etc.)):
+{nodes_from_graph}
+
+Edges (relationships between the nodes):
+{edges_from_graph}
+
+{level_block}
+
+Generate 2 to 4 concepts and 2 to 4 properties that are in line with the overall coherence and sense within the given text and the knowledge graph, but they are not in the text: things this reader would bring to the text from their own knowledge.
+Do NOT repeat any of the extracted nodes listed above, and do not use any word that appears in the text.
+
+Example: for the text "A girl walked to the old mill." good answers are concepts like "river", "wheel", "flour" and properties like "curious", "quiet"; "girl", "mill" and "old" are NOT allowed because they are already in the text.
+
+The text is:
+{text}
+
+List them in the following format:
+{{
+    "concepts": ["concept1", "concept2", ...],
+    "properties": ["property1", "property2", ...]
+}}"""
+
+INFERENCE_NUDGE = """
+
+Your previous answer contained no new concepts or properties: it was empty or only repeated words from the text ({previous}). Answer again with 2 to 4 concepts and 2 to 4 properties that this reader would bring to the text but that are NOT stated in it."""
+
 VALIDATOR_RULE_6 ="""6. NO INFERRED-TO-INFERRED CONNECTIONS:
    If BOTH the subject AND object are inferred concepts (not explicitly mentioned in the sentence), the triple is INVALID.
    A concept is "inferred" if it does NOT appear as a word or clear synonym in the sentence.

@@ -38,6 +38,64 @@ class Inference:
             result.get("concepts") or result.get("properties")
         )
 
+    def _text_lemmas(self, sent_span, text_words) -> set:
+        lemmas = {w.lower() for w in text_words if w}
+        lemmas |= {tok.lemma_.lower() for tok in sent_span if tok.is_alpha}
+        lemmas |= {tok.text.lower() for tok in sent_span if tok.is_alpha}
+        for node in getattr(self._graph, "nodes", ()):
+            if getattr(node.node_source, "name", "") == "TEXT_BASED":
+                lemmas.update(node.lemmas)
+        return lemmas
+
+    def _is_text_item(self, item, text_lemmas) -> bool:
+        if not isinstance(item, str) or not item.strip():
+            return False
+        doc = self._spacy_nlp(item.strip())
+        words = [tok for tok in doc if tok.is_alpha and not tok.is_stop]
+        if not words:
+            return item.strip().lower() in text_lemmas
+        def in_text(tok):
+            forms = {tok.lemma_.lower(), tok.text.lower()}
+            forms |= {f[:-1] for f in list(forms) if f.endswith("s")}
+            return bool(forms & text_lemmas)
+
+        return all(in_text(tok) for tok in words)
+
+    def _select_new_items(self, result, sent_span, text_words):
+        if not self._relaxed():
+            return (
+                result["concepts"][: self._max_new_concepts],
+                result["properties"][: self._max_new_properties],
+            )
+        concepts = list(result.get("concepts") or []) if isinstance(result, dict) else []
+        properties = list(result.get("properties") or []) if isinstance(result, dict) else []
+        text_lemmas = self._text_lemmas(sent_span, text_words)
+        new_concepts = [c for c in concepts if not self._is_text_item(c, text_lemmas)]
+        new_properties = [p for p in properties if not self._is_text_item(p, text_lemmas)]
+        logging.info(
+            f"INFERENCE_PROPOSALS: concepts={concepts} properties={properties} "
+            f"kept_concepts={new_concepts[: self._max_new_concepts]} "
+            f"kept_properties={new_properties[: self._max_new_properties]}"
+        )
+        return new_concepts[: self._max_new_concepts], new_properties[: self._max_new_properties]
+
+    def _nudge_if_no_new_items(self, result, sent_span, text_words, ask):
+        if not self._relaxed():
+            return result
+        current = result if isinstance(result, dict) else {}
+        concepts, properties = self._select_new_items(current, sent_span, text_words)
+        if concepts or properties:
+            return result
+        proposed = list(current.get("concepts") or []) + list(current.get("properties") or [])
+        previous = ", ".join(str(x) for x in proposed) or "empty"
+        try:
+            nudged = ask(previous)
+        except Exception as e:
+            logging.error(f"INFERENCE_NUDGE failed: {e}", exc_info=True)
+            return result
+        logging.info(f"INFERENCE_NUDGE: previous=[{previous}] response={nudged}")
+        return nudged if isinstance(nudged, dict) else result
+
     def _relaxed_relationships(self, result):
         if not isinstance(result, dict):
             return None
@@ -98,21 +156,25 @@ class Inference:
             logging.warning("All 3 inference attempts failed for first sentence")
             return [], []
 
+        object_properties_dict = self._nudge_if_no_new_items(
+            object_properties_dict,
+            sent,
+            current_sentence_text_based_words,
+            lambda previous: self._llm.infer_objects_and_properties_first_sentence(
+                nodes_from_text, sent.text, self._persona, nudge_previous=previous
+            ),
+        )
+
         for _ in range(3):
             try:
+                concepts, properties = self._select_new_items(
+                    object_properties_dict, sent, current_sentence_text_based_words
+                )
                 new_relationships = (
                     self._llm.generate_new_inferred_relationships_first_sentence(
                         nodes_from_text,
-                        (
-                            object_properties_dict.get("concepts") or []
-                            if self._relaxed()
-                            else object_properties_dict["concepts"]
-                        )[: self._max_new_concepts],
-                        (
-                            object_properties_dict.get("properties") or []
-                            if self._relaxed()
-                            else object_properties_dict["properties"]
-                        )[: self._max_new_properties],
+                        concepts,
+                        properties,
                         sent.text,
                         self._persona,
                     )
@@ -172,9 +234,7 @@ class Inference:
                     text,
                     self._persona,
                 )
-                if self._relaxed() and not self._has_concepts_or_properties(
-                    object_properties_dict
-                ):
+                if self._relaxed() and not isinstance(object_properties_dict, dict):
                     logging.warning(
                         "Relaxed inference: unparseable concepts/properties response, retrying"
                     )
@@ -184,25 +244,34 @@ class Inference:
             except:
                 continue
 
+        object_properties_dict = self._nudge_if_no_new_items(
+            object_properties_dict,
+            sent_span,
+            current_sentence_text_based_words,
+            lambda previous: self._llm.infer_objects_and_properties(
+                nodes_from_text,
+                graph_nodes_representation,
+                graph_edges_representation,
+                text,
+                self._persona,
+                nudge_previous=previous,
+            ),
+        )
+
         if object_properties_dict is None:
             return [], []
 
         for _ in range(3):
             try:
+                concepts, properties = self._select_new_items(
+                    object_properties_dict, sent_span, current_sentence_text_based_words
+                )
                 new_relationships = self._llm.generate_new_inferred_relationships(
                     nodes_from_text,
                     graph_nodes_representation,
                     graph_edges_representation,
-                    (
-                        object_properties_dict.get("concepts") or []
-                        if self._relaxed()
-                        else object_properties_dict["concepts"]
-                    )[: self._max_new_concepts],
-                    (
-                        object_properties_dict.get("properties") or []
-                        if self._relaxed()
-                        else object_properties_dict["properties"]
-                    )[: self._max_new_properties],
+                    concepts,
+                    properties,
                     text,
                     self._persona,
                 )
