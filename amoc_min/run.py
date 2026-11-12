@@ -64,6 +64,88 @@ def score(columns, ref, order):
     return out
 
 
+def _one_reader(args):
+    """One reader, start to finish. Module level and taking only plain data,
+    so it can run in a worker process.
+
+    Each reader builds its own Graph from the shared, already-extracted
+    `passes` and writes files named after its own tag, so nothing is shared
+    between workers but the read-only analysis.
+    """
+    r, cfg, passes, ref, order = args
+    # A spawned process re-imports config at its default, so the ageing rule
+    # has to be re-applied here or every worker would silently run `text`.
+    C.RELATION_AGEING = cfg["relation_ageing"]
+    llm = LLM(cfg["server_url"], cfg["model"], cfg["temperature"])
+    snaps = []
+    plotter = None
+    if cfg["graphs"]:
+        from .viz import make_plotter
+        gd = os.path.join(cfg["out"], "graphs")
+        os.makedirs(gd, exist_ok=True)
+        plotter = make_plotter(gd, passes, r["persona"], r["tag"],
+                               model=cfg["model"], regime=r.get("regime"),
+                               age=r.get("age"))
+    cols, counts, records, graph = read(
+        passes, llm=llm, persona=r["persona"],
+        allow_persona_words=cfg["allow_persona_words"],
+        snapshots=snaps, on_sentence=plotter,
+        meta={"original_index": r.get("idx", -1),
+              "age_refined": r.get("age") or -1,
+              "regime": r.get("regime", ""),
+              "persona_text": r.get("persona") or "",
+              "model_name": cfg["model"]})
+    with open(os.path.join(cfg["out"], f"matrix_{r['tag']}.csv"), "w") as f:
+        f.write(to_matrix(cols))
+    if order:                            # v4-style: query the 20 reference
+        from .tokens import TOKEN_MAP    # tokens, one row each
+        with open(os.path.join(cfg["out"],
+                               f"matrix_{r['tag']}_ref20.csv"), "w") as f:
+            f.write(to_matrix(cols, vocab=order, token_map=TOKEN_MAP))
+    if records:                                  # the triplet log
+        with open(os.path.join(cfg["out"], f"triplets_{r['tag']}.csv"),
+                  "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(records[0]))
+            w.writeheader()
+            w.writerows(records)
+    if cfg["graphs"]:
+        with open(os.path.join(cfg["out"], "graphs", f"{r['tag']}.json"), "w") as f:
+            json.dump(snaps, f, indent=1)
+    rec = {k: r[k] for k in ("tag", "regime", "idx")}
+    rec["reader inferences"] = counts
+    rec["n_candidates"] = sum(c["candidates"] for c in counts)
+    rec["n_inferred"] = sum(c["drawn"] for c in counts)
+    inferred_nodes = {n["lemma"] for n in graph.snapshot()["nodes"]
+                      if n["source"] == "inferred"}
+    rec["n_inferred_nodes"] = len(inferred_nodes)
+    rec["inference_rate"] = round(
+        len(inferred_nodes) / max(1, len(graph.nodes)), 4)
+    if order:
+        # Per-token behaviour against the reference, so a matrix can be
+        # read row by row without opening two CSVs side by side.
+        # `on` is how many of the 13 sentences agree on merely being
+        # active vs zero -- the shape of the trace, before its values.
+        from .tokens import TOKEN_MAP
+        rec["ref20"] = {}
+        for t in order:
+            ours = [resolve(c, TOKEN_MAP.get(t, t), TOKEN_MAP)
+                    for c in cols]
+            theirs = ref[t]
+            rec["ref20"][t] = {
+                "ref": theirs, "ours": ours,
+                "on": sum(1 for x, y in zip(theirs, ours)
+                          if (x > 0) == (y > 0))}
+    if cfg["score"]:
+        rec["spearman"] = score(cols, ref, order)
+        rec["mean_rho"] = round(
+            sum(x["rho"] or 0 for x in rec["spearman"]) / len(rec["spearman"]), 3)
+        print(f"{r['tag']:<22} mean rho={rec['mean_rho']:+.3f}  "
+              f"drew {rec['n_inferred']}/{rec['n_candidates']} candidates  "
+              f"inf_rate={rec['inference_rate']:.3f}",
+              flush=True)
+    return rec
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--server-url", required=True)
@@ -85,6 +167,12 @@ def main():
     ap.add_argument("--score", action="store_true")
     ap.add_argument("--fix-killed", action="store_true",
                     help="correct the killed row to match Fig. 8 (off by default)")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="readers processed concurrently. The story analysis "
+                         "runs once up front either way; this parallelises "
+                         "the per-persona pass, whose requests vLLM batches, "
+                         "so throughput scales with it. Processes, not "
+                         "threads -- spaCy is not thread-safe.")
     ap.add_argument("--llm-decay", action="store_true",
                     help="age a relation from when the model last judged it "
                          "RELEVANT (NARRATIVE_RELEVANCE score 2) instead of "
@@ -138,75 +226,41 @@ def main():
                   "regime": p["regime"], "idx": p["idx"], "age": p["age"]}
                  for p in load_personas(a.personas, a.limit)]
 
+    cfg = {k: getattr(a, k) for k in
+           ("graphs", "model", "out", "allow_persona_words", "score",
+            "server_url", "temperature")}
+    cfg["relation_ageing"] = C.RELATION_AGEING
+    tasks = [(r, cfg, passes, ref, order) for r in runs]
+
     summary = []
-    for r in runs:
-        snaps = []
-        plotter = None
-        if a.graphs:
-            from .viz import make_plotter
-            gd = os.path.join(a.out, "graphs")
-            os.makedirs(gd, exist_ok=True)
-            plotter = make_plotter(gd, passes, r["persona"], r["tag"],
-                                   model=a.model, regime=r.get("regime"),
-                                   age=r.get("age"))
-        cols, counts, records, graph = read(
-            passes, llm=llm, persona=r["persona"],
-            allow_persona_words=a.allow_persona_words,
-            snapshots=snaps, on_sentence=plotter,
-            meta={"original_index": r.get("idx", -1),
-                  "age_refined": r.get("age") or -1,
-                  "regime": r.get("regime", ""),
-                  "persona_text": r.get("persona") or "",
-                  "model_name": a.model})
-        with open(os.path.join(a.out, f"matrix_{r['tag']}.csv"), "w") as f:
-            f.write(to_matrix(cols))
-        if order:                            # v4-style: query the 20 reference
-            from .tokens import TOKEN_MAP    # tokens, one row each
-            with open(os.path.join(a.out,
-                                   f"matrix_{r['tag']}_ref20.csv"), "w") as f:
-                f.write(to_matrix(cols, vocab=order, token_map=TOKEN_MAP))
-        if records:                                  # the triplet log
-            with open(os.path.join(a.out, f"triplets_{r['tag']}.csv"),
-                      "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=list(records[0]))
-                w.writeheader()
-                w.writerows(records)
-        if a.graphs:
-            with open(os.path.join(a.out, "graphs", f"{r['tag']}.json"), "w") as f:
-                json.dump(snaps, f, indent=1)
-        rec = {k: r[k] for k in ("tag", "regime", "idx")}
-        rec["reader inferences"] = counts
-        rec["n_candidates"] = sum(c["candidates"] for c in counts)
-        rec["n_inferred"] = sum(c["drawn"] for c in counts)
-        inferred_nodes = {n["lemma"] for n in graph.snapshot()["nodes"]
-                          if n["source"] == "inferred"}
-        rec["n_inferred_nodes"] = len(inferred_nodes)
-        rec["inference_rate"] = round(
-            len(inferred_nodes) / max(1, len(graph.nodes)), 4)
-        if order:
-            # Per-token behaviour against the reference, so a matrix can be
-            # read row by row without opening two CSVs side by side.
-            # `on` is how many of the 13 sentences agree on merely being
-            # active vs zero -- the shape of the trace, before its values.
-            from .tokens import TOKEN_MAP
-            rec["ref20"] = {}
-            for t in order:
-                ours = [resolve(c, TOKEN_MAP.get(t, t), TOKEN_MAP)
-                        for c in cols]
-                theirs = ref[t]
-                rec["ref20"][t] = {
-                    "ref": theirs, "ours": ours,
-                    "on": sum(1 for x, y in zip(theirs, ours)
-                              if (x > 0) == (y > 0))}
-        if a.score:
-            rec["spearman"] = score(cols, ref, order)
-            rec["mean_rho"] = round(
-                sum(x["rho"] or 0 for x in rec["spearman"]) / len(rec["spearman"]), 3)
-            print(f"{r['tag']:<22} mean rho={rec['mean_rho']:+.3f}  "
-                  f"drew {rec['n_inferred']}/{rec['n_candidates']} candidates  "
-                  f"inf_rate={rec['inference_rate']:.3f}",
-                  flush=True)
-        summary.append(rec)
+    workers = min(a.workers, len(tasks)) or 1
+    if workers > 1:
+        # vLLM batches concurrent requests, so throughput scales with this.
+        # Processes, not threads: spaCy's Language object is not documented
+        # thread-safe and every reader lemmatises constantly.
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        print(f"{len(tasks)} readers across {workers} workers", flush=True)
+        done = 0
+        with ProcessPoolExecutor(
+                max_workers=workers,
+                mp_context=multiprocessing.get_context("spawn")) as pool:
+            futures = {pool.submit(_one_reader, t): t[0] for t in tasks}
+            for fut in as_completed(futures):
+                r = futures[fut]
+                try:
+                    summary.append(fut.result())
+                except Exception as exc:        # one reader must not sink the run
+                    print(f"FAILED {r['tag']}: {exc}", flush=True)
+                done += 1
+                print(f"  {done}/{len(tasks)} readers done", flush=True)
+        # as_completed yields in finishing order, so restore the run order --
+        # otherwise summary.json is shuffled differently on every run.
+        pos = {r["tag"]: n for n, r in enumerate(runs)}
+        summary.sort(key=lambda rec: pos.get(rec["tag"], 0))
+    else:
+        for t in tasks:
+            summary.append(_one_reader(t))
 
     # Stamp the ageing rule on every run, so a matrix can never be read
     # without knowing which decay produced it.
