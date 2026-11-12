@@ -185,27 +185,10 @@ Take each one on its own and say whether THIS reader makes that connection
 while reading this sentence. Judge from the reader's age, education,
 vocabulary and background knowledge. There is no target number: judge each
 one on its own merits.
-{guidance}
+
 Reply with JSON and nothing else, one entry per number:
 {{"judgements": [{{"n": <number>, "makes": true/false}}]}}"""
 
-# Two ways to describe how readers differ. NEUTRAL names the dimension without
-# prescribing which way it runs, so an effect is the model's own reasoning
-# about readers rather than compliance with the instruction -- defensible, but
-# it may measure nothing. DIRECTIONAL states the direction, as v5's
-# STRONG_LEVEL_BLOCK does; it will produce a larger effect that is harder to
-# argue is not simply the instruction being followed. Set READER_GUIDANCE.
-GUIDANCE = {
-    "neutral": """Readers differ in how far they carry a text: some stay close
-to what is stated, others draw less obvious connections and build on
-inferences they have already made.
-""",
-    "directional": """A younger or less experienced reader makes fewer, more
-concrete inferences; an older or more experienced reader makes more, and more
-abstract ones, and builds further inferences on the ones already made.
-""",
-    "none": "",
-}
 
 # -- 6. pronoun resolution (v4 ran the knight story with this off) --------
 REPLACE_PRONOUNS = """Replace the pronouns "he, she, they" with the persons or

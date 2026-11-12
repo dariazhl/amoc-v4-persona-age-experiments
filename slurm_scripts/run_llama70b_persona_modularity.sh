@@ -78,7 +78,6 @@ OMP_NUM_THREADS=1 bash "${PROJECT_ROOT}/slurm_scripts/amoc-min-run.sh" \
     --personas "${PERSONA_FILES[@]}" \
     --out "${RUN_OUTPUT_DIR}" \
     --temperature "${TEMPERATURE:-0.0}" \
-    --reader-guidance "${READER_GUIDANCE:-neutral}" \
     --graphs \
     ${LIMIT:+--limit ${LIMIT}} \
     ${FIX_KILLED:+--fix-killed} \

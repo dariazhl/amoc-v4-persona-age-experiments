@@ -72,10 +72,6 @@ def main():
                     help="one or more persona CSVs; omit for baseline only")
     ap.add_argument("--out", default=str(C.OUT))
     ap.add_argument("--temperature", type=float, default=C.TEMPERATURE)
-    ap.add_argument("--reader-guidance", default=C.READER_GUIDANCE,
-                    choices=["neutral", "directional", "none"],
-                    help="how the reader prompt describes differences "
-                         "between readers; see config.py")
     ap.add_argument("--no-baseline", action="store_true",
                     help="skip the baseline reader. It is persona-free and "
                          "identical in every array task, so compute it once.")
@@ -96,11 +92,21 @@ def main():
     a = ap.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
-    C.READER_GUIDANCE = a.reader_guidance
     llm = LLM(a.server_url, a.model, a.temperature)
-    print(f"temperature={a.temperature}  "
-          f"reader_guidance={a.reader_guidance}", flush=True)
-    ref, order = reference(a.fix_killed)
+    print(f"temperature={a.temperature}", flush=True)
+    # The reference matrix is only needed for --score. Load it lazily and
+    # degrade to generation-only if it is missing, rather than throwing away
+    # a 90-second model load over an optional file.
+    ref = order = None
+    if a.score:
+        try:
+            ref, order = reference(a.fix_killed)
+        except FileNotFoundError:
+            print(f"WARNING: no reference matrix at {C.REFERENCE} -- "
+                  f"continuing without scoring. Sync amoc_min/reference/ "
+                  f"and re-run with --score to score these matrices.",
+                  flush=True)
+            a.score = False
 
     cache = a.story_analysis or os.path.join(a.out, "story_analysis.json")
     passes = analyze_story(llm, cache=cache)

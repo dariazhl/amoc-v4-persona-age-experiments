@@ -21,13 +21,6 @@ NR_RELEVANT_EDGES = 15            # v4: how many edges the LLM may reactivate
 CONTEXT_LENGTH    = 1             # v4: sentences of context for reactivation
 RESOLVE_PRONOUNS  = False         # v4 ran the knight story with this off
 
-# How the reader-inference prompt describes differences between readers.
-# "neutral"     names the dimension, not the direction -- an effect is then
-#               the model's own reasoning, not instruction-following
-# "directional" states that younger infer less, as v5's STRONG_LEVEL_BLOCK
-#               does -- larger effect, weaker claim
-# "none"        no guidance at all, the strictest control
-READER_GUIDANCE   = "neutral"
 
 MODEL   = "meta-llama/Llama-3.3-70B-Instruct"
 TIMEOUT = 180

@@ -27,7 +27,7 @@ import urllib.request
 from . import config as C
 from . import nlp as N
 from .graph import Graph
-from .prompts import (GUIDANCE, INFERENCE_NUDGE, INFER_OBJECTS,
+from .prompts import (INFERENCE_NUDGE, INFER_OBJECTS,
                       INFER_OBJECTS_FIRST,
                       INFER_RELATIONSHIPS, INFER_RELATIONSHIPS_FIRST,
                       READER_INFERENCES, RELATIONSHIPS,
@@ -219,8 +219,8 @@ def analyze_story(llm, cache=None):
             tri = _triplets([item.get("triplet")])
             if not tri:
                 continue
-            inferred.append({"triplet": tri[0],
-                             "from": _strs(item.get("from"))})
+            inferred_candidates.append({"triplet": tri[0],
+                                        "from": _strs(item.get("from"))})
             for c in (tri[0][0], tri[0][2]):
                 if c.lower() not in stated_surfaces and c not in seen:
                     seen.append(c)
@@ -263,7 +263,6 @@ def _select_reader_inferences(llm, persona, sentence, candidates, allow_persona_
              enumerate(c["triplet"] for c in candidates)]
     out = _parse(llm.ask(READER_INFERENCES.format(
         persona=persona, sentence=sentence,
-        guidance=GUIDANCE.get(C.READER_GUIDANCE, ""),
         candidates=chr(10).join(lines))), {})
     picked = []
     for j in (out.get("judgements") or []):
