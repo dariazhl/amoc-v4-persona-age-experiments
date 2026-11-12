@@ -46,7 +46,11 @@ def make_plotter(out_dir, passes, persona_text, tag, model="", regime=None,
                 kind = "text"
             nodes[n.lemma] = (kind, score)
 
-        edges = [(e.src.lemma, e.label, e.dst.lemma, e.active) for e in g.edges]
+        edges, active_triplets = [], []
+        for e in g.edges:
+            edges.append((e.src.lemma, e.label, e.dst.lemma, e.active))
+            if e.active:
+                active_triplets.append((e.src.text, e.label, e.dst.text))
 
         active = {l for l, (k, _) in nodes.items() if k != "off"}
         paths.append(draw(
@@ -55,7 +59,8 @@ def make_plotter(out_dir, passes, persona_text, tag, model="", regime=None,
             sentence_no=i, sentence=step["sentence"], persona=who, model=model,
             explicit=sorted(stated & set(nodes)),
             carryover=sorted(active - stated),
-            inactive=sorted(set(nodes) - active)))
+            inactive=sorted(set(nodes) - active),
+            active_triplets=active_triplets))
         return paths[-1]
 
     plot.paths = paths

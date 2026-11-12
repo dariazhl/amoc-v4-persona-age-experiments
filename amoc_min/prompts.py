@@ -154,22 +154,39 @@ properties that a reader brings to the sentence from their own knowledge and
 that do NOT appear in it."""
 
 # -- 4. which edges stay in mind (v4's reactivate_relevant_edges) ---------
-SELECT_RELEVANT_EDGES = """These are the edges of a knowledge graph, in the
-form: node - relation (edge) - node. They are numbered.
+NARRATIVE_RELEVANCE = """You are maintaining a knowledge graph of a story.
+Score each relationship by how much the story's CURRENT context still applies
+to it -- not by whether its exact words are repeated.
 
-{edges}
+Story context:
+{story_context}
 
-Say which of them are related to, support, or contradict the following text.
-The text is:
-{text}
+Current sentence:
+{current_sentence}
 
-Also say whether the current text marks a context shift for the story as a
-whole -- a new scene, a new time, a new topic, or a new set of characters,
-such that much of the established context no longer applies.
+Active relationships:
+{active_triplets}
 
-Reply with JSON and nothing else:
-{{"relevant": [<number>, <number>], "context_shift": true/false,
-  "reasoning": "one short sentence on what is no longer relevant"}}"""
+SCORE 2 - CONTINUOUS: still part of the scene, topic or characters the story
+is discussing. A pronoun, a synonym, or an implied continuation is enough;
+literal repetition is NOT required.
+
+SCORE 1 - FADING: the story has moved to different details but is still in the
+same broader scene or event. Not the current focus, but not contradicted or
+abandoned either.
+
+SCORE 0 - DISCONTINUOUS: the sentence marks a clear shift -- a new scene, a
+new time, a new topic or a new set of characters -- so this relationship's
+context has been superseded. Also score 0 if you are uncertain.
+
+Judge continuity of TOPIC and SCENE, not word overlap.
+
+Also say whether the CURRENT SENTENCE marks a context shift for the story as a
+whole: a new scene, time, topic or set of characters.
+
+Reply with JSON and nothing else, one entry per number:
+{{"scores": [{{"n": <number>, "score": 0, 1 or 2}}],
+  "context_shift": true/false, "reasoning": "one short sentence"}}"""
 
 # -- 5. the persona's inference reader inferences ----------------------------------
 READER_INFERENCES = """You are modelling one specific reader.

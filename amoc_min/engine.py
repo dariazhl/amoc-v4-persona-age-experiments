@@ -26,13 +26,14 @@ import urllib.request
 
 from . import config as C
 from . import nlp as N
+from .admission import admit_all, normalize
 from .graph import Graph
 from .prompts import (INFERENCE_NUDGE, INFER_OBJECTS,
                       INFER_OBJECTS_FIRST,
                       INFER_RELATIONSHIPS, INFER_RELATIONSHIPS_FIRST,
                       READER_INFERENCES, RELATIONSHIPS,
                       RELATIONSHIPS_FIRST, REPLACE_PRONOUNS,
-                      SELECT_RELEVANT_EDGES, VALIDATE_TRIPLETS)
+                      NARRATIVE_RELEVANCE)
 
 
 def _parse(text, default):
@@ -81,44 +82,11 @@ class LLM:
             return json.load(r)["choices"][0]["message"]["content"]
 
 
-def _validate(llm, sentence, triplets):
-    """v5's VALIDATE_TRIPLET rules, batched into one call per sentence.
-
-    Persona-FREE on purpose: a malformed triplet is malformed for every
-    reader, so this runs inside the story analysis and leaves the shared text
-    backbone identical across personas.
-    """
-    if not triplets:
-        return triplets
-    listing = chr(10).join(f"{i}. ({s}, {r}, {o})"
-                           for i, (s, r, o) in enumerate(triplets))
-    out = _parse(llm.ask(VALIDATE_TRIPLETS.format(
-        sentence=sentence, triplets=listing)), {})
-    judged = {}
-    for j in (out.get("judgements") or []):
-        if not isinstance(j, dict):
-            continue
-        try:
-            n = int(j.get("n"))
-        except (TypeError, ValueError):
-            continue
-        judged[n] = j
-    kept = []
-    for i, t in enumerate(triplets):
-        j = judged.get(i)
-        if j is None:                       # unjudged -> keep, do not silently drop
-            kept.append(t)
-            continue
-        if j.get("valid"):
-            kept.append(t)
-        else:
-            fixed = _triplets([j.get("corrected")])
-            if fixed:
-                kept.append(fixed[0])
-            else:
-                logging.info("dropped invalid triplet %s: %s", t,
-                             j.get("reason", ""))
-    return kept
+def _validate(sentence, triplets, log=None):
+    """Deterministic admission, ported from amoc/admission/. No LLM call:
+    these are structural rules, identical for every reader, so they belong in
+    the story analysis and cost nothing."""
+    return admit_all(triplets, log)
 
 
 def _nodes_from_text(words):
@@ -126,31 +94,40 @@ def _nodes_from_text(words):
     return "".join(f" - ({w}, {k})\n" for w, _, k in words) or " (none)\n"
 
 
-def _reactivate(llm, g, nodes, context_text, just_added):
-    """v4's reactivate_relevant_edges: revive what still matters, fade the rest.
+def _reactivate(llm, g, nodes, context_text, just_added, sentence_text=""):
+    """v5's NARRATIVE_RELEVANCE: the model scores every edge 0/1/2 for whether
+    the story's current context still applies to it.
 
-    Returns (decay_explanations, context_shift) for the triplet log.
+    The score becomes the edge's traversal cost, so activation decays through
+    distance rather than snapping to zero: CONTINUOUS edges cost one hop,
+    FADING two, DISCONTINUOUS are untraversable. Returns (explanations,
+    context_shift) for the triplet log.
     """
     listing, order = g.edges_str(nodes, only_active=False)
     if not order:
         return {}, False
-    out = _parse(llm.ask(SELECT_RELEVANT_EDGES.format(
-        edges=listing, text=context_text)), {})
-    picked = set()
-    for i in (out.get("relevant") or [])[:C.NR_RELEVANT_EDGES]:
+    out = _parse(llm.ask(NARRATIVE_RELEVANCE.format(
+        story_context=context_text, current_sentence=sentence_text or context_text,
+        active_triplets=listing)), {})
+    scored = {}
+    for s in (out.get("scores") or []):
+        if not isinstance(s, dict):
+            continue
         try:
-            i = int(i)
+            scored[int(s.get("n")) - 1] = int(s.get("score"))
         except (TypeError, ValueError):
             continue
-        if 1 <= i <= len(order):
-            picked.add(order[i - 1])
     reasoning = out.get("reasoning") or ""
     shift = bool(out.get("context_shift"))
     explanations = {}
-    for e in picked:
-        e.revive(g.edge_forget, reactivated=True)
-    for e in order:
-        if e not in picked and e not in just_added and e.active:
+    for i, e in enumerate(order):
+        sc = scored.get(i)
+        if sc is None:
+            continue                         # unscored -> leave as is
+        e.relevance = max(0, min(2, sc))
+        if sc >= 2:
+            e.revive(g.edge_forget, reactivated=True)
+        elif sc <= 0 and e not in just_added:
             e.fade()
             explanations[(e.src.text, e.label, e.dst.text)] = reasoning
     return explanations, shift
@@ -169,6 +146,7 @@ def analyze_story(llm, cache=None):
             or sentences
 
     g, passes, seen, window = Graph(), [], [], []
+    rejected = []
     for i, sent in enumerate(sentences, 1):
         first = i == 1
         words = N.content_words(sent)
@@ -184,7 +162,7 @@ def analyze_story(llm, cache=None):
             nodes_from_text=nft, text=sent,
             nodes_from_graph=g.nodes_str(active),
             edges_from_graph=g.edges_str(active)[0])), {}).get("triplets"))
-        triplets = _validate(llm, sent, triplets)
+        triplets = _validate(sent, triplets, rejected)
         just_added = [e for e in (g.add(s, r, o, "text", i)
                                   for s, r, o in triplets) if e]
 
@@ -225,21 +203,28 @@ def analyze_story(llm, cache=None):
                 if c.lower() not in stated_surfaces and c not in seen:
                     seen.append(c)
 
-        valid = _validate(llm, sent, [c["triplet"] for c in inferred_candidates])
+        valid = _validate(sent, [c["triplet"] for c in inferred_candidates],
+                          rejected)
         valid_set = {tuple(t) for t in valid}
-        inferred = [c for c in inferred_candidates
-                    if tuple(c["triplet"]) in valid_set]
+        inferred = []
+        for c in inferred_candidates:
+            key = tuple(normalize(x) for x in c["triplet"])
+            if key in valid_set:
+                inferred.append({"triplet": list(key),
+                                 "from": [normalize(p) for p in c["from"]]})
 
         window.append(sent)
         if len(window) > C.CONTEXT_LENGTH:
             window.pop(0)
         _reactivate(llm, g, list(g.nodes.values()), " ".join(window),
-                    just_added)
+                    just_added, sentence_text=sent)
 
         passes.append({"sentence": sent, "words": words,
+                       "rejected": [r for r in rejected],
                        "stated": [list(k) for k in stated_keys],
                        "triplets": triplets, "inferred": inferred,
                        "context": " ".join(window)})
+        rejected = []
 
     if cache:
         os.makedirs(os.path.dirname(cache) or ".", exist_ok=True)
@@ -327,13 +312,14 @@ def read(passes, llm=None, persona=None, allow_persona_words=False,
             try:
                 explanations, shift = _reactivate(
                     llm, g, list(g.nodes.values()), step["context"],
-                    just_added)
+                    just_added, sentence_text=step["sentence"])
             except Exception:
                 logging.exception("reactivation failed at sentence %d; "
                                   "falling back to timer fade", i)
                 g.fade_all(keep=just_added)
 
-        col = g.activation(stated_keys, i, history)
+        col = g.activation(stated_keys, i, history,
+                           sentence_lemmas=N.lemmas(step["sentence"]))
         for t in set(history) | set(col):
             history.setdefault(t, []).append(col.get(t, 0.0))
         columns.append(col)
@@ -347,8 +333,40 @@ def read(passes, llm=None, persona=None, allow_persona_words=False,
     return columns, counts, records, g
 
 
-def to_matrix(columns):
-    """Wide matrix in landscape_paper.csv's own format."""
+def resolve(column, token, token_map=None):
+    """v4's get_word_lemma_score: given a word, return that node's score.
+
+    Tries the token as written, then its lemma, then any key in the column
+    that TOKEN_MAP canonicalises onto it -- so the reference's `rode` finds
+    our `ride`, and `kidnapping` finds `kidnap`. Returns 0.0 when the graph
+    has no such node, exactly as an absent row in v4's matrix.
+    """
+    if token in column:
+        return column[token]
+    lem = " ".join(N.lemmas(token))
+    if lem in column:
+        return column[lem]
+    if token_map:
+        for k, v in column.items():
+            if token_map.get(k, k) == token or token_map.get(lem, lem) == k:
+                return v
+    return 0.0
+
+
+def to_matrix(columns, vocab=None, token_map=None):
+    """Wide matrix in landscape_paper.csv's own format.
+
+    With `vocab`, emit exactly those rows and query the graph for each, as
+    v4's matrix step did against the Landscape paper's 20 tokens. Without it,
+    emit every token the graph produced.
+    """
+    if vocab:
+        lines = ["word/sentence " + " ".join(str(i) for i in range(1, len(columns) + 1))]
+        for t in vocab:
+            row = [resolve(c, t, token_map) for c in columns]
+            lines.append(t + " " + " ".join(
+                str(int(v)) if float(v).is_integer() else str(v) for v in row))
+        return "\n".join(lines) + "\n"
     tokens = sorted({t for c in columns for t in c})
     lines = ["word/sentence " + " ".join(str(i) for i in range(1, len(columns) + 1))]
     for t in tokens:

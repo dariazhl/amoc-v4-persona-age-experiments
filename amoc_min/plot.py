@@ -20,6 +20,8 @@ matplotlib.use("Agg")
 import matplotlib.patheffects as pe      # noqa: E402
 import matplotlib.pyplot as plt          # noqa: E402
 import networkx as nx                    # noqa: E402
+from matplotlib.gridspec import GridSpec  # noqa: E402
+from matplotlib.patches import FancyArrowPatch  # noqa: E402
 
 FONT = ["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"]
 INK, MUTED, FAINT = "#1F2933", "#7B8794", "#B6BFCA"
@@ -64,25 +66,40 @@ def _field(ax, y, label, items, width=92):
 
 
 def draw(path, pos, nodes, edges, sentence_no, sentence, persona, model,
-         explicit, carryover, inactive):
+         explicit, carryover, inactive, active_triplets=()):
     """nodes: {lemma: ("text"|"inferred"|"off", activation)}
        edges: [(src, label, dst, active)]
 
     The active-triplet list is no longer drawn: it duplicates triplets_<tag>.csv
     and cost the graph a fifth of the canvas."""
     plt.rcParams.update({"font.family": FONT, "axes.linewidth": 0})
-    fig, ax = plt.subplots(figsize=(13.2, 8.0), dpi=200)
+    fig = plt.figure(figsize=(15.0, 8.0), dpi=200)
+    gs = GridSpec(1, 2, width_ratios=[0.74, 0.26], figure=fig, wspace=0.03)
+    ax = fig.add_subplot(gs[0])
+    panel = fig.add_subplot(gs[1])
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
     # ---- graph ----------------------------------------------------------
+    def _radius(lemma):
+        kind, score = nodes.get(lemma, ("off", 0.0))
+        return 0.030 + 0.011 * (score / 5.0)
+
     for s, label, o, active in edges:
         if s not in pos or o not in pos:
             continue
         (x1, y1), (x2, y2) = pos[s], pos[o]
-        ax.plot([x1, x2], [y1, y2], lw=1.3 if active else 0.7,
-                color=LINK if active else LINK_OFF,
-                solid_capstyle="round", zorder=1)
+        # shrink the arrow to the circle edges so the head is visible
+        dx, dy = x2 - x1, y2 - y1
+        n = math.hypot(dx, dy) or 1.0
+        ux, uy = dx / n, dy / n
+        a = (x1 + ux * _radius(s), y1 + uy * _radius(s))
+        b = (x2 - ux * _radius(o), y2 - uy * _radius(o))
+        ax.add_patch(FancyArrowPatch(
+            a, b, arrowstyle="-|>", mutation_scale=11 if active else 8,
+            lw=1.3 if active else 0.7,
+            color=LINK if active else LINK_OFF,
+            shrinkA=0, shrinkB=0, zorder=1))
         if active and label:
             dx, dy = x2 - x1, y2 - y1
             n = math.hypot(dx, dy) or 1.0
@@ -141,6 +158,24 @@ def draw(path, pos, nodes, edges, sentence_no, sentence, persona, model,
     ax.set_ylim(min(py) - m, max(py) + m * 1.3)
     ax.set_aspect("equal")
     ax.axis("off")
+
+    panel.axis("off")
+    n = len(active_triplets)
+    panel.annotate(f"Active triplets  ({n})", (0, 1.055),
+                   xycoords="axes fraction", fontsize=8.4, color=INK,
+                   ha="left", va="bottom")
+    panel.plot([0, 1], [1.042, 1.042], transform=panel.transAxes,
+               color=RULE, lw=0.9, clip_on=False)
+    if not n:
+        panel.annotate("none", (0, 1.010), xycoords="axes fraction",
+                       fontsize=7.6, color=FAINT, ha="left", va="top")
+    for i, (s, r_, o) in enumerate(active_triplets[:34]):
+        yy = 1.010 - i * 0.029
+        panel.annotate(f"{i + 1}", (0.0, yy), xycoords="axes fraction",
+                       fontsize=6.8, color=FAINT, ha="left", va="top")
+        panel.annotate(f"{s} \u2014{r_}\u2192 {o}", (0.06, yy),
+                       xycoords="axes fraction", fontsize=7.2, color=MUTED,
+                       ha="left", va="top")
 
     fig.savefig(path, bbox_inches="tight", facecolor="white")
     plt.close(fig)

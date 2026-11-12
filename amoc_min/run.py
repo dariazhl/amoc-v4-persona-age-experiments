@@ -98,7 +98,7 @@ def main():
     # degrade to generation-only if it is missing, rather than throwing away
     # a 90-second model load over an optional file.
     ref = order = None
-    if a.score:
+    if True:                                 # also needed for the ref20 matrix
         try:
             ref, order = reference(a.fix_killed)
         except FileNotFoundError:
@@ -145,6 +145,11 @@ def main():
                   "model_name": a.model})
         with open(os.path.join(a.out, f"matrix_{r['tag']}.csv"), "w") as f:
             f.write(to_matrix(cols))
+        if order:                            # v4-style: query the 20 reference
+            from .tokens import TOKEN_MAP    # tokens, one row each
+            with open(os.path.join(a.out,
+                                   f"matrix_{r['tag']}_ref20.csv"), "w") as f:
+                f.write(to_matrix(cols, vocab=order, token_map=TOKEN_MAP))
         if records:                                  # the triplet log
             with open(os.path.join(a.out, f"triplets_{r['tag']}.csv"),
                       "w", newline="") as f:

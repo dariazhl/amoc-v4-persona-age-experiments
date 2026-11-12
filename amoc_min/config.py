@@ -64,13 +64,33 @@ SCORE_PER_HOP       = 0.5   # score = 5 - SCORE_PER_HOP * BFS distance.
                             # Fig. 8, whose values are 5 / 4.5 / 4 / 3.5 / 3 /
                             # 2.5 for distances 0..5, unreachable -> 0.
 EDGE_FORGET         = 2     # sentences an un-reactivated edge survives (v4: EDGE_VISIBILITY)
-MAX_DISTANCE        = 2     # BFS hops still counted active (v4: MAX_DISTANCE_FROM_ACTIVE_NODES)
-SENIORITY_WEIGHT    = 0.0   # v4 has NO seniority term: old_code.py sets
-                            # node.score = BFS distance and nothing else. A
-                            # sweep confirms it is free to drop -- mean rho is
-                            # identical at .859 for weights 0.0/0.5/1.0 with
-                            # EDGE_FORGET=2, because edges die before the
-                            # penalty can bite. So: score = 5 - distance.
+# Two different jobs, which v4 conflated because it had no matrix at all.
+PROMPT_MAX_DISTANCE = 2     # v4's MAX_DISTANCE_FROM_ACTIVE_NODES: how many
+                            # hops of graph context to show the LLM. Keep at
+                            # v4's value -- raising it changes generation and
+                            # inflates every prompt.
+MATRIX_MAX_DISTANCE = 2     # activation cutoff. score = 5 - 0.5*d, so 2 can
+                            # only ever emit {5, 4.5, 4} -- which is exactly
+                            # what the nov_11 matrix contained. 8 is the
+                            # Kept at 2 so the matrix stays sparse: the value
+                            # range comes from SENIORITY, not from distance.
+COST_CONTINUOUS     = 1     # v5 NARRATIVE_RELEVANCE score 2
+COST_FADING         = 2     # score 1; score 0 makes the edge untraversable
+# How a relation label's age is reset.
+#   "text"      its own word appears in the sentence (the Landscape Model's
+#               word-activation idea; deterministic, reproducible)
+#   "relevance" NARRATIVE_RELEVANCE scores the edge 2 -- one judgement then
+#               drives BOTH distance and age, which compounds. Stronger model,
+#               weaker measurement: the matrix becomes largely a function of
+#               the LLM's opinion of its own graph.
+RELATION_AGEING     = "text"
+
+SENIORITY_WEIGHT    = 2.0   # v5's CARRYOVER_SENIORITY_WEIGHT. With distance
+                            # capped at 2, this is what produces the value
+                            # range: score = 5 - 0.5*d - w*age, where age is
+                            # sentences since the concept was last stated
+                            # (0 when stated now). Drives scores to 0 over
+                            # time, so the matrix gets SPARSER, not denser.
 
 # Decay is persona-INVARIANT by design. Persona acts only on inference
 # reader inferences, so all regimes share one activation dynamic and therefore remain

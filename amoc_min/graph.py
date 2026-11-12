@@ -13,7 +13,7 @@ Follows v4 (old_code.py) closely:
 Concept decay is therefore EMERGENT from edge decay plus connectivity, and an
 inferred node can raise a text node by shortening its distance.
 """
-from collections import deque
+import heapq
 
 from . import config as C
 from . import nlp as N
@@ -31,13 +31,13 @@ def _triplet_source(edge, model_name):
 
 
 class Node:
-    def __init__(self, key, surface, node_type, source, first_seen):
+    def __init__(self, key, surface, node_type, source, source_sentence):
         self.key = key                      # tuple of lemmas -- the identity
         self.surfaces = {surface: 1}        # v4: actual_texts
         self.node_type = node_type          # "concept" | "property"
         self.source = source                # "text" | "inferred"
-        self.first_seen = first_seen
-        self.last_stated = first_seen
+        self.source_sentence = source_sentence   # sentence it entered the graph
+        self.last_stated = source_sentence
         self.edges = []
 
     @property
@@ -57,12 +57,13 @@ class Node:
 
 
 class Edge:
-    def __init__(self, src, dst, label, forget, source, born):
+    def __init__(self, src, dst, label, forget, source, source_sentence):
         self.src, self.dst, self.label = src, dst, label
         self.forget = forget                # v5 recorder: edge_visibility
         self.source = source                # "text" | "inferred"
         self.active = True
-        self.born = born                    # v5 recorder: created_at_sentence
+        self.source_sentence = source_sentence   # v5: created_at_sentence
+        self.relevance = 2                  # v5 NARRATIVE_RELEVANCE: 0/1/2
         # per-sentence flags, for the edge_status state machine
         self.forget_at_start = forget
         self.asserted_this_sentence = True
@@ -89,7 +90,7 @@ class Edge:
         """v5 recorder.capture_sentence_edges's edge_status."""
         if self.forget <= 0:
             return "inactive"
-        if (self.born == sentence and self.asserted_this_sentence
+        if (self.source_sentence == sentence and self.asserted_this_sentence
                 and self.forget == edge_forget):
             return "asserted"
         if self.asserted_this_sentence:
@@ -109,6 +110,7 @@ class Edge:
 
 class Graph:
     def __init__(self, edge_forget=None):
+        self._last_stated = {}
         self.nodes = {}                     # key tuple -> Node
         self.edges = []
         self.edge_forget = C.EDGE_FORGET if edge_forget is None else edge_forget
@@ -173,16 +175,30 @@ class Graph:
 
     # -- activation ------------------------------------------------------
     def distances(self, stated_keys):
+        """Weighted shortest path from the concepts this sentence states.
+
+        An edge's cost is set by the relevance the model gave it: a
+        CONTINUOUS edge (2) costs one hop, a FADING edge (1) costs two, and a
+        DISCONTINUOUS edge (0) is not traversable. Combined with
+        score = 5 - 0.5 * distance this yields the reference's own value set
+        (5, 4.5, 4, 3.5, 3, 2.5, 2, 1.5, 1) instead of the three values a
+        uniform cost can reach.
+        """
         seeds = [self.nodes[k] for k in stated_keys if k in self.nodes]
-        dist, q = {}, deque((n, 0) for n in seeds)
-        while q:
-            n, d = q.popleft()
+        dist, pq = {}, [(0, id(n), n) for n in seeds]
+        heapq.heapify(pq)
+        while pq:
+            d, _, n = heapq.heappop(pq)
             if n in dist:
                 continue
             dist[n] = d
             for e in n.edges:
-                if e.active:
-                    q.append((e.other(n), d + 1))
+                if not e.active or e.relevance <= 0:
+                    continue
+                cost = C.COST_CONTINUOUS if e.relevance >= 2 else C.COST_FADING
+                nxt = e.other(n)
+                if nxt not in dist:
+                    heapq.heappush(pq, (d + cost, id(nxt), nxt))
         return dist
 
     def scores(self, stated_keys):
@@ -190,25 +206,53 @@ class Graph:
         dist = self.distances(stated_keys)
         return {n: dist.get(n, 100) for n in self.nodes.values()}
 
-    def activation(self, stated_keys, sentence, history):
+    def activation(self, stated_keys, sentence, history, sentence_lemmas=()):
         """score = 5 - 0.5 * distance, full reset at onset, unreachable -> 0."""
         for k in stated_keys:
             if k in self.nodes:
                 self.nodes[k].last_stated = sentence
+            self._last_stated[" ".join(k)] = sentence
+
+        # A relation's age is reset by its OWN appearance in the text, not by
+        # its endpoints'. Keying off endpoints made every hub-attached
+        # relation immortal: `knight` recurs in almost every sentence, so
+        # `rode` never aged and sat at 5 for eleven sentences where the
+        # reference has it dead by S4.
+        lemmas = set(sentence_lemmas)
+        for e in self.edges:
+            key = N.relation_key(e.label)
+            if C.RELATION_AGEING == "relevance":
+                if e.relevance >= 2:         # option C -- not the default yet
+                    self._last_stated[key] = sentence
+            elif key in lemmas:              # option B (default)
+                self._last_stated[key] = sentence
         dist = self.distances(stated_keys)
         out = {}
 
-        def put(token, d, prev):
-            if d is None or d > C.MAX_DISTANCE:
+        stated_now = {" ".join(k) for k in stated_keys}
+        last = self._last_stated
+
+        def put(token, d, prev, source_sentence=None):
+            # A token that has never been stated ages from when it ENTERED the
+            # graph. Defaulting to the current sentence gave age 0 forever, so
+            # every inferred concept (horse, fire, sword) stayed at full
+            # activation for the whole story.
+            since = last.get(
+                token,
+                source_sentence if source_sentence is not None else sentence)
+            if d is None or d > C.MATRIX_MAX_DISTANCE:
                 return
-            score = max(0.0, 5.0 - C.SCORE_PER_HOP * d)
+            age = 0 if token in stated_now else max(0, sentence - since)
+            score = max(0.0, 5.0 - C.SCORE_PER_HOP * d
+                        - C.SENIORITY_WEIGHT * age)
             if score > 0 and prev == 0.0:
                 score = 5.0
             if score > 0:
                 out[token] = max(out.get(token, 0.0), round(min(score, 5.0), 2))
 
         for n in self.nodes.values():
-            put(n.lemma, dist.get(n), history.get(n.lemma, [0.0])[-1])
+            put(n.lemma, dist.get(n), history.get(n.lemma, [0.0])[-1],
+                source_sentence=n.source_sentence)
 
         # Relation labels are matrix rows too: 7 of the 20 reference tokens
         # (rode, appeared, kidnapping, fought, killed, freed, married) are
@@ -217,19 +261,21 @@ class Graph:
             if not e.active:
                 continue
             ds = [dist[x] for x in (e.src, e.dst) if x in dist]
-            put(e.label, min(ds) if ds else None,
-                history.get(e.label, [0.0])[-1])
+            key = N.relation_key(e.label)
+            put(key, min(ds) if ds else None, history.get(key, [0.0])[-1],
+                source_sentence=e.source_sentence)
         return out
 
     # -- prompt context (v4 feeds these to the LLM) ----------------------
     def active_nodes(self, threshold=None, only_text=False):
         """v4's get_active_nodes: score <= threshold."""
-        t = C.MAX_DISTANCE if threshold is None else threshold
+        t = C.PROMPT_MAX_DISTANCE if threshold is None else threshold
         sc = self._last_scores or {}
         return [n for n, s in sorted(sc.items(), key=lambda kv: kv[1])
                 if s <= t and (not only_text or n.source == "text")]
 
     _last_scores = None
+    _last_stated = None
 
     def refresh_scores(self, stated_keys):
         self._last_scores = self.scores(stated_keys)
@@ -285,11 +331,11 @@ class Graph:
                 "model_name": meta.get("model_name", ""),
                 "sentence_idx": sentence,
                 "sentence_text": sentence_text,
-                "subject": e.src.text,
-                "relation": e.label,
+                "source": e.src.text,
+                "verb": e.label,
                 "object": e.dst.text,
-                "subject_source": SRC[e.src.source],
-                "object_source": SRC[e.dst.source],
+                "source_provenance": SRC[e.src.source],
+                "object_provenance": SRC[e.dst.source],
                 # v5 recorder's rule: strict models need BOTH endpoints
                 # inferred; relaxed models (qwen/gemma/phi) need either.
                 # NOTE this is why triplet_source was 100% TEXT_BASED in the
@@ -308,21 +354,23 @@ class Graph:
                                                     "carryover") else ""),
                 "context_shift": context_shift,
                 # amoc_min additions, beyond the v5 recorder
-                "subject_lemma": e.src.lemma,
+                "source_lemma": e.src.lemma,
                 "object_lemma": e.dst.lemma,
-                "subject_type": e.src.node_type,
+                "source_type": e.src.node_type,
                 "object_type": e.dst.node_type,
-                "born_sentence": e.born,
+                "source_sentence": e.source_sentence,
             })
         return rows
 
     def snapshot(self):
         return {
             "nodes": [{"lemma": n.lemma, "text": n.text, "type": n.node_type,
-                       "source": n.source, "first_seen": n.first_seen}
+                       "source": n.source,
+                       "source_sentence": n.source_sentence}
                       for n in self.nodes.values()],
             "edges": [{"from": e.src.lemma, "to": e.dst.lemma,
                        "label": e.label, "source": e.source,
-                       "active": e.active, "forget": e.forget, "born": e.born}
+                       "active": e.active, "forget": e.forget,
+                       "source_sentence": e.source_sentence}
                       for e in self.edges],
         }

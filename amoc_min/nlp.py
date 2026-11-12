@@ -11,6 +11,7 @@ second model or API. If only en_core_web_sm is installed there are no vectors,
 so we fall back to lemma overlap and say so once.
 """
 import logging
+from functools import lru_cache
 
 import spacy
 
@@ -81,3 +82,24 @@ def similarity(a, b):
     la = {t.lemma_.lower() for t in da if not t.is_punct}
     lb = {t.lemma_.lower() for t in db if not t.is_punct}
     return len(la & lb) / len(la | lb) if la | lb else 0.0
+
+
+@lru_cache(maxsize=4096)
+def relation_key(label):
+    """Collapse a relation label onto its base verb lemma, for matrix rows.
+
+    `fights for`, `fought`, `fought at`, `fought for`, `fought in` and
+    `fought with` are one relation spelled six ways; as separate rows they
+    tripled the matrix without adding anything, since TOKEN_MAP merges them at
+    scoring time anyway. A full VERB is preferred over an AUX, so
+    `was kidnapping` gives `kidnap` rather than `be`.
+
+    The edge keeps its own label -- this only affects the matrix key, so the
+    triplet log and the figures still show the relation as written.
+    """
+    doc = nlp()(str(label).replace("_", " ").strip().lower())
+    verbs = [t.lemma_.lower() for t in doc if t.pos_ == "VERB"]
+    if verbs:
+        return verbs[0]
+    aux = [t.lemma_.lower() for t in doc if t.pos_ == "AUX"]
+    return aux[0] if aux else str(label).strip().lower()
