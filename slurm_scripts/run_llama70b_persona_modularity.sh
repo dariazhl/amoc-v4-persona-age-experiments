@@ -21,6 +21,17 @@
 #
 #   sbatch slurm_scripts/run_llama70b_persona_modularity.sh
 #   DECAY_RATE=0.6 sbatch slurm_scripts/run_llama70b_persona_modularity.sh
+#
+# LLM_DECAY=1 picks the alternative ageing rule: a relation ages from when the
+# model last judged it RELEVANT (NARRATIVE_RELEVANCE score 2) rather than from
+# when its own word last appeared in the text. Default (unset) keeps the
+# text rule, which is the one comparable with the Landscape reference.
+#
+#   LLM_DECAY=1 sbatch slurm_scripts/run_llama70b_persona_modularity.sh
+#
+# Both rules share one story_analysis.json -- the flag only affects activation,
+# not extraction -- so pointing both runs at the same --out reuses the cache
+# and the two matrices differ by the decay rule alone.
 
 set -euo pipefail
 
@@ -42,6 +53,11 @@ mapfile -t PERSONA_FILES < <(ls "${CHUNKS_DIR}"/*.csv | sort)
 [[ ${#PERSONA_FILES[@]} -gt 0 ]] || { echo "ERROR: no persona CSVs in ${CHUNKS_DIR}"; exit 1; }
 
 echo "amoc_min | ${#PERSONA_FILES[@]} persona files | node $(hostname)"
+if [[ -n "${LLM_DECAY:-}" ]]; then
+  echo "relation ageing: llm -- from NARRATIVE_RELEVANCE score 2 (--llm-decay)"
+else
+  echo "relation ageing: text -- from the relation's own word (default)"
+fi
 nvidia-smi -L || { echo "ERROR: nvidia-smi failed"; exit 2; }
 apptainer exec --nv /export/projects/nlp/containers/daria-vllm-updated.sif nvidia-smi -L \
     || { echo "ERROR: GPUs not visible inside container"; exit 3; }
@@ -82,4 +98,5 @@ OMP_NUM_THREADS=1 bash "${PROJECT_ROOT}/slurm_scripts/amoc-min-run.sh" \
     ${LIMIT:+--limit ${LIMIT}} \
     ${FIX_KILLED:+--fix-killed} \
     ${ALLOW_PERSONA_WORDS:+--allow-persona-words} \
+    ${LLM_DECAY:+--llm-decay} \
     --score

@@ -65,6 +65,18 @@ SCORE_PER_HOP       = 0.5   # score = 5 - SCORE_PER_HOP * BFS distance.
                             # 2.5 for distances 0..5, unreachable -> 0.
 EDGE_FORGET         = 2     # sentences an un-reactivated edge survives (v4: EDGE_VISIBILITY)
 # Two different jobs, which v4 conflated because it had no matrix at all.
+MAX_CARRYOVER_NODES = 5     # v5's constant of the same name. Nodes kept in
+                            # the PROMPT's graph section even when they are
+                            # out of reach, ranked by how recently the text
+                            # stated them. Without it the context a sentence
+                            # sees is whatever is reachable from that
+                            # sentence's own words, which is self-
+                            # reinforcing: at S3 "a dragon appeared" is
+                            # unreachable from everything, so the model was
+                            # shown `dragon` alone with no edges and could
+                            # not have related it to the knight however it
+                            # was asked to. Carry-over is what makes v5's
+                            # `dragon -meets-> knight` possible.
 PROMPT_MAX_DISTANCE = 2     # v4's MAX_DISTANCE_FROM_ACTIVE_NODES: how many
                             # hops of graph context to show the LLM. Keep at
                             # v4's value -- raising it changes generation and
@@ -83,7 +95,15 @@ COST_FADING         = 2     # score 1; score 0 makes the edge untraversable
 #               drives BOTH distance and age, which compounds. Stronger model,
 #               weaker measurement: the matrix becomes largely a function of
 #               the LLM's opinion of its own graph.
+#
+# Selected at run time by `--llm-decay` (run.py), which is driven by LLM_DECAY
+# in the SLURM script. Both values are recorded in the run summary, so a
+# matrix can always be traced back to the rule that produced it.
 RELATION_AGEING     = "text"
+
+# The two names the flag chooses between. Kept here so nothing else in the
+# codebase spells the strings out.
+AGEING_TEXT, AGEING_LLM = "text", "relevance"
 
 SENIORITY_WEIGHT    = 2.0   # v5's CARRYOVER_SENIORITY_WEIGHT. With distance
                             # capped at 2, this is what produces the value

@@ -10,7 +10,7 @@ import json
 import os
 
 from . import config as C
-from .engine import LLM, analyze_story, read, to_matrix
+from .engine import LLM, analyze_story, read, resolve, to_matrix
 
 
 def load_personas(paths, limit=None):
@@ -85,6 +85,17 @@ def main():
     ap.add_argument("--score", action="store_true")
     ap.add_argument("--fix-killed", action="store_true",
                     help="correct the killed row to match Fig. 8 (off by default)")
+    ap.add_argument("--llm-decay", action="store_true",
+                    help="age a relation from when the model last judged it "
+                         "RELEVANT (NARRATIVE_RELEVANCE score 2) instead of "
+                         "from when its own word last appeared in the text. "
+                         "Lets the model decide what is still in mind rather "
+                         "than keying off surface mentions, and is the only "
+                         "ageing rule the persona could ever influence. "
+                         "Mechanically furthest from the Landscape reference: "
+                         "one LLM judgement then drives BOTH traversal cost "
+                         "and age, so the matrix becomes largely a function "
+                         "of the model's opinion of its own graph.")
     ap.add_argument("--allow-persona-words", action="store_true",
                     help="let readers reword concepts. OFF by default: 10 of the "
                          "20 reference tokens match by exact string only, so "
@@ -92,8 +103,12 @@ def main():
     a = ap.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
+    # Set before anything builds a graph: graph.activation reads it per edge.
+    C.RELATION_AGEING = C.AGEING_LLM if a.llm_decay else C.AGEING_TEXT
     llm = LLM(a.server_url, a.model, a.temperature)
-    print(f"temperature={a.temperature}", flush=True)
+    print(f"temperature={a.temperature} "
+          f"relation_ageing={C.RELATION_AGEING}"
+          f"{' (--llm-decay)' if a.llm_decay else ''}", flush=True)
     # The reference matrix is only needed for --score. Load it lazily and
     # degrade to generation-only if it is missing, rather than throwing away
     # a 90-second model load over an optional file.
@@ -168,6 +183,21 @@ def main():
         rec["n_inferred_nodes"] = len(inferred_nodes)
         rec["inference_rate"] = round(
             len(inferred_nodes) / max(1, len(graph.nodes)), 4)
+        if order:
+            # Per-token behaviour against the reference, so a matrix can be
+            # read row by row without opening two CSVs side by side.
+            # `on` is how many of the 13 sentences agree on merely being
+            # active vs zero -- the shape of the trace, before its values.
+            from .tokens import TOKEN_MAP
+            rec["ref20"] = {}
+            for t in order:
+                ours = [resolve(c, TOKEN_MAP.get(t, t), TOKEN_MAP)
+                        for c in cols]
+                theirs = ref[t]
+                rec["ref20"][t] = {
+                    "ref": theirs, "ours": ours,
+                    "on": sum(1 for x, y in zip(theirs, ours)
+                              if (x > 0) == (y > 0))}
         if a.score:
             rec["spearman"] = score(cols, ref, order)
             rec["mean_rho"] = round(
@@ -178,6 +208,11 @@ def main():
                   flush=True)
         summary.append(rec)
 
+    # Stamp the ageing rule on every run, so a matrix can never be read
+    # without knowing which decay produced it.
+    for rec in summary:
+        rec["relation_ageing"] = C.RELATION_AGEING
+        rec["llm_decay"] = bool(a.llm_decay)
     with open(os.path.join(a.out, "summary.json"), "w") as f:
         json.dump(summary, f, indent=1)
     print(f"\nwrote {len(runs)} matrices to {a.out}")

@@ -31,6 +31,20 @@ OFF_FILL, OFF_EDGE = "#F2F4F6", "#E1E5EA"
 LINK, LINK_OFF = "#5B6B7F", "#E6E9ED"
 RULE = "#E8EBEF"
 
+# One multiplier on every type size, so the hierarchy between the sizes is
+# preserved and only the weight of text against the graph changes. Lower it
+# to give the drawing more of the canvas.
+TYPE = 0.78
+
+
+def _fs(points):
+    return round(points * TYPE, 2)
+
+
+# The footer runs the full page width, past the graph column and under the
+# triplet panel, so it gets a size of its own rather than the body size.
+FOOTER_PT, FOOTER_WRAP = 5.6, 385
+
 
 def layout(all_triplets, seed=7):
     """One layout for the whole story, from every triplet that can appear."""
@@ -53,16 +67,21 @@ def layout(all_triplets, seed=7):
             for n, (x, y) in pos.items()}
 
 
-def _field(ax, y, label, items, width=92):
-    """'Label: a, b, c', wrapped and hanging-indented."""
+def _field(ax, y, label, items, width=FOOTER_WRAP):
+    """'Label: a, b, c', wrapped and hanging-indented.
+
+    Left edge stays on the graph axes, so it lines up with the header, but the
+    wrap is wide enough that the lines run the whole page rather than stopping
+    at the graph column.
+    """
     value = ", ".join(items) if items else "none"
     lines = textwrap.wrap(f"{label}: {value}", width=width,
                           subsequent_indent=" " * (len(label) + 2)) or [label]
     for n, line in enumerate(lines):
-        ax.annotate(line, (0.0, y - n * 0.027), xycoords="axes fraction",
-                    fontsize=7.6, color=MUTED, ha="left", va="top",
-                    family="monospace" if False else None)
-    return y - 0.027 * len(lines) - 0.008
+        ax.annotate(line, (0.0, y - n * 0.016), xycoords="axes fraction",
+                    fontsize=_fs(FOOTER_PT), color=MUTED, ha="left", va="top",
+                    annotation_clip=False)
+    return y - 0.016 * len(lines) - 0.006
 
 
 def draw(path, pos, nodes, edges, sentence_no, sentence, persona, model,
@@ -105,9 +124,9 @@ def draw(path, pos, nodes, edges, sentence_no, sentence, persona, model,
             n = math.hypot(dx, dy) or 1.0
             ox, oy = -dy / n * 0.018, dx / n * 0.018
             ax.annotate(label, ((x1 + x2) / 2 + ox, (y1 + y2) / 2 + oy),
-                        fontsize=6.6, color=MUTED, ha="center", va="center",
+                        fontsize=_fs(6.6), color=MUTED, ha="center", va="center",
                         zorder=3, path_effects=[
-                            pe.withStroke(linewidth=2.4, foreground="white")])
+                            pe.withStroke(linewidth=2.0, foreground="white")])
 
     for lemma, (kind, score) in nodes.items():
         if lemma not in pos:
@@ -122,18 +141,18 @@ def draw(path, pos, nodes, edges, sentence_no, sentence, persona, model,
         ax.add_patch(plt.Circle((x, y), r, facecolor=fill, edgecolor=line,
                                 linewidth=1.1 if kind != "off" else 0.8,
                                 zorder=4))
-        ax.annotate(lemma, (x, y + r + 0.020), fontsize=8.2, color=ink,
+        ax.annotate(lemma, (x, y + r + 0.015), fontsize=_fs(8.2), color=ink,
                     ha="center", va="bottom", zorder=5)
 
     # ---- header ---------------------------------------------------------
     ax.annotate(f"AMoC knowledge graph · {model}", (0, 1.135),
-                xycoords="axes fraction", fontsize=7.6, color=FAINT,
+                xycoords="axes fraction", fontsize=_fs(7.6), color=FAINT,
                 ha="left", va="bottom")
     ax.annotate(f"Sentence {sentence_no}: {sentence}", (0, 1.060),
-                xycoords="axes fraction", fontsize=12.5, color=INK,
+                xycoords="axes fraction", fontsize=_fs(12.5), color=INK,
                 ha="left", va="bottom")
     ax.annotate(f"Persona: {persona}", (0, 1.018), xycoords="axes fraction",
-                fontsize=8.4, color=MUTED, ha="left", va="bottom")
+                fontsize=_fs(8.4), color=MUTED, ha="left", va="bottom")
 
     for k, (lab, fill, line) in enumerate([("explicit", TEXT_FILL, TEXT_EDGE),
                                            ("inferred", INFER_FILL, INFER_EDGE),
@@ -143,7 +162,7 @@ def draw(path, pos, nodes, edges, sentence_no, sentence, persona, model,
                                 edgecolor=line, linewidth=1.0,
                                 transform=ax.transAxes, clip_on=False, zorder=6))
         ax.annotate(lab, (x + 0.013, 1.030), xycoords="axes fraction",
-                    fontsize=7.2, color=MUTED, ha="left", va="center")
+                    fontsize=_fs(7.2), color=MUTED, ha="left", va="center")
 
     # ---- footer ---------------------------------------------------------
     y = -0.045
@@ -162,19 +181,19 @@ def draw(path, pos, nodes, edges, sentence_no, sentence, persona, model,
     panel.axis("off")
     n = len(active_triplets)
     panel.annotate(f"Active triplets  ({n})", (0, 1.055),
-                   xycoords="axes fraction", fontsize=8.4, color=INK,
+                   xycoords="axes fraction", fontsize=_fs(8.4), color=INK,
                    ha="left", va="bottom")
     panel.plot([0, 1], [1.042, 1.042], transform=panel.transAxes,
                color=RULE, lw=0.9, clip_on=False)
     if not n:
         panel.annotate("none", (0, 1.010), xycoords="axes fraction",
-                       fontsize=7.6, color=FAINT, ha="left", va="top")
+                       fontsize=_fs(7.6), color=FAINT, ha="left", va="top")
     for i, (s, r_, o) in enumerate(active_triplets[:34]):
-        yy = 1.010 - i * 0.029
+        yy = 1.010 - i * 0.024
         panel.annotate(f"{i + 1}", (0.0, yy), xycoords="axes fraction",
-                       fontsize=6.8, color=FAINT, ha="left", va="top")
+                       fontsize=_fs(6.8), color=FAINT, ha="left", va="top")
         panel.annotate(f"{s} \u2014{r_}\u2192 {o}", (0.06, yy),
-                       xycoords="axes fraction", fontsize=7.2, color=MUTED,
+                       xycoords="axes fraction", fontsize=_fs(7.2), color=MUTED,
                        ha="left", va="top")
 
     fig.savefig(path, bbox_inches="tight", facecolor="white")

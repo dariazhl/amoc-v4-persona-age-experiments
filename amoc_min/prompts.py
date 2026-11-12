@@ -12,8 +12,10 @@ EXTRACT, INFER_* and SELECT_RELEVANT_EDGES never see the persona.
 """
 
 _GRAPH = """I also have the current knowledge graph.
-Nodes (with their type, and a score of how central they are in the story;
-0 is most central, 1 less central, and so on):
+Nodes, each with its type and a score saying how closely the story ties it to
+what this sentence is about: 0 is stated in this sentence, 1 is one step away,
+and so on. A score of 100 means the node is still held in memory but this
+sentence does not reach it:
 {nodes_from_graph}
 Edges (relationships between the nodes):
 {edges_from_graph}
@@ -32,14 +34,29 @@ I already extracted the nodes of the current sentence, and you should use these:
 # -- 1. relationships stated in the text ---------------------------------
 RELATIONSHIPS = _HEAD + _GRAPH + """
 Give the relationships between the nodes of this sentence, and between those
-nodes and the graph's nodes (prefer the more central ones). The sentence is:
+nodes and the graph's nodes. The sentence is:
 {text}
+
+CONNECTIVITY: every node of this sentence must end up joined to the graph.
+Relationships between two nodes of this sentence are welcome, but a node of
+this sentence must not be left attached to nothing: if the sentence states a
+concept and gives it no relationship, relate it to the graph.
+
+HUB-FIRST ATTACHMENT: the story's hub is the node taking part in the MOST
+relationships in the edge list above, whatever its score -- a hub the current
+sentence does not mention still scores 100. Every concept of this sentence
+should have at least one relationship joining it to that hub, where the text
+justifies one.
+
+Every triplet must join two DIFFERENT nodes: never relate a node to itself,
+and never restate a node as its own property.
 
 Reply with JSON and nothing else:
 {{"triplets": [["subject", "relation", "object"]]}}"""
 
 RELATIONSHIPS_FIRST = _HEAD + """
-Give the relationships between the nodes of this sentence. The sentence is:
+Give the relationships between the nodes of this sentence. Every triplet must
+join two DIFFERENT nodes: never relate a node to itself. The sentence is:
 {text}
 
 Reply with JSON and nothing else:
@@ -53,8 +70,8 @@ Name concepts and properties that are NOT written in the text but that the
 text supports -- things necessarily or very probably true given what is
 stated, which a reader could connect to the story. An inference may build on
 an EARLIER INFERENCE rather than on the text directly: if a reader has already
-inferred that the knight carries a sword, they may infer what follows from the
-sword. Do not name anything that contradicts the text.
+inferred that a baker keeps yeast, they may infer what follows from the yeast.
+Do not name anything that contradicts the text.
 
 Do NOT repeat any of the extracted nodes listed above, and do not use any word
 that appears in the sentence.
@@ -94,7 +111,18 @@ does not state:
 concepts: {concepts}
 properties: {properties}
 
-Join them to the nodes of the sentence, and to each other where that follows.
+Join each of them to a node that is ALREADY in the graph above: a node of this
+sentence, or one of the graph's nodes. One new concept may be joined to
+another new concept, but only once that other one is itself joined to the
+graph, so that every chain is anchored. Do NOT give a triplet whose subject
+and object are both new concepts with no link back to the graph -- it would
+float free of the story and be discarded.
+
+HUB-FIRST ATTACHMENT: attach new concepts to the explicit backbone first --
+the nodes of this sentence, or the node taking part in the most relationships
+in the edge list above -- rather than to each other, so the graph stays well
+connected through the hub.
+
 For each triplet, say which concepts it follows from, using words from the
 sentence or from the inferred list above; use "from": [] when it follows from
 the sentence as a whole. The sentence is:
@@ -110,9 +138,10 @@ does not state:
 concepts: {concepts}
 properties: {properties}
 
-Join them to the nodes of the sentence. For each triplet, say which concepts
-it follows from; use "from": [] when it follows from the sentence as a whole.
-The sentence is:
+Join each of them to a node of this sentence. One new concept may be joined to
+another new concept, but only once that other one is itself joined, so that
+every chain is anchored. For each triplet, say which concepts it follows from;
+use "from": [] when it follows from the sentence as a whole. The sentence is:
 {text}
 
 Reply with JSON and nothing else:

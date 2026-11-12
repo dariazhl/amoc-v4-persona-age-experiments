@@ -64,6 +64,35 @@ def _strs(raw):
             if isinstance(x, str) and x.strip()]
 
 
+def _attaching(items, present):
+    """Order `items` so each attaches to the graph, and drop the rest.
+
+    An item attaches when one endpoint is already present. Iterated to a
+    fixpoint, so a chain admitted earlier in the same sentence can extend:
+    `knight -> pursuit` anchors `pursuit`, which then lets `pursuit -> chase`
+    in. Anything still unattached when nothing more can be added is a
+    satellite, and is returned to no one.
+
+    `present` is mutated, so the caller chooses the graph this is judged
+    against: a hypothetical one (every item admitted) for the persona-free
+    candidate set, or the real one, re-read each round, for what a given
+    reader actually draws.
+    """
+    pool, out = list(items), []
+    while True:
+        moved = False
+        for c in list(pool):
+            s, o = (tuple(N.lemmas(x))
+                    for x in (c["triplet"][0], c["triplet"][2]))
+            if s in present or o in present:
+                out.append(c)
+                pool.remove(c)
+                present.update((s, o))
+                moved = True
+        if not moved:
+            return out
+
+
 class LLM:
     def __init__(self, server_url, model=C.MODEL, temperature=None):
         self.url = server_url.rstrip("/") + "/v1/chat/completions"
@@ -82,11 +111,11 @@ class LLM:
             return json.load(r)["choices"][0]["message"]["content"]
 
 
-def _validate(sentence, triplets, log=None):
+def _validate(sentence, triplets, log=None, existing=()):
     """Deterministic admission, ported from amoc/admission/. No LLM call:
     these are structural rules, identical for every reader, so they belong in
     the story analysis and cost nothing."""
-    return admit_all(triplets, log)
+    return admit_all(triplets, log, sentence=sentence, existing=existing)
 
 
 def _nodes_from_text(words):
@@ -162,7 +191,9 @@ def analyze_story(llm, cache=None):
             nodes_from_text=nft, text=sent,
             nodes_from_graph=g.nodes_str(active),
             edges_from_graph=g.edges_str(active)[0])), {}).get("triplets"))
-        triplets = _validate(sent, triplets, rejected)
+        triplets = _validate(sent, triplets, rejected,
+                             existing=[(x.src.lemma, x.label, x.dst.lemma)
+                                       for x in g.edges])
         just_added = [e for e in (g.add(s, r, o, "text", i)
                                   for s, r, o in triplets) if e]
 
@@ -204,7 +235,9 @@ def analyze_story(llm, cache=None):
                     seen.append(c)
 
         valid = _validate(sent, [c["triplet"] for c in inferred_candidates],
-                          rejected)
+                          rejected,
+                          existing=[(x.src.lemma, x.label, x.dst.lemma)
+                                    for x in g.edges])
         valid_set = {tuple(t) for t in valid}
         inferred = []
         for c in inferred_candidates:
@@ -282,23 +315,48 @@ def read(passes, llm=None, persona=None, allow_persona_words=False,
         just_added = [e for e in (g.add(s, r, o, "text", i)
                                   for s, r, o in step["triplets"]) if e]
 
-        candidates = [c for c in step["inferred"]
-                   if all(p.lower() in drawn_ever
-                          or tuple(N.lemmas(p)) in g.nodes
-                          for p in c.get("from", []))]
+        # An inferred triplet may enter only if it ATTACHES: one endpoint is
+        # already a node, so every inferred node is born connected and the
+        # graph cannot grow satellite clusters. Nothing repairs connectivity
+        # afterwards -- it is a property of admission.
+        #
+        # This replaces a `from`-provenance gate that produced exactly the
+        # wrong set. It asked whether each parent string was a node, but
+        # `from` holds free text: `knight is on pursuit` carried
+        # from=['hurried after'] -- a relation label, never a node -- and was
+        # rejected, while `pursuit is a chase` carried from=[] and `all([])`
+        # is True, so it was admitted. The anchoring inferences were dropped
+        # and the floating ones kept; {adventure, chase, pursuit} then sat
+        # off the graph from S7 to S13.
+        # Judged against the MAIN component, not merely "some node". A node
+        # that is itself off the main graph must not be allowed to anchor a
+        # cluster onto itself: at S3 that is what grew {cave, dragon, fire,
+        # legend} out of the stranded `dragon`. Main-component attachment
+        # leaves `dragon` alone until the text relates it to something
+        # (S4), and scored better on the reference besides (mean rho .822 vs
+        # .813 over the 13 sentences).
+        comps = g.components()
+        main = {n.key for n in comps[0]} if comps else set()
+        candidates = _attaching(step["inferred"], main)
         if persona is None:
             drawn, said = candidates, None
         else:
             drawn, said = _select_reader_inferences(llm, persona, step["sentence"], candidates,
                                  allow_persona_words)
-        for c in drawn:
+
+        # Re-checked against the graph as it ACTUALLY is, because a reader who
+        # declines an anchor must not receive its children: inference depth is
+        # persona-dependent, and no reader can end up with a satellite.
+        added = _attaching(drawn, {n.key for n in comps[0]} if comps else set())
+        stranded = len(drawn) - len(added)
+        for c in added:
             s, r, o = c["triplet"]
             e = g.add(s, r, o, "inferred", i)
             if e:
                 just_added.append(e)
             drawn_ever.update((s.lower(), o.lower()))
         counts.append({"candidates": len(candidates), "drawn": len(drawn),
-                       "said": said})
+                       "stranded": stranded, "said": said})
 
         stated_keys = [tuple(k) for k in step["stated"]]
         g.refresh_scores(stated_keys)

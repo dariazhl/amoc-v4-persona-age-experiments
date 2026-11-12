@@ -150,6 +150,13 @@ class Graph:
         return None
 
     def add(self, subj, rel, obj, source, sentence):
+        # Decide the edge is possible BEFORE creating either node. Creating
+        # them first and then bailing on `s is o` left the node behind with no
+        # edge -- a self-loop silently minted an orphan, which is the one way
+        # an unconnected node could still enter the graph.
+        ks, ko = tuple(N.lemmas(subj)), tuple(N.lemmas(obj))
+        if not ks or not ko or ks == ko:
+            return None
         s = self.node(subj, source, sentence)
         o = self.node(obj, source, sentence)
         if s is None or o is None or s is o:
@@ -162,6 +169,50 @@ class Graph:
         s.edges.append(e)
         o.edges.append(e)
         return e
+
+    # -- connectivity ----------------------------------------------------
+    def components(self):
+        """Connected components over EVERY edge, active or not.
+
+        This is the figure's own definition: plot.draw() renders a decayed
+        edge in pale grey, so a node hanging off a grey line is still joined
+        to the graph on screen. Activation does NOT use this -- distances()
+        walks active edges only, so a grey line keeps a concept visible
+        without feeding it score.
+
+        The invariant is one component. A cluster of two or more nodes off
+        on its own is always a bug upstream. A SINGLE stated node may briefly
+        stand alone, when the sentence states a concept and the model gives it
+        no relationship -- "Suddenly, a dragon appeared.": one content word,
+        an intransitive verb. Tolerated, not wanted; carry-over plus the
+        hub-first prompt exist to make even that case attach.
+
+        It is tolerated rather than deleted because `dragon` is S3's only
+        stated word: dropping nodes that have no edge does make every sentence
+        connected, but it leaves activation nothing to seed from and takes the
+        whole S3 column to zero (rho .421 -> .000, mean .822 -> .790).
+
+        Nothing repairs the graph after the fact. Connectivity is a property
+        of what is admitted (Graph.add, admission.admit_all, the attachment
+        rule in engine._attaching) and of what the model can see when it is
+        asked (Graph.active_nodes' carry-over), never of a repair pass.
+        """
+        seen, out = set(), []
+        for n in self.nodes.values():
+            if n in seen:
+                continue
+            stack, comp = [n], []
+            seen.add(n)
+            while stack:
+                cur = stack.pop()
+                comp.append(cur)
+                for e in cur.edges:
+                    nxt = e.other(cur)
+                    if nxt not in seen:
+                        seen.add(nxt)
+                        stack.append(nxt)
+            out.append(comp)
+        return sorted(out, key=lambda c: (-len(c), min(x.lemma for x in c)))
 
     def begin_sentence(self):
         for e in self.edges:
@@ -268,11 +319,32 @@ class Graph:
 
     # -- prompt context (v4 feeds these to the LLM) ----------------------
     def active_nodes(self, threshold=None, only_text=False):
-        """v4's get_active_nodes: score <= threshold."""
+        """v4's get_active_nodes (score <= threshold), plus v5's carry-over.
+
+        The score is BFS distance from what THIS sentence states, so a
+        concept the sentence does not reach scores 100 and drops out. For an
+        unattached node that is a trap: everything else is unreachable from
+        it, so the prompt shows it alone with no edges and the model has
+        nothing to attach it to -- which is why `dragon` could never be
+        joined to `knight` at S3, whatever the prompt said.
+
+        Carry-over tops the list up with the most recently stated nodes
+        regardless of reach, so the story's backbone stays on the page.
+        """
         t = C.PROMPT_MAX_DISTANCE if threshold is None else threshold
         sc = self._last_scores or {}
-        return [n for n, s in sorted(sc.items(), key=lambda kv: kv[1])
+        near = [n for n, s in sorted(sc.items(), key=lambda kv: kv[1])
                 if s <= t and (not only_text or n.source == "text")]
+        if not C.MAX_CARRYOVER_NODES:
+            return near
+        seen = set(near)
+        pool = [n for n in self.nodes.values()
+                if n not in seen and (not only_text or n.source == "text")]
+        # most recently stated first, then best connected -- v5 ranks this
+        # with CARRYOVER_SENIORITY_WEIGHT; recency then degree is the same
+        # order and needs no extra constant.
+        pool.sort(key=lambda n: (-n.last_stated, -len(n.edges), n.lemma))
+        return near + pool[:C.MAX_CARRYOVER_NODES]
 
     _last_scores = None
     _last_stated = None

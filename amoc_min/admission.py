@@ -72,7 +72,23 @@ def _has_verb(rel):
     return any(t.pos_ in ("VERB", "AUX") for t in N.nlp()(r))
 
 
-def admit(subj, rel, obj):
+def _is_adjective_here(word, sentence):
+    """Is this word an adjective IN THIS SENTENCE?
+
+    Judging the bare word misfires: spaCy tags a lone `rescue` as ADJ, which
+    rejected four good triplets in the nov_11 run. v5 runs this check with the
+    sentence available; without one we decline to judge rather than guess.
+    """
+    if not sentence:
+        return False
+    w = normalize(word)
+    for t in N.nlp()(str(sentence)):
+        if t.lemma_.lower() == w or t.text.lower() == w:
+            return t.pos_ == "ADJ"
+    return False
+
+
+def admit(subj, rel, obj, sentence=""):
     """Returns (ok, reason, triplet). Reason is "" when admitted; the triplet
     is normalised, with the relation rewritten onto `is` where applicable."""
     s, r, o = normalize(subj), canonical_relation(rel), normalize(obj)
@@ -93,22 +109,54 @@ def admit(subj, rel, obj):
         return False, f"vague relation '{r}' -- be more specific", tri
     if not _has_verb(r):
         return False, f"relation '{r}' contains no verb", tri
-    if N.node_type_of(s) == "property" and r not in COPULAS:
+    if r not in COPULAS and _is_adjective_here(s, sentence):
         return False, f"adjective '{s}' cannot be the subject of '{r}'", tri
     return True, "", tri
 
 
-def admit_all(triplets, log=None):
-    """Filter a list of [s, r, o], normalising as it goes."""
-    kept = []
+def admit_all(triplets, log=None, sentence="", existing=()):
+    """Filter a list of [s, r, o], normalising as it goes.
+
+    Connectivity beats admission. A triplet that fails the rules is rescued
+    anyway when it is the only thing attaching a concept to the rest of the
+    graph -- v5 tracks the same idea as `was_connectivity_critical`, and
+    repairs it with FORCED_CONNECTIVITY_EDGE. Every one of the 7 rejections in
+    the nov_11 run was connectivity-critical: `knight has armor` was dropped
+    as vague and left `armor`/`scorched` permanently severed from the knight.
+
+    `existing` is the edges already in the graph, as (s, r, o).
+    Self-loops are never rescued: they connect nothing.
+    """
+    import networkx as nx
+
+    kept, deferred = [], []
     for t in triplets:
         if not (isinstance(t, (list, tuple)) and len(t) == 3):
             continue
-        s, r, o = t
-        ok, why, tri = admit(s, r, o)
+        ok, why, tri = admit(t[0], t[1], t[2], sentence)
         if ok:
             if tri not in kept:
                 kept.append(tri)
+        else:
+            deferred.append((tri, why, list(t)))
+
+    g = nx.Graph()
+    g.add_edges_from((s, o) for s, _, o in existing)
+    g.add_edges_from((s, o) for s, _, o in kept)
+
+    for tri, why, orig in deferred:
+        s, _, o = tri
+        if s == o:                               # a self-loop joins nothing
+            if log is not None:
+                log.append({"triplet": orig, "reason": why})
+            continue
+        isolated = (s not in g or o not in g or not nx.has_path(g, s, o))
+        if isolated and tri not in kept:
+            kept.append(tri)
+            g.add_edge(s, o)
+            if log is not None:
+                log.append({"triplet": orig, "reason": why,
+                            "rescued": "connectivity-critical"})
         elif log is not None:
-            log.append({"triplet": list(t), "reason": why})
+            log.append({"triplet": orig, "reason": why})
     return kept
