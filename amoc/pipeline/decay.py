@@ -114,6 +114,8 @@ class Decay:
             self._last_context_shift = False
             return []
 
+        self.log_score_matches(decay_candidates, edge_to_triplet, scores)
+
         self._last_context_shift = context_shift
         if context_shift:
             logging.info(
@@ -309,6 +311,23 @@ class Decay:
             result.get("reasoning", ""),
             bool(result.get("context_shift", False)),
         )
+
+    def log_score_matches(self, decay_candidates, edge_to_triplet, scores):
+        sent = {edge_to_triplet[e] for e in decay_candidates}
+        matched = [k for k in scores if k in sent]
+        unmatched = [k for k in scores if k not in sent]
+        counts = {0: 0, 1: 0, 2: 0, "other": 0}
+        for k in matched:
+            score = self.normalize_score(scores[k])
+            counts[score if score in (0, 1, 2) else "other"] += 1
+        logging.info(
+            f"DECAY_SCORES S{self._current_sentence_index}: candidates={len(sent)} "
+            f"returned={len(scores)} matched={len(matched)} "
+            f"missing_default_2={len(sent) - len(matched)} "
+            f"score0={counts[0]} score1={counts[1]} score2={counts[2]} other={counts['other']} "
+            f"unmatched_keys={unmatched[:5]}"
+        )
+        return len(matched), counts
 
     def normalize_score(self, score):
         try:

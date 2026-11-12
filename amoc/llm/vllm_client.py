@@ -538,4 +538,4 @@ class VLLMClient:
         )
         prompt = with_strong_block(prompt, READER_MEMORY_BLOCK)
         response = self.call_vllm(prompt, persona)
-        return parse_for_dict(response)
+        return parse_for_dict_lenient(response)
