@@ -1,0 +1,217 @@
+"""Prompts. v4's set, plus READER_INFERENCES -- the one place the persona acts.
+
+v4's wording is kept close, with two changes: output is JSON rather than
+eval'd Python, and the inference stage is told it may build on an earlier
+inference (v4 had no chaining).
+
+Deliberately absent: the August frame's "Persona (for focus only, do not add
+extra concepts)", which forbade the persona from touching the inference step
+and produced rho = +0.03 between persona level and inference rate.
+
+EXTRACT, INFER_* and SELECT_RELEVANT_EDGES never see the persona.
+"""
+
+_GRAPH = """I also have the current knowledge graph.
+Nodes (with their type, and a score of how central they are in the story;
+0 is most central, 1 less central, and so on):
+{nodes_from_graph}
+Edges (relationships between the nodes):
+{edges_from_graph}
+"""
+
+_HEAD = """I want to build a knowledge graph from a story. The graph has two \
+kinds of node: CONCEPT nodes, which are the objects and persons of the story \
+and are usually nouns, and PROPERTY nodes, which describe concepts and are \
+usually adjectives. An edge joins a concept to a concept, or a concept to a \
+property, and is labelled with the relationship between them.
+
+I already extracted the nodes of the current sentence, and you should use these:
+{nodes_from_text}
+"""
+
+# -- 1. relationships stated in the text ---------------------------------
+RELATIONSHIPS = _HEAD + _GRAPH + """
+Give the relationships between the nodes of this sentence, and between those
+nodes and the graph's nodes (prefer the more central ones). The sentence is:
+{text}
+
+Reply with JSON and nothing else:
+{{"triplets": [["subject", "relation", "object"]]}}"""
+
+RELATIONSHIPS_FIRST = _HEAD + """
+Give the relationships between the nodes of this sentence. The sentence is:
+{text}
+
+Reply with JSON and nothing else:
+{{"triplets": [["subject", "relation", "object"]]}}"""
+
+# -- 2. inference, stage one: what the text supports ----------------------
+INFER_OBJECTS = _HEAD + _GRAPH + """
+Concepts already inferred earlier in the story: {inferred_so_far}
+
+Name concepts and properties that are NOT written in the text but that the
+text supports -- things necessarily or very probably true given what is
+stated, which a reader could connect to the story. An inference may build on
+an EARLIER INFERENCE rather than on the text directly: if a reader has already
+inferred that the knight carries a sword, they may infer what follows from the
+sword. Do not name anything that contradicts the text.
+
+Do NOT repeat any of the extracted nodes listed above, and do not use any word
+that appears in the sentence.
+
+Example: for "A girl walked to the old mill." good answers are concepts like
+"river", "wheel", "flour" and properties like "curious", "quiet"; "girl",
+"mill" and "old" are NOT allowed, because they are already in the text.
+
+The sentence is:
+{text}
+
+Reply with JSON and nothing else:
+{{"concepts": ["..."], "properties": ["..."]}}"""
+
+INFER_OBJECTS_FIRST = _HEAD + """
+Name concepts and properties that are NOT written in the text but that the
+text supports -- things necessarily or very probably true given what is
+stated. Do not name anything that contradicts the text.
+
+Do NOT repeat any of the extracted nodes listed above, and do not use any word
+that appears in the sentence.
+
+Example: for "A girl walked to the old mill." good answers are concepts like
+"river", "wheel", "flour" and properties like "curious", "quiet"; "girl",
+"mill" and "old" are NOT allowed, because they are already in the text.
+
+The sentence is:
+{text}
+
+Reply with JSON and nothing else:
+{{"concepts": ["..."], "properties": ["..."]}}"""
+
+# -- 3. inference, stage two: connect them --------------------------------
+INFER_RELATIONSHIPS = _HEAD + _GRAPH + """
+And these additional concepts and properties, which the text supports but
+does not state:
+concepts: {concepts}
+properties: {properties}
+
+Join them to the nodes of the sentence, and to each other where that follows.
+For each triplet, say which concepts it follows from, using words from the
+sentence or from the inferred list above; use "from": [] when it follows from
+the sentence as a whole. The sentence is:
+{text}
+
+Reply with JSON and nothing else:
+{{"inferences": [{{"triplet": ["subject", "relation", "object"],
+                  "from": ["..."]}}]}}"""
+
+INFER_RELATIONSHIPS_FIRST = _HEAD + """
+And these additional concepts and properties, which the text supports but
+does not state:
+concepts: {concepts}
+properties: {properties}
+
+Join them to the nodes of the sentence. For each triplet, say which concepts
+it follows from; use "from": [] when it follows from the sentence as a whole.
+The sentence is:
+{text}
+
+Reply with JSON and nothing else:
+{{"inferences": [{{"triplet": ["subject", "relation", "object"],
+                  "from": ["..."]}}]}}"""
+
+# -- 3b. triplet validation (persona-FREE: a malformed triplet is malformed
+# for every reader, so this runs once in the story analysis and never skews
+# the shared text backbone). v5's VALIDATE_TRIPLET_PROMPT rules 1-5; rule 6
+# (no inferred-to-inferred) is deliberately omitted because chaining is on.
+VALIDATE_TRIPLETS = """You are checking candidate relationships for a knowledge
+graph, drawn from this sentence:
+"{sentence}"
+
+{triplets}
+
+Judge each one by these rules, in order:
+1. THE RELATION MUST BE A VERB or verb phrase.
+   valid: "wrote", "is", "wears", "rode through"   invalid: "traditional", "none"
+2. NO CIRCULAR RELATIONSHIPS: the object must not be the nominalised form of
+   the verb.  valid: (knight, unites, tribes)   invalid: (knight, unites, unification)
+3. ACTION VERBS REQUIRE NOUN OBJECTS.
+   valid: (knight, wears, armor)   invalid: (knight, wears, scorched)
+4. COPULAS MAY TAKE ADJECTIVES: "is", "was", "became", "seemed" may link to one.
+   valid: (knight, is, young)
+5. NO VAGUE RELATIONS: reject "relates to", "associated with", "connected to",
+   "involves", "concerns", "pertains to".
+   valid: (knight, fought, dragon)   invalid: (knight, relates to, dragon)
+
+Reply with JSON and nothing else, one entry per number:
+{{"judgements": [{{"n": <number>, "valid": true/false,
+                  "reason": "short", "corrected": ["subject","relation","object"] or null}}]}}"""
+
+INFERENCE_NUDGE = """
+
+Your previous answer added nothing: it was empty, or it only repeated words
+already in the sentence ({previous}). Answer again, with concepts and
+properties that a reader brings to the sentence from their own knowledge and
+that do NOT appear in it."""
+
+# -- 4. which edges stay in mind (v4's reactivate_relevant_edges) ---------
+SELECT_RELEVANT_EDGES = """These are the edges of a knowledge graph, in the
+form: node - relation (edge) - node. They are numbered.
+
+{edges}
+
+Say which of them are related to, support, or contradict the following text.
+The text is:
+{text}
+
+Also say whether the current text marks a context shift for the story as a
+whole -- a new scene, a new time, a new topic, or a new set of characters,
+such that much of the established context no longer applies.
+
+Reply with JSON and nothing else:
+{{"relevant": [<number>, <number>], "context_shift": true/false,
+  "reasoning": "one short sentence on what is no longer relevant"}}"""
+
+# -- 5. the persona's inference reader inferences ----------------------------------
+READER_INFERENCES = """You are modelling one specific reader.
+
+Reader: {persona}
+
+Current sentence: "{sentence}"
+
+The text supports these inferred relationships here:
+{candidates}
+
+Take each one on its own and say whether THIS reader makes that connection
+while reading this sentence. Judge from the reader's age, education,
+vocabulary and background knowledge. There is no target number: judge each
+one on its own merits.
+{guidance}
+Reply with JSON and nothing else, one entry per number:
+{{"judgements": [{{"n": <number>, "makes": true/false}}]}}"""
+
+# Two ways to describe how readers differ. NEUTRAL names the dimension without
+# prescribing which way it runs, so an effect is the model's own reasoning
+# about readers rather than compliance with the instruction -- defensible, but
+# it may measure nothing. DIRECTIONAL states the direction, as v5's
+# STRONG_LEVEL_BLOCK does; it will produce a larger effect that is harder to
+# argue is not simply the instruction being followed. Set READER_GUIDANCE.
+GUIDANCE = {
+    "neutral": """Readers differ in how far they carry a text: some stay close
+to what is stated, others draw less obvious connections and build on
+inferences they have already made.
+""",
+    "directional": """A younger or less experienced reader makes fewer, more
+concrete inferences; an older or more experienced reader makes more, and more
+abstract ones, and builds further inferences on the ones already made.
+""",
+    "none": "",
+}
+
+# -- 6. pronoun resolution (v4 ran the knight story with this off) --------
+REPLACE_PRONOUNS = """Replace the pronouns "he, she, they" with the persons or
+nouns from the text that they refer to. Sometimes there is no such reference
+and you should leave them as they are. Do not invent names; they must be in
+the text. The text is:
+{text}
+
+Reply with the rewritten text and nothing else."""

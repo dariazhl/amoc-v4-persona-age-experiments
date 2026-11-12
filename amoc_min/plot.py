@@ -1,0 +1,147 @@
+"""Figure rendering for amoc_min.
+
+Carries the original AMoC plot's text -- persona, sentence, explicit /
+carry-over / inactive nodes -- but one font,
+four type sizes, a muted palette, thin links and no boxes or rotated text.
+
+The layout is computed ONCE from the union of every triplet the story can
+produce, so node positions never move between sentences and the thirteen
+frames read as one animation.
+
+    deep blue    concept stated in the text
+    amber        concept the reader inferred
+    pale grey    in memory but not active
+"""
+import math
+import textwrap
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.patheffects as pe      # noqa: E402
+import matplotlib.pyplot as plt          # noqa: E402
+import networkx as nx                    # noqa: E402
+
+FONT = ["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"]
+INK, MUTED, FAINT = "#1F2933", "#7B8794", "#B6BFCA"
+TEXT_FILL, TEXT_EDGE = "#CFE0F0", "#5B8BB8"
+INFER_FILL, INFER_EDGE = "#F8E3B6", "#C99A3B"
+OFF_FILL, OFF_EDGE = "#F2F4F6", "#E1E5EA"
+LINK, LINK_OFF = "#5B6B7F", "#E6E9ED"
+RULE = "#E8EBEF"
+
+
+def layout(all_triplets, seed=7):
+    """One layout for the whole story, from every triplet that can appear."""
+    g = nx.Graph()
+    for s, _, o in all_triplets:
+        g.add_edge(s, o)
+    if not g:
+        return {}
+    pos = nx.spring_layout(g, seed=seed, k=1.9 / math.sqrt(max(len(g), 2)),
+                           iterations=600)
+    xs = [p[0] for p in pos.values()]
+    ys = [p[1] for p in pos.values()]
+    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    # Fit to a 16:9 box rather than a square, so the graph fills the width.
+    # Scaling x and y independently is fine: aspect="equal" is applied to the
+    # axes, so node circles stay circular whatever the layout aspect.
+    sx = (max(xs) - min(xs)) or 1.0
+    sy = (max(ys) - min(ys)) or 1.0
+    return {n: ((x - cx) / sx * 1.50, (y - cy) / sy * 0.78)
+            for n, (x, y) in pos.items()}
+
+
+def _field(ax, y, label, items, width=92):
+    """'Label: a, b, c', wrapped and hanging-indented."""
+    value = ", ".join(items) if items else "none"
+    lines = textwrap.wrap(f"{label}: {value}", width=width,
+                          subsequent_indent=" " * (len(label) + 2)) or [label]
+    for n, line in enumerate(lines):
+        ax.annotate(line, (0.0, y - n * 0.027), xycoords="axes fraction",
+                    fontsize=7.6, color=MUTED, ha="left", va="top",
+                    family="monospace" if False else None)
+    return y - 0.027 * len(lines) - 0.008
+
+
+def draw(path, pos, nodes, edges, sentence_no, sentence, persona, model,
+         explicit, carryover, inactive):
+    """nodes: {lemma: ("text"|"inferred"|"off", activation)}
+       edges: [(src, label, dst, active)]
+
+    The active-triplet list is no longer drawn: it duplicates triplets_<tag>.csv
+    and cost the graph a fifth of the canvas."""
+    plt.rcParams.update({"font.family": FONT, "axes.linewidth": 0})
+    fig, ax = plt.subplots(figsize=(13.2, 8.0), dpi=200)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    # ---- graph ----------------------------------------------------------
+    for s, label, o, active in edges:
+        if s not in pos or o not in pos:
+            continue
+        (x1, y1), (x2, y2) = pos[s], pos[o]
+        ax.plot([x1, x2], [y1, y2], lw=1.3 if active else 0.7,
+                color=LINK if active else LINK_OFF,
+                solid_capstyle="round", zorder=1)
+        if active and label:
+            dx, dy = x2 - x1, y2 - y1
+            n = math.hypot(dx, dy) or 1.0
+            ox, oy = -dy / n * 0.018, dx / n * 0.018
+            ax.annotate(label, ((x1 + x2) / 2 + ox, (y1 + y2) / 2 + oy),
+                        fontsize=6.6, color=MUTED, ha="center", va="center",
+                        zorder=3, path_effects=[
+                            pe.withStroke(linewidth=2.4, foreground="white")])
+
+    for lemma, (kind, score) in nodes.items():
+        if lemma not in pos:
+            continue
+        x, y = pos[lemma]
+        fill, line, ink = {
+            "text": (TEXT_FILL, TEXT_EDGE, INK),
+            "inferred": (INFER_FILL, INFER_EDGE, INK),
+            "off": (OFF_FILL, OFF_EDGE, FAINT),
+        }[kind]
+        r = 0.030 + 0.011 * (score / 5.0)
+        ax.add_patch(plt.Circle((x, y), r, facecolor=fill, edgecolor=line,
+                                linewidth=1.1 if kind != "off" else 0.8,
+                                zorder=4))
+        ax.annotate(lemma, (x, y + r + 0.020), fontsize=8.2, color=ink,
+                    ha="center", va="bottom", zorder=5)
+
+    # ---- header ---------------------------------------------------------
+    ax.annotate(f"AMoC knowledge graph · {model}", (0, 1.135),
+                xycoords="axes fraction", fontsize=7.6, color=FAINT,
+                ha="left", va="bottom")
+    ax.annotate(f"Sentence {sentence_no}: {sentence}", (0, 1.060),
+                xycoords="axes fraction", fontsize=12.5, color=INK,
+                ha="left", va="bottom")
+    ax.annotate(f"Persona: {persona}", (0, 1.018), xycoords="axes fraction",
+                fontsize=8.4, color=MUTED, ha="left", va="bottom")
+
+    for k, (lab, fill, line) in enumerate([("explicit", TEXT_FILL, TEXT_EDGE),
+                                           ("inferred", INFER_FILL, INFER_EDGE),
+                                           ("in memory", OFF_FILL, OFF_EDGE)]):
+        x = 0.655 + k * 0.118
+        ax.add_patch(plt.Circle((x, 1.030), 0.009, facecolor=fill,
+                                edgecolor=line, linewidth=1.0,
+                                transform=ax.transAxes, clip_on=False, zorder=6))
+        ax.annotate(lab, (x + 0.013, 1.030), xycoords="axes fraction",
+                    fontsize=7.2, color=MUTED, ha="left", va="center")
+
+    # ---- footer ---------------------------------------------------------
+    y = -0.045
+    y = _field(ax, y, "Explicit this sentence", explicit)
+    y = _field(ax, y, "Carry-over from previous sentences", carryover)
+    y = _field(ax, y, "Inactive nodes (retained in memory)", inactive)
+
+    px = [p[0] for p in pos.values()] or [0]
+    py = [p[1] for p in pos.values()] or [0]
+    m = 0.11
+    ax.set_xlim(min(px) - m, max(px) + m)
+    ax.set_ylim(min(py) - m, max(py) + m * 1.3)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    fig.savefig(path, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return path
