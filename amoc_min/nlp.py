@@ -44,9 +44,19 @@ def nlp():
     return _NLP
 
 
+@lru_cache(maxsize=8192)
+def _lemmas(text):
+    return tuple(t.lemma_.lower() for t in nlp()(str(text)) if not t.is_space)
+
+
 def lemmas(text):
-    """v4's get_concept_lemmas: the lemma of every token, as the node key."""
-    return [t.lemma_.lower() for t in nlp()(str(text)) if not t.is_space]
+    """v4's get_concept_lemmas: the lemma of every token, as the node key.
+
+    Memoised: a string's lemmas never change, and this is called once per node
+    per sentence per reader -- the same few hundred surface forms, over and
+    over. Returns a fresh list each time so callers cannot mutate the cache.
+    """
+    return list(_lemmas(str(text)))
 
 
 def is_content_word(token):

@@ -12,6 +12,7 @@ import os
 
 import pytest
 
+from . import config as C
 from . import engine
 from .graph import Graph
 
@@ -91,6 +92,30 @@ def test_attachment_is_to_the_main_component_not_any_node():
     # ... whereas "any node" would have let it in
     assert engine._attaching([tri("dragon", "lives in", "cave")],
                              set(g.nodes)) != []
+
+
+# -- carry-over ----------------------------------------------------------
+def test_a_concept_survives_a_sentence_that_cannot_reach_it():
+    """"Suddenly, a dragon appeared." states one peripheral word.
+
+    Activation is seeded only from what a sentence states, so without
+    carry-over every other concept drops to 0 the moment a sentence names
+    something far from them -- `knight` fell 5.0 -> 0.0 at S3 where the
+    reference holds it at 2.5. Carry-over is what the reader still has in
+    mind, and it is the only thing that can produce that 2.5: no distance
+    rule reaches `knight` from `dragon`.
+    """
+    g = Graph()
+    g.add("knight", "rode through", "forest", "text", 1)
+    hist = {}
+    # S1 and S2 state `knight`; S3 states only `dragon`, which is not even
+    # in this graph, so nothing is reachable at all
+    for i, stated in enumerate([[("knight",)], [("knight",)], [("dragon",)]], 1):
+        col = g.activation(stated, i, hist)
+        for k in set(hist) | set(col):
+            hist.setdefault(k, []).append(col.get(k, 0.0))
+    assert col.get("knight") == pytest.approx(2.5), col
+    assert C.CARRYOVER_DECAY > 0, "set CARRYOVER_DECAY=0 to disable"
 
 
 # -- the invariant, on the real run --------------------------------------

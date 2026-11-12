@@ -48,9 +48,11 @@ def ride_at_s3(relevance, drop_to=None):
 
 def test_text_rule_ages_when_the_word_is_absent(ageing):
     ageing(C.AGEING_TEXT)
-    # `ride` is stated at S1 and not after, so by S3 it has aged two
-    # sentences: 5 - SENIORITY_WEIGHT * 2 = 1.0
-    assert ride_at_s3(relevance=2) == pytest.approx(1.0)
+    # `ride` is stated at S1 and not after. Ageing alone would put it at
+    # 5 - SENIORITY_WEIGHT * 2 = 1.0 by S3, but carry-over holds it higher:
+    # S2 was 3.0, so half of that (1.5) wins. Carry-over sets the floor under
+    # ageing; it never drops a token faster.
+    assert ride_at_s3(relevance=2) == pytest.approx(1.5)
 
 
 def test_llm_rule_keeps_a_relation_the_model_still_calls_relevant(ageing):
@@ -62,8 +64,9 @@ def test_llm_rule_keeps_a_relation_the_model_still_calls_relevant(ageing):
 
 def test_llm_rule_ages_a_relation_the_model_has_let_go(ageing):
     ageing(C.AGEING_LLM)
-    # scored 2 at S1, dropped to FADING at S2: it ages from S1 like any other
-    assert ride_at_s3(relevance=2, drop_to=1) == pytest.approx(1.0)
+    # scored 2 at S1, dropped to FADING at S2: it ages from S1 like any
+    # other, and lands on the same carry-over floor as the text rule
+    assert ride_at_s3(relevance=2, drop_to=1) == pytest.approx(1.5)
 
 
 def test_the_two_rules_disagree(ageing):
@@ -78,3 +81,49 @@ def test_the_two_rules_disagree(ageing):
 def test_flag_names_exist_for_run_py_to_select_between():
     assert {C.AGEING_TEXT, C.AGEING_LLM} == {"text", "relevance"}
     assert C.RELATION_AGEING == C.AGEING_TEXT, "text must stay the default"
+
+
+# -- the flag must move CONCEPT rows, not just relation rows ---------------
+def forest_at_s3(relevance, mode):
+    """Activation of the CONCEPT `forest` at S3.
+
+    `forest` is stated at S1 and never again. S2 and S3 state only `knight`.
+    Under the text rule it therefore ages out. Under the llm rule it is held
+    up for as long as the model keeps calling the knight-forest relation
+    CONTINUOUS -- that is the whole point of the flag.
+    """
+    C.RELATION_AGEING = mode
+    g = Graph()
+    e = g.add("knight", "rode through", "forest", "text", 1)
+    e.relevance = relevance
+    hist, col = {}, {}
+    for i, stated in enumerate([[("knight",), ("forest",)],
+                                [("knight",)], [("knight",)]], 1):
+        col = g.activation(stated, i, hist, sentence_lemmas=["knight"])
+        for k in set(hist) | set(col):
+            hist.setdefault(k, []).append(col.get(k, 0.0))
+    return col.get("forest", 0.0)
+
+
+def test_llm_rule_holds_a_concept_the_model_still_calls_relevant(ageing):
+    ageing(C.AGEING_LLM)
+    # the model says the relation is still current, so the concept is too
+    # one hop from the stated `knight`, age held at 0: 5 - 0.5*1 - 2*0
+    assert forest_at_s3(relevance=2, mode=C.AGEING_LLM) == pytest.approx(4.5)
+
+
+def test_llm_rule_lets_a_concept_go_when_the_model_does(ageing):
+    ageing(C.AGEING_LLM)
+    # FADING, not continuous: the model is no longer holding it up
+    assert forest_at_s3(relevance=1, mode=C.AGEING_LLM) < 5.0
+
+
+def test_the_flag_moves_concept_rows_not_only_relation_rows(ageing):
+    """The regression this fixes: the flag used to touch only the 7 relation
+    labels among the reference's 20 tokens, leaving every concept row scored
+    by surface mentions whichever rule was selected."""
+    out = {}
+    for mode in (C.AGEING_TEXT, C.AGEING_LLM):
+        ageing(mode)
+        out[mode] = forest_at_s3(relevance=2, mode=mode)
+    assert out[C.AGEING_TEXT] != out[C.AGEING_LLM], out

@@ -17,7 +17,6 @@ OUT       = HERE / "runs"
 SPACY_MODEL  = "en_core_web_lg"   # falls back to _md then _sm
 CONTENT_POS  = ("NOUN", "PROPN", "ADJ")   # v4: is_content_word_and_non_stopword
 SIMILARITY   = 0.8                # v4: Edge.similarity_threshold
-NR_RELEVANT_EDGES = 15            # v4: how many edges the LLM may reactivate
 CONTEXT_LENGTH    = 1             # v4: sentences of context for reactivation
 RESOLVE_PRONOUNS  = False         # v4 ran the knight story with this off
 
@@ -55,7 +54,6 @@ SENTENCES = [
 # multiplicative (x0.5 dominant, x0.6/x0.8 observed), never subtractive --
 # the smallest drop anywhere in the reference is -1.0, so DECAY_STEP=1 on a
 # 0-2 scale could not reproduce it. Anything landing under FLOOR goes to 0.
-ACTIVATION_FULL     = 5.0   # concept stated in the current sentence
 INFERRED_ACTIVATION = 2.0   # concept inferred, not stated (ref: horse=2, sword=2, fire=3)
 SCORE_PER_HOP       = 0.5   # score = 5 - SCORE_PER_HOP * BFS distance.
                             # The AMoC v4 notebook contains no matrix code at
@@ -81,11 +79,19 @@ PROMPT_MAX_DISTANCE = 2     # v4's MAX_DISTANCE_FROM_ACTIVE_NODES: how many
                             # hops of graph context to show the LLM. Keep at
                             # v4's value -- raising it changes generation and
                             # inflates every prompt.
-MATRIX_MAX_DISTANCE = 2     # activation cutoff. score = 5 - 0.5*d, so 2 can
+MATRIX_MAX_DISTANCE = 1     # activation cutoff. score = 5 - 0.5*d, so 2 can
                             # only ever emit {5, 4.5, 4} -- which is exactly
                             # what the nov_11 matrix contained. 8 is the
                             # Kept at 2 so the matrix stays sparse: the value
                             # range comes from SENIORITY, not from distance.
+# Why 1 and not 0 or 2, measured on the knight story against the reference:
+#   0  rho +0.891, density error 4.8 -- but NO inferred concept ever reaches
+#      the matrix (horse, sword, fire all vanish), so the persona, which acts
+#      only through which inferences a reader draws, becomes unmeasurable.
+#   1  rho +0.913, density error 13.1   <- chosen
+#   2  rho +0.913, density error 15.2 -- identical accuracy, denser matrix.
+# 1 and 2 score the same, so 2 bought nothing but rows.
+
 COST_CONTINUOUS     = 1     # v5 NARRATIVE_RELEVANCE score 2
 COST_FADING         = 2     # score 1; score 0 makes the edge untraversable
 # How a relation label's age is reset.
@@ -104,6 +110,28 @@ RELATION_AGEING     = "text"
 # The two names the flag chooses between. Kept here so nothing else in the
 # codebase spells the strings out.
 AGEING_TEXT, AGEING_LLM = "text", "relevance"
+
+# Carry-over: what the reader still holds from the previous sentence.
+#
+# Without this, activation is recomputed each sentence purely as distance from
+# the words that sentence states, so a sentence naming one peripheral concept
+# flattens the graph. "Suddenly, a dragon appeared." states only `dragon`, and
+# everything else has to be within MATRIX_MAX_DISTANCE of it -- `knight` fell
+# from 5.0 to 0.0 at S3 while the reference holds it at 2.5. That 2.5 is
+# decayed carry-over; no distance rule can reach it from `dragon`.
+#
+# v5 spells this MAX_CARRYOVER / CARRYOVER_SENIORITY_WEIGHT. Here it is the
+# Landscape Model's own recurrence: a concept keeps a fraction of what it had,
+# and the fresh distance-based score competes with it (whichever is higher).
+# Set CARRYOVER_DECAY = 0 to recover the old behaviour exactly.
+CARRYOVER_DECAY     = 0.5   # fraction retained per sentence
+CARRYOVER_FLOOR     = 1.0   # anything decaying below this is forgotten (-> 0)
+
+# The reference's non-zero values are {1, 1.5, 2, 2.5, 3, 4, 5} -- it never
+# emits anything below 1. Seniority leaves fractional dribbles (country 0.5 at
+# S4, beautiful 0.5 at S6) that the Landscape Model has no equivalent for, so
+# anything under this is forgotten rather than reported.
+ACTIVATION_FLOOR    = 1.0
 
 SENIORITY_WEIGHT    = 2.0   # v5's CARRYOVER_SENIORITY_WEIGHT. With distance
                             # capped at 2, this is what produces the value

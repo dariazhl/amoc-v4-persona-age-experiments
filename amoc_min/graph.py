@@ -270,20 +270,37 @@ class Graph:
         # `rode` never aged and sat at 5 for eleven sentences where the
         # reference has it dead by S4.
         lemmas = set(sentence_lemmas)
+        llm_rule = C.RELATION_AGEING == C.AGEING_LLM
         for e in self.edges:
             key = N.relation_key(e.label)
-            if C.RELATION_AGEING == "relevance":
-                if e.relevance >= 2:         # option C -- not the default yet
+            if llm_rule:
+                # The model still calls this relation CONTINUOUS, so it is
+                # still in mind however long ago its word last appeared.
+                if e.active and e.relevance >= 2:
                     self._last_stated[key] = sentence
-            elif key in lemmas:              # option B (default)
+            elif key in lemmas:              # the text rule (default)
                 self._last_stated[key] = sentence
+
+        if llm_rule:
+            # ...and so are the concepts it joins. Without this the flag moved
+            # only the relation-label rows -- 7 of the reference's 20 -- while
+            # every CONCEPT row went on ageing from surface mentions, so the
+            # score did not reflect the rule it was named for. A concept is
+            # held in mind by the model judging one of its relations still
+            # current, not by the text repeating its word.
+            for e in self.edges:
+                if not (e.active and e.relevance >= 2):
+                    continue
+                for n in (e.src, e.dst):
+                    self._last_stated[n.lemma] = sentence
+                    n.last_stated = sentence
         dist = self.distances(stated_keys)
         out = {}
 
         stated_now = {" ".join(k) for k in stated_keys}
         last = self._last_stated
 
-        def put(token, d, prev, source_sentence=None):
+        def put(token, d, prev, source_sentence=None, inferred=False):
             # A token that has never been stated ages from when it ENTERED the
             # graph. Defaulting to the current sentence gave age 0 forever, so
             # every inferred concept (horse, fire, sword) stayed at full
@@ -291,19 +308,38 @@ class Graph:
             since = last.get(
                 token,
                 source_sentence if source_sentence is not None else sentence)
-            if d is None or d > C.MATRIX_MAX_DISTANCE:
-                return
             age = 0 if token in stated_now else max(0, sentence - since)
-            score = max(0.0, 5.0 - C.SCORE_PER_HOP * d
-                        - C.SENIORITY_WEIGHT * age)
-            if score > 0 and prev == 0.0:
-                score = 5.0
+            # What this sentence activates on its own: 0 when out of reach.
+            if d is None or d > C.MATRIX_MAX_DISTANCE:
+                fresh = 0.0
+            else:
+                fresh = max(0.0, 5.0 - C.SCORE_PER_HOP * d
+                            - C.SENIORITY_WEIGHT * age)
+                if fresh > 0 and prev == 0.0:
+                    fresh = 5.0
+                # A concept the reader INFERRED never enters as strongly as
+                # one the text states. The reference puts horse at 2, sword
+                # at 2, fire at 3, against 5 for a stated word. Without this
+                # cap an inferred concept entered at 5.0 and took three
+                # sentences to decay away, which is most of why the matrix
+                # carried 40 live tokens where the reference has 8.
+                if inferred and token not in stated_now:
+                    fresh = min(fresh, C.INFERRED_ACTIVATION)
+            # What the reader still holds from last sentence. This is what
+            # keeps `knight` alive through "Suddenly, a dragon appeared."
+            carry = prev * C.CARRYOVER_DECAY
+            if carry < C.CARRYOVER_FLOOR:
+                carry = 0.0
+            score = max(fresh, carry)
+            if score < C.ACTIVATION_FLOOR:
+                score = 0.0
             if score > 0:
                 out[token] = max(out.get(token, 0.0), round(min(score, 5.0), 2))
 
         for n in self.nodes.values():
             put(n.lemma, dist.get(n), history.get(n.lemma, [0.0])[-1],
-                source_sentence=n.source_sentence)
+                source_sentence=n.source_sentence,
+                inferred=(n.source == "inferred"))
 
         # Relation labels are matrix rows too: 7 of the 20 reference tokens
         # (rode, appeared, kidnapping, fought, killed, freed, married) are
