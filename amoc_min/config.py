@@ -54,8 +54,30 @@ SENTENCES = [
 # multiplicative (x0.5 dominant, x0.6/x0.8 observed), never subtractive --
 # the smallest drop anywhere in the reference is -1.0, so DECAY_STEP=1 on a
 # 0-2 scale could not reproduce it. Anything landing under FLOOR goes to 0.
-INFERRED_ACTIVATION = 2.0   # concept inferred, not stated (ref: horse=2, sword=2, fire=3)
-SCORE_PER_HOP       = 0.5   # score = 5 - SCORE_PER_HOP * BFS distance.
+# ---------------------------------------------------------------------------
+# These six were FITTED, not inherited. 2520 combinations scored against
+# landscape_paper.csv on the knight story (amoc-min-3), ranked by Spearman
+# over the tokens the reference has ACTIVE -- not over all 20, where 72% of
+# cells are zero in both and agreement on zeros carries the correlation.
+#
+#   fitted   rho_active +0.847   rho_all +0.910   density error  9.8
+#   held out rho_active +0.834                    density error  8.2
+#            (amoc-min-4: a different extraction of the same story)
+#
+# What the sweep overturned, against the v4/v5 values they replaced:
+#   SCORE_PER_HOP      0.5 -> 1.5   a neighbour enters at 3.5, not 4.5
+#   SENIORITY_WEIGHT   2.0 -> 1.0   carry-over already decays; 2.0 decayed twice
+#   INFERRED_ACTIVATION 2.0 -> 2.5
+#   CARRYOVER_DECAY/FLOOR 0.5/1.0 -> 0.4/2.0, which together mean carry-over
+#   survives exactly ONE step (5 -> 2.0 -> gone). 0.3/1.5 ties with it exactly,
+#   so the pair is what matters, not either number alone.
+#
+# Fitted on one story, n=1. Validated only against a second extraction of that
+# same story, which controls for LLM variance, NOT for story.
+# ---------------------------------------------------------------------------
+
+INFERRED_ACTIVATION = 2.5   # concept inferred, not stated (ref: horse=2, sword=2, fire=3)
+SCORE_PER_HOP       = 1.5   # score = 5 - SCORE_PER_HOP * BFS distance.
                             # The AMoC v4 notebook contains no matrix code at
                             # all -- node.score is only ever a hop count. The
                             # 0.5 is recovered from the AMoC v4.0 column of
@@ -124,8 +146,8 @@ AGEING_TEXT, AGEING_LLM = "text", "relevance"
 # Landscape Model's own recurrence: a concept keeps a fraction of what it had,
 # and the fresh distance-based score competes with it (whichever is higher).
 # Set CARRYOVER_DECAY = 0 to recover the old behaviour exactly.
-CARRYOVER_DECAY     = 0.5   # fraction retained per sentence
-CARRYOVER_FLOOR     = 1.0   # anything decaying below this is forgotten (-> 0)
+CARRYOVER_DECAY     = 0.4   # fraction retained per sentence
+CARRYOVER_FLOOR     = 2.0   # anything decaying below this is forgotten (-> 0)
 
 # The reference's non-zero values are {1, 1.5, 2, 2.5, 3, 4, 5} -- it never
 # emits anything below 1. Seniority leaves fractional dribbles (country 0.5 at
@@ -133,7 +155,7 @@ CARRYOVER_FLOOR     = 1.0   # anything decaying below this is forgotten (-> 0)
 # anything under this is forgotten rather than reported.
 ACTIVATION_FLOOR    = 1.0
 
-SENIORITY_WEIGHT    = 2.0   # v5's CARRYOVER_SENIORITY_WEIGHT. With distance
+SENIORITY_WEIGHT    = 1.0   # v5's CARRYOVER_SENIORITY_WEIGHT. With distance
                             # capped at 2, this is what produces the value
                             # range: score = 5 - 0.5*d - w*age, where age is
                             # sentences since the concept was last stated

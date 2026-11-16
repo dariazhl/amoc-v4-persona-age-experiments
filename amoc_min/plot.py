@@ -25,9 +25,12 @@ from matplotlib.patches import FancyArrowPatch  # noqa: E402
 
 FONT = ["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"]
 INK, MUTED, FAINT = "#1F2933", "#7B8794", "#B6BFCA"
-TEXT_FILL, TEXT_EDGE = "#CFE0F0", "#5B8BB8"
-INFER_FILL, INFER_EDGE = "#F8E3B6", "#C99A3B"
-OFF_FILL, OFF_EDGE = "#F2F4F6", "#E1E5EA"
+# v5's node colours: blue = from the text, amber = reader-inferred,
+# grey = in memory. Labels sit INSIDE the circle as they do in v5, which
+# is what stops them colliding once the graph passes ~20 nodes.
+TEXT_FILL, TEXT_EDGE = "#A0CBE2", "#1F2933"
+INFER_FILL, INFER_EDGE = "#FFE8A0", "#1F2933"
+OFF_FILL, OFF_EDGE = "#D0D0D0", "#999999"
 LINK, LINK_OFF = "#5B6B7F", "#E6E9ED"
 RULE = "#E8EBEF"
 
@@ -46,6 +49,18 @@ def _fs(points):
 FOOTER_PT, FOOTER_WRAP = 5.6, 385
 
 
+def node_radius(n_nodes):
+    """v5's curve (node_size = 16000*sqrt(8/n), clamped), in axes fractions."""
+    return max(0.038, min(0.098, 0.082 * math.sqrt(8 / max(1, n_nodes))))
+
+
+def overlaps(pos, sep):
+    """Pairs still closer than `sep`. Empty means no circle touches another."""
+    keys = list(pos)
+    return [(a, b) for i, a in enumerate(keys) for b in keys[i + 1:]
+            if math.dist(pos[a], pos[b]) < sep - 1e-9]
+
+
 def layout(all_triplets, seed=7):
     """One layout for the whole story, from every triplet that can appear."""
     g = nx.Graph()
@@ -53,7 +68,7 @@ def layout(all_triplets, seed=7):
         g.add_edge(s, o)
     if not g:
         return {}
-    pos = nx.spring_layout(g, seed=seed, k=1.9 / math.sqrt(max(len(g), 2)),
+    pos = nx.spring_layout(g, seed=seed, k=2.7 / math.sqrt(max(len(g), 2)),
                            iterations=600)
     xs = [p[0] for p in pos.values()]
     ys = [p[1] for p in pos.values()]
@@ -63,8 +78,42 @@ def layout(all_triplets, seed=7):
     # axes, so node circles stay circular whatever the layout aspect.
     sx = (max(xs) - min(xs)) or 1.0
     sy = (max(ys) - min(ys)) or 1.0
-    return {n: ((x - cx) / sx * 1.50, (y - cy) / sy * 0.78)
-            for n, (x, y) in pos.items()}
+    out = {n: ((x - cx) / sx * 1.52, (y - cy) / sy * 1.12)
+           for n, (x, y) in pos.items()}
+    # Separate by twice the radius the frames will actually use, plus a
+    # margin. node_radius() keys off len(pos) too, so the two always agree
+    # and no two circles can touch in any frame.
+    return _separate(out, sep=2.0 * node_radius(len(out)) * 1.12)
+
+
+def _separate(pos, sep=0.088, rounds=4000):
+    """Push overlapping nodes apart.
+
+    spring_layout optimises edge lengths, not disc packing, so once the
+    circles are big enough to hold their own label a few pairs always sit on
+    top of one another. This relaxes any pair closer than `sep` without
+    disturbing the overall shape. Deterministic, so frames stay aligned.
+    """
+    keys = list(pos)
+    p = {k: list(v) for k, v in pos.items()}
+    for _ in range(rounds):
+        moved = False
+        for i, a in enumerate(keys):
+            for b in keys[i + 1:]:
+                dx, dy = p[b][0] - p[a][0], p[b][1] - p[a][1]
+                d = math.hypot(dx, dy)
+                if d >= sep:
+                    continue
+                if d < 1e-9:            # exactly coincident: split on x
+                    dx, dy, d = 1e-3, 0.0, 1e-3
+                push = (sep - d) / 2.0
+                ux, uy = dx / d, dy / d
+                p[a][0] -= ux * push; p[a][1] -= uy * push
+                p[b][0] += ux * push; p[b][1] += uy * push
+                moved = True
+        if not moved:
+            break
+    return {k: tuple(v) for k, v in p.items()}
 
 
 def _field(ax, y, label, items, width=FOOTER_WRAP):
@@ -92,7 +141,7 @@ def draw(path, pos, nodes, edges, sentence_no, sentence, persona, model,
     The active-triplet list is no longer drawn: it duplicates triplets_<tag>.csv
     and cost the graph a fifth of the canvas."""
     plt.rcParams.update({"font.family": FONT, "axes.linewidth": 0})
-    fig = plt.figure(figsize=(15.0, 8.0), dpi=200)
+    fig = plt.figure(figsize=(22.0, 12.0), dpi=160)
     gs = GridSpec(1, 2, width_ratios=[0.74, 0.26], figure=fig, wspace=0.03)
     ax = fig.add_subplot(gs[0])
     panel = fig.add_subplot(gs[1])
@@ -100,9 +149,14 @@ def draw(path, pos, nodes, edges, sentence_no, sentence, persona, model,
     ax.set_facecolor("white")
 
     # ---- graph ----------------------------------------------------------
+    # Sized from the story's whole node set, not this sentence's, so a
+    # circle keeps one size across all thirteen frames and the separation
+    # computed in layout() holds everywhere.
+    _base_r = node_radius(len(pos))
+
     def _radius(lemma):
         kind, score = nodes.get(lemma, ("off", 0.0))
-        return 0.030 + 0.011 * (score / 5.0)
+        return _base_r * (0.82 + 0.18 * (score / 5.0))
 
     for s, label, o, active in edges:
         if s not in pos or o not in pos:
@@ -137,12 +191,20 @@ def draw(path, pos, nodes, edges, sentence_no, sentence, persona, model,
             "inferred": (INFER_FILL, INFER_EDGE, INK),
             "off": (OFF_FILL, OFF_EDGE, FAINT),
         }[kind]
-        r = 0.030 + 0.011 * (score / 5.0)
+        r = _radius(lemma)
+        on = kind != "off"
         ax.add_patch(plt.Circle((x, y), r, facecolor=fill, edgecolor=line,
-                                linewidth=1.1 if kind != "off" else 0.8,
-                                zorder=4))
-        ax.annotate(lemma, (x, y + r + 0.015), fontsize=_fs(8.2), color=ink,
-                    ha="center", va="bottom", zorder=5)
+                                linewidth=1.5 if on else 1.0,
+                                alpha=1.0 if on else 0.45, zorder=4))
+        # Inside the circle, wrapped and shrunk to fit -- never above it,
+        # which is what made neighbouring labels overlap.
+        lines = textwrap.wrap(lemma, 9, break_long_words=False) or [lemma]
+        longest = max(len(l) for l in lines)
+        ax.annotate("\n".join(lines), (x, y),
+                    fontsize=_fs(11.0) * min(1.0, 7.5 / longest) *
+                            (r / _base_r),
+                    color=ink if on else "#777777", fontweight="bold" if on else "normal",
+                    ha="center", va="center", zorder=5, linespacing=0.92)
 
     # ---- header ---------------------------------------------------------
     ax.annotate(f"AMoC knowledge graph · {model}", (0, 1.135),

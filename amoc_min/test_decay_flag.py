@@ -48,11 +48,11 @@ def ride_at_s3(relevance, drop_to=None):
 
 def test_text_rule_ages_when_the_word_is_absent(ageing):
     ageing(C.AGEING_TEXT)
-    # `ride` is stated at S1 and not after. Ageing alone would put it at
-    # 5 - SENIORITY_WEIGHT * 2 = 1.0 by S3, but carry-over holds it higher:
-    # S2 was 3.0, so half of that (1.5) wins. Carry-over sets the floor under
-    # ageing; it never drops a token faster.
-    assert ride_at_s3(relevance=2) == pytest.approx(1.5)
+    # `ride` is stated at S1 and not after, so by S3 it has aged two
+    # sentences: 5 - SENIORITY_WEIGHT*2 = 3.0 at distance 0. Carry-over does
+    # not reach it here -- S2 was 4.0, and 4.0*0.4 = 1.6 is under the 2.0
+    # floor -- so ageing is what sets the value.
+    assert ride_at_s3(relevance=2) == pytest.approx(3.0)
 
 
 def test_llm_rule_keeps_a_relation_the_model_still_calls_relevant(ageing):
@@ -65,8 +65,8 @@ def test_llm_rule_keeps_a_relation_the_model_still_calls_relevant(ageing):
 def test_llm_rule_ages_a_relation_the_model_has_let_go(ageing):
     ageing(C.AGEING_LLM)
     # scored 2 at S1, dropped to FADING at S2: it ages from S1 like any
-    # other, and lands on the same carry-over floor as the text rule
-    assert ride_at_s3(relevance=2, drop_to=1) == pytest.approx(1.5)
+    # other, landing where the text rule does
+    assert ride_at_s3(relevance=2, drop_to=1) == pytest.approx(3.0)
 
 
 def test_the_two_rules_disagree(ageing):
@@ -108,8 +108,8 @@ def forest_at_s3(relevance, mode):
 def test_llm_rule_holds_a_concept_the_model_still_calls_relevant(ageing):
     ageing(C.AGEING_LLM)
     # the model says the relation is still current, so the concept is too
-    # one hop from the stated `knight`, age held at 0: 5 - 0.5*1 - 2*0
-    assert forest_at_s3(relevance=2, mode=C.AGEING_LLM) == pytest.approx(4.5)
+    # one hop from the stated `knight`, age held at 0: 5 - SCORE_PER_HOP*1
+    assert forest_at_s3(relevance=2, mode=C.AGEING_LLM) == pytest.approx(3.5)
 
 
 def test_llm_rule_lets_a_concept_go_when_the_model_does(ageing):

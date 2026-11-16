@@ -114,7 +114,9 @@ def test_a_concept_survives_a_sentence_that_cannot_reach_it():
         col = g.activation(stated, i, hist)
         for k in set(hist) | set(col):
             hist.setdefault(k, []).append(col.get(k, 0.0))
-    assert col.get("knight") == pytest.approx(2.5), col
+    # nothing is reachable, so this is pure carry-over: 5.0 * CARRYOVER_DECAY
+    # = 2.0, which sits exactly on CARRYOVER_FLOOR and is therefore retained
+    assert col.get("knight") == pytest.approx(2.0), col
     assert C.CARRYOVER_DECAY > 0, "set CARRYOVER_DECAY=0 to disable"
 
 
