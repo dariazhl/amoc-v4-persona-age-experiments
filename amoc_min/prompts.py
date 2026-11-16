@@ -255,6 +255,18 @@ Reply with JSON and nothing else, one entry per number:
 {{"scores": {{"1": 0-5, "2": 0-5}}, "context_shift": true/false,
   "reasoning": "one short sentence"}}"""
 
+# -- 4c. --persona-decay: whose mind it is -----------------------------------
+# Deliberately says nothing about HOW this reader differs. AMoC v5's
+# READER_MEMORY_BLOCK tells the model that younger readers keep fewer ideas
+# active; an age effect found with that wording is partly instructed. Here the
+# direction of any difference is left to the model.
+READER_FRAME = """Reader: {persona}
+
+Judge the following from THIS reader's point of view: what would this
+particular reader still be holding in mind at this point in the story?
+
+"""
+
 # -- 5. the persona's inference reader inferences ----------------------------------
 READER_INFERENCES = """You are modelling one specific reader.
 

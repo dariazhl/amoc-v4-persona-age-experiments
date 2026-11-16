@@ -139,6 +139,14 @@ AGEING_TEXT, AGEING_LLM = "text", "relevance"
 # none of the constants above are read in this mode. Selected by --llm-score.
 AGEING_SCORE = "llm_score"
 
+# Put the reader in front of the what-stays-in-mind call (NARRATIVE_RELEVANCE
+# under the text and --llm-decay rules, ACTIVATION_RATING under --llm-score).
+# Off by default: then that call is identical for every reader and the persona
+# can only choose inferences, so how long anything stays in mind cannot differ
+# between readers. Set by --persona-decay. The baseline reader has no persona
+# and is never affected.
+PERSONA_IN_DECAY = False
+
 # --- the LLM rule as a STANDALONE mode -------------------------------------
 # On its own the relevance rule has no equilibrium: a score of 2 keeps an edge
 # alive AND zeroes its age AND makes it cost one hop, so the same judgement

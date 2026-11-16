@@ -76,6 +76,7 @@ def _one_reader(args):
     # A spawned process re-imports config at its default, so the ageing rule
     # has to be re-applied here or every worker would silently run `text`.
     C.RELATION_AGEING = cfg["relation_ageing"]
+    C.PERSONA_IN_DECAY = cfg["persona_decay"]
     llm = LLM(cfg["server_url"], cfg["model"], cfg["temperature"])
     snaps = []
     plotter = None
@@ -190,6 +191,13 @@ def main():
                          "reader's mind after each sentence, and that rating "
                          "IS the activation. No hop distance, seniority or "
                          "carry-over. Cannot be combined with --llm-decay.")
+    ap.add_argument("--persona-decay", action="store_true",
+                    help="put the reader in front of the what-stays-in-mind "
+                         "call, so how long a relationship is held can differ "
+                         "between readers. Off by default: then that call is "
+                         "the same for everyone and the persona only chooses "
+                         "inferences. Works with every ageing rule; the "
+                         "baseline reader is never affected.")
     ap.add_argument("--allow-persona-words", action="store_true",
                     help="let readers reword concepts. OFF by default: 10 of the "
                          "20 reference tokens match by exact string only, so "
@@ -206,7 +214,8 @@ def main():
     print(f"temperature={a.temperature} "
           f"relation_ageing={C.RELATION_AGEING}"
           f"{' (--llm-decay)' if a.llm_decay else ''}"
-          f"{' (--llm-score)' if a.llm_score else ''}", flush=True)
+          f"{' (--llm-score)' if a.llm_score else ''}"
+          f" persona_decay={a.persona_decay}", flush=True)
     # The reference matrix is only needed for --score. Load it lazily and
     # degrade to generation-only if it is missing, rather than throwing away
     # a 90-second model load over an optional file.
@@ -240,6 +249,7 @@ def main():
            ("graphs", "model", "out", "allow_persona_words", "score",
             "server_url", "temperature")}
     cfg["relation_ageing"] = C.RELATION_AGEING
+    cfg["persona_decay"] = a.persona_decay
     tasks = [(r, cfg, passes, ref, order) for r in runs]
 
     summary = []
@@ -277,6 +287,7 @@ def main():
     for rec in summary:
         rec["relation_ageing"] = C.RELATION_AGEING
         rec["llm_decay"] = bool(a.llm_decay)
+        rec["persona_decay"] = bool(a.persona_decay)
     with open(os.path.join(a.out, "summary.json"), "w") as f:
         json.dump(summary, f, indent=1)
     print(f"\nwrote {len(runs)} matrices to {a.out}")

@@ -8,7 +8,7 @@
 # apart the first time one of them gained a flag.
 #
 # Required from the caller:  MODEL, TP
-# Optional:  WORKERS (default 16)  LIMIT  TEMPERATURE  LLM_DECAY  LLM_SCORE
+# Optional:  WORKERS (default 16)  LIMIT  TEMPERATURE  LLM_DECAY  LLM_SCORE  PERSONA_DECAY
 #            STORY_ANALYSIS  RUN_OUTPUT_DIR  OUTPUT_ROOT
 #            FIX_KILLED  ALLOW_PERSONA_WORDS
 
@@ -87,5 +87,6 @@ OMP_NUM_THREADS=1 bash "${PROJECT_ROOT}/slurm_scripts/amoc-min-run.sh" \
     ${ALLOW_PERSONA_WORDS:+--allow-persona-words} \
     ${LLM_DECAY:+--llm-decay} \
     ${LLM_SCORE:+--llm-score} \
+    ${PERSONA_DECAY:+--persona-decay} \
     ${STORY_ANALYSIS:+--story-analysis "${STORY_ANALYSIS}"} \
     --score

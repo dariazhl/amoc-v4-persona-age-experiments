@@ -162,3 +162,30 @@ def test_llm_score_reads_the_matrix_off_the_ratings(ageing):
     e.rate(0, g.edge_forget)
     assert not e.active
     assert "forest" not in g.rated_activation([("dragon",)])
+
+
+def test_persona_reaches_the_decay_call_only_when_asked(monkeypatch):
+    """--persona-decay puts the reader in front of the what-stays-in-mind
+    prompt, for both the 0/1/2 relevance call and the 0-5 rating. With the
+    flag off, or for the baseline reader, the prompt is the same for all."""
+    from . import engine
+    seen = []
+
+    class Spy:
+        def ask(self, prompt):
+            seen.append(prompt)
+            return "{}"
+
+    def prompts(persona):
+        g = Graph()
+        g.add("knight", "rode through", "forest", "text", 1)
+        engine._rate(Spy(), g, "ctx", [], "A sentence.", persona=persona)
+        engine._reactivate(Spy(), g, list(g.nodes.values()), "ctx", [],
+                           "A sentence.", persona=persona)
+        return seen[-2:]
+
+    monkeypatch.setattr(C, "PERSONA_IN_DECAY", False)
+    assert not any("a 9-year-old" in p for p in prompts("a 9-year-old"))
+    monkeypatch.setattr(C, "PERSONA_IN_DECAY", True)
+    assert all(p.startswith("Reader: a 9-year-old") for p in prompts("a 9-year-old"))
+    assert not any(p.startswith("Reader:") for p in prompts(None))

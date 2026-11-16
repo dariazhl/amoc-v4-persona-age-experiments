@@ -33,7 +33,8 @@ from .prompts import (INFERENCE_NUDGE, INFER_OBJECTS,
                       INFER_RELATIONSHIPS, INFER_RELATIONSHIPS_FIRST,
                       READER_INFERENCES, RELATIONSHIPS,
                       RELATIONSHIPS_FIRST, REPLACE_PRONOUNS,
-                      NARRATIVE_RELEVANCE, ACTIVATION_RATING)
+                      NARRATIVE_RELEVANCE, ACTIVATION_RATING,
+                      READER_FRAME)
 
 
 def _parse(text, default):
@@ -123,7 +124,16 @@ def _nodes_from_text(words):
     return "".join(f" - ({w}, {k})\n" for w, _, k in words) or " (none)\n"
 
 
-def _reactivate(llm, g, nodes, context_text, just_added, sentence_text=""):
+def _as_reader(prompt, persona):
+    """--persona-decay: ask the what-stays-in-mind question on behalf of one
+    reader. Unchanged for the baseline reader and whenever the flag is off."""
+    if C.PERSONA_IN_DECAY and persona:
+        return READER_FRAME.format(persona=persona) + prompt
+    return prompt
+
+
+def _reactivate(llm, g, nodes, context_text, just_added, sentence_text="",
+                persona=None):
     """v5's NARRATIVE_RELEVANCE: the model scores every edge 0/1/2 for whether
     the story's current context still applies to it.
 
@@ -135,9 +145,9 @@ def _reactivate(llm, g, nodes, context_text, just_added, sentence_text=""):
     listing, order = g.edges_str(nodes, only_active=False)
     if not order:
         return {}, False
-    out = _parse(llm.ask(NARRATIVE_RELEVANCE.format(
+    out = _parse(llm.ask(_as_reader(NARRATIVE_RELEVANCE.format(
         story_context=context_text, current_sentence=sentence_text or context_text,
-        active_triplets=listing)), {})
+        active_triplets=listing), persona)), {})
     scored = {}
     for s in (out.get("scores") or []):
         if not isinstance(s, dict):
@@ -169,7 +179,7 @@ def _reactivate(llm, g, nodes, context_text, just_added, sentence_text=""):
     return explanations, shift
 
 
-def _rate(llm, g, context_text, just_added, sentence_text=""):
+def _rate(llm, g, context_text, just_added, sentence_text="", persona=None):
     """--llm-score: the model rates every relationship 0-5 and the rating IS
     its activation. Returns (explanations, context_shift) for the triplet log.
 
@@ -188,10 +198,10 @@ def _rate(llm, g, context_text, just_added, sentence_text=""):
         listing = "\n".join(f"{n}. {e.src.text} - {e.label} - {e.dst.text}"
                             for n, e in enumerate(order, 1))
         try:
-            out = _parse(llm.ask(ACTIVATION_RATING.format(
+            out = _parse(llm.ask(_as_reader(ACTIVATION_RATING.format(
                 story_context=context_text,
                 current_sentence=sentence_text or context_text,
-                triplets=listing)), {})
+                triplets=listing), persona)), {})
         except Exception:
             logging.exception("activation rating failed; every relationship "
                               "loses a point this sentence")
@@ -416,14 +426,16 @@ def read(passes, llm=None, persona=None, allow_persona_words=False,
         score_mode = C.RELATION_AGEING == C.AGEING_SCORE
         if score_mode:
             explanations, shift = _rate(llm, g, step["context"], just_added,
-                                        sentence_text=step["sentence"])
+                                        sentence_text=step["sentence"],
+                                        persona=persona)
         elif llm is None:
             g.fade_all(keep=just_added)
         else:
             try:
                 explanations, shift = _reactivate(
                     llm, g, list(g.nodes.values()), step["context"],
-                    just_added, sentence_text=step["sentence"])
+                    just_added, sentence_text=step["sentence"],
+                    persona=persona)
             except Exception:
                 logging.exception("reactivation failed at sentence %d; "
                                   "falling back to timer fade", i)
