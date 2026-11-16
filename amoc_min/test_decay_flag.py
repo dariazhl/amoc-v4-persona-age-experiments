@@ -127,3 +127,38 @@ def test_the_flag_moves_concept_rows_not_only_relation_rows(ageing):
         ageing(mode)
         out[mode] = forest_at_s3(relevance=2, mode=mode)
     assert out[C.AGEING_TEXT] != out[C.AGEING_LLM], out
+
+
+def test_the_llm_brakes_cannot_reach_the_score_rule(ageing, monkeypatch):
+    """The two rules have to stay independently comparable.
+
+    Every brake added to make the LLM rule standalone -- score-1 removal,
+    the carry-over cap, partial age retention and bridge protection -- is
+    gated on RELATION_AGEING being the LLM one.
+    Moving any of them must leave a text-rule run bit-identical, otherwise
+    an A/B between the two rules is measuring the brakes as well.
+    """
+    ageing(C.AGEING_TEXT)
+    base = forest_at_s3(relevance=2, mode=C.AGEING_TEXT)
+    for name, value in (("LLM_DROP_FADING", False),
+                        ("LLM_CARRYOVER_CAP", 1),
+                        ("LLM_AGE_RETAIN", 0.0),
+                        ("PROTECT_BRIDGES", False)):
+        monkeypatch.setattr(C, name, value)
+        assert forest_at_s3(relevance=2, mode=C.AGEING_TEXT) == base, name
+
+
+def test_llm_score_reads_the_matrix_off_the_ratings(ageing):
+    """--llm-score: the 0-5 rating is the activation, for the relationship's
+    own row and for both concepts; what the sentence states is 5; a rating
+    of 0 switches the relationship off and takes its concepts with it."""
+    ageing(C.AGEING_SCORE)
+    g = Graph()
+    e = g.add("knight", "rode through", "forest", "text", 1)
+    e.rate(3, g.edge_forget)
+    col = g.rated_activation([("knight",)])
+    assert col["knight"] == 5.0
+    assert col["forest"] == 3.0 and col["ride"] == 3.0
+    e.rate(0, g.edge_forget)
+    assert not e.active
+    assert "forest" not in g.rated_activation([("dragon",)])

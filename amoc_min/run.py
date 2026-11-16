@@ -184,6 +184,12 @@ def main():
                          "one LLM judgement then drives BOTH traversal cost "
                          "and age, so the matrix becomes largely a function "
                          "of the model's opinion of its own graph.")
+    ap.add_argument("--llm-score", action="store_true",
+                    help="a third, self-contained rule: the model rates every "
+                         "relationship 0-5 for how strongly it is in the "
+                         "reader's mind after each sentence, and that rating "
+                         "IS the activation. No hop distance, seniority or "
+                         "carry-over. Cannot be combined with --llm-decay.")
     ap.add_argument("--allow-persona-words", action="store_true",
                     help="let readers reword concepts. OFF by default: 10 of the "
                          "20 reference tokens match by exact string only, so "
@@ -192,11 +198,15 @@ def main():
 
     os.makedirs(a.out, exist_ok=True)
     # Set before anything builds a graph: graph.activation reads it per edge.
-    C.RELATION_AGEING = C.AGEING_LLM if a.llm_decay else C.AGEING_TEXT
+    if a.llm_decay and a.llm_score:
+        ap.error("--llm-decay and --llm-score are different rules; pick one")
+    C.RELATION_AGEING = (C.AGEING_SCORE if a.llm_score else
+                         C.AGEING_LLM if a.llm_decay else C.AGEING_TEXT)
     llm = LLM(a.server_url, a.model, a.temperature)
     print(f"temperature={a.temperature} "
           f"relation_ageing={C.RELATION_AGEING}"
-          f"{' (--llm-decay)' if a.llm_decay else ''}", flush=True)
+          f"{' (--llm-decay)' if a.llm_decay else ''}"
+          f"{' (--llm-score)' if a.llm_score else ''}", flush=True)
     # The reference matrix is only needed for --score. Load it lazily and
     # degrade to generation-only if it is missing, rather than throwing away
     # a 90-second model load over an optional file.

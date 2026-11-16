@@ -33,7 +33,7 @@ from .prompts import (INFERENCE_NUDGE, INFER_OBJECTS,
                       INFER_RELATIONSHIPS, INFER_RELATIONSHIPS_FIRST,
                       READER_INFERENCES, RELATIONSHIPS,
                       RELATIONSHIPS_FIRST, REPLACE_PRONOUNS,
-                      NARRATIVE_RELEVANCE)
+                      NARRATIVE_RELEVANCE, ACTIVATION_RATING)
 
 
 def _parse(text, default):
@@ -154,12 +154,61 @@ def _reactivate(llm, g, nodes, context_text, just_added, sentence_text=""):
         if sc is None:
             continue                         # unscored -> leave as is
         e.relevance = max(0, min(2, sc))
+        # v5 pipeline/decay.py removes on score 1 as well as 0: its rubric
+        # makes 1 mean "only the subject is still present", which it treats
+        # as superseded. amoc_min left 1 untouched, so a FADING edge could
+        # sit active indefinitely. Under the LLM ageing rule that is one of
+        # the three things keeping the live set from ever shrinking.
+        drop = sc <= 0 or (sc == 1 and C.LLM_DROP_FADING
+                           and C.RELATION_AGEING == C.AGEING_LLM)
         if sc >= 2:
             e.revive(g.edge_forget, reactivated=True)
-        elif sc <= 0 and e not in just_added:
+        elif drop and e not in just_added and not g._protect(e):
             e.fade()
             explanations[(e.src.text, e.label, e.dst.text)] = reasoning
     return explanations, shift
+
+
+def _rate(llm, g, context_text, just_added, sentence_text=""):
+    """--llm-score: the model rates every relationship 0-5 and the rating IS
+    its activation. Returns (explanations, context_shift) for the triplet log.
+
+    What the current sentence states is 5 without asking. Everything else is
+    listed, inactive relationships included, so one can come back. A
+    relationship the reply does not rate -- a clipped or unparseable answer,
+    a failed call, no LLM at all -- loses one point rather than keeping its
+    old rating, so nothing can stay alive by going unrated.
+    """
+    stated = [e for e in just_added if e.source == "text"]
+    for e in stated:
+        e.rate(5, g.edge_forget, asserted=True)
+    order = [e for e in g.edges if e not in stated and str(e.label).strip()]
+    out = {}
+    if llm is not None and order:
+        listing = "\n".join(f"{n}. {e.src.text} - {e.label} - {e.dst.text}"
+                            for n, e in enumerate(order, 1))
+        try:
+            out = _parse(llm.ask(ACTIVATION_RATING.format(
+                story_context=context_text,
+                current_sentence=sentence_text or context_text,
+                triplets=listing)), {})
+        except Exception:
+            logging.exception("activation rating failed; every relationship "
+                              "loses a point this sentence")
+    raw = out.get("scores") or {}
+    if isinstance(raw, list):               # tolerate [{"n":1,"score":3}, ...]
+        raw = {str(x.get("n")): x.get("score") for x in raw
+               if isinstance(x, dict)}
+    reasoning, explanations = out.get("reasoning") or "", {}
+    for n, e in enumerate(order, 1):
+        try:
+            sc = max(0, min(5, int(float(raw[str(n)]))))
+        except (KeyError, TypeError, ValueError):
+            sc = max(0, e.strength - 1)
+        e.rate(sc, g.edge_forget)
+        if sc <= 2:
+            explanations[(e.src.text, e.label, e.dst.text)] = reasoning
+    return explanations, bool(out.get("context_shift"))
 
 
 def analyze_story(llm, cache=None):
@@ -364,7 +413,11 @@ def read(passes, llm=None, persona=None, allow_persona_words=False,
         # tests, or a failed call -- fall back to a plain timer fade, so the
         # graph still decays instead of silently keeping every edge alive.
         explanations, shift = {}, False
-        if llm is None:
+        score_mode = C.RELATION_AGEING == C.AGEING_SCORE
+        if score_mode:
+            explanations, shift = _rate(llm, g, step["context"], just_added,
+                                        sentence_text=step["sentence"])
+        elif llm is None:
             g.fade_all(keep=just_added)
         else:
             try:
@@ -376,8 +429,9 @@ def read(passes, llm=None, persona=None, allow_persona_words=False,
                                   "falling back to timer fade", i)
                 g.fade_all(keep=just_added)
 
-        col = g.activation(stated_keys, i, history,
-                           sentence_lemmas=N.lemmas(step["sentence"]))
+        col = (g.rated_activation(stated_keys) if score_mode else
+               g.activation(stated_keys, i, history,
+                            sentence_lemmas=N.lemmas(step["sentence"])))
         for t in set(history) | set(col):
             history.setdefault(t, []).append(col.get(t, 0.0))
         columns.append(col)

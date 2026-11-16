@@ -133,6 +133,41 @@ RELATION_AGEING     = "text"
 # codebase spells the strings out.
 AGEING_TEXT, AGEING_LLM = "text", "relevance"
 
+# A third, self-contained rule: the model rates every relationship 0-5 for how
+# strongly it is in the reader's mind after the sentence, and that rating IS
+# the activation. No hop distance, seniority, carry-over or relevance gate --
+# none of the constants above are read in this mode. Selected by --llm-score.
+AGEING_SCORE = "llm_score"
+
+# --- the LLM rule as a STANDALONE mode -------------------------------------
+# On its own the relevance rule has no equilibrium: a score of 2 keeps an edge
+# alive AND zeroes its age AND makes it cost one hop, so the same judgement
+# that says "still relevant" also says "as fresh as when first read". Nothing
+# can age while the model keeps saying yes, and the live set only grows --
+# 16 of 20 reference tokens alive at S11 where the reference holds 7.
+#
+# AMoC v5 runs this rule successfully because it carries three brakes that
+# amoc_min did not. These reproduce them:
+#
+#   LLM_DROP_FADING      v5 pipeline/decay.py treats NARRATIVE_RELEVANCE
+#                        score 1 as immediate removal, not "leave as is".
+#   LLM_CARRYOVER_CAP    v5's MAX_CARRYOVER_NODES: at most N non-stated
+#                        concepts survive a sentence, ranked by activation
+#                        minus seniority (runtime/per_sentence.py).
+#   LLM_AGE_RETAIN       a relevance-2 judgement SCALES the age rather than
+#                        zeroing it, so sustained relevance slows decay
+#                        instead of stopping it. 0.0 = v5/old behaviour.
+#
+# The cap is what gives the live set a ceiling; without it no choice of the
+# other two bounds it on a long text.
+LLM_DROP_FADING     = True    # score 1 -> remove, as v5 does
+LLM_CARRYOVER_CAP   = 5       # v5 MAX_CARRYOVER_NODES
+LLM_AGE_RETAIN      = 0.5     # fraction of age kept on a relevance-2 reset
+
+# Never deactivate an edge whose removal would split the active graph.
+# v5 pipeline/decay.py can_remove_edge()/has_alternative_path().
+PROTECT_BRIDGES     = True
+
 # Carry-over: what the reader still holds from the previous sentence.
 #
 # Without this, activation is recomputed each sentence purely as distance from

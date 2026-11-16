@@ -8,7 +8,7 @@
 # apart the first time one of them gained a flag.
 #
 # Required from the caller:  MODEL, TP
-# Optional:  WORKERS (default 16)  LIMIT  TEMPERATURE  LLM_DECAY
+# Optional:  WORKERS (default 16)  LIMIT  TEMPERATURE  LLM_DECAY  LLM_SCORE
 #            STORY_ANALYSIS  RUN_OUTPUT_DIR  OUTPUT_ROOT
 #            FIX_KILLED  ALLOW_PERSONA_WORDS
 
@@ -37,7 +37,9 @@ mapfile -t PERSONA_FILES < <(ls "${CHUNKS_DIR}"/*.csv | sort)
 
 echo "amoc_min | ${MODEL} | TP=${TP} | ${#PERSONA_FILES[@]} persona files"
 echo "workers: ${WORKERS:-16} | out: ${RUN_OUTPUT_DIR} | node $(hostname)"
-if [[ -n "${LLM_DECAY:-}" ]]; then
+if [[ -n "${LLM_SCORE:-}" ]]; then
+  echo "relation ageing: llm_score -- the model's 0-5 rating is the activation (--llm-score)"
+elif [[ -n "${LLM_DECAY:-}" ]]; then
   echo "relation ageing: llm -- from NARRATIVE_RELEVANCE score 2 (--llm-decay)"
 else
   echo "relation ageing: text -- from the relation's own word (default)"
@@ -84,5 +86,6 @@ OMP_NUM_THREADS=1 bash "${PROJECT_ROOT}/slurm_scripts/amoc-min-run.sh" \
     ${FIX_KILLED:+--fix-killed} \
     ${ALLOW_PERSONA_WORDS:+--allow-persona-words} \
     ${LLM_DECAY:+--llm-decay} \
+    ${LLM_SCORE:+--llm-score} \
     ${STORY_ANALYSIS:+--story-analysis "${STORY_ANALYSIS}"} \
     --score

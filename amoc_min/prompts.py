@@ -217,6 +217,44 @@ Reply with JSON and nothing else, one entry per number:
 {{"scores": [{{"n": <number>, "score": 0, 1 or 2}}],
   "context_shift": true/false, "reasoning": "one short sentence"}}"""
 
+# -- 4b. --llm-score: the rating is the activation ---------------------------
+ACTIVATION_RATING = """You are modelling what a reader holds in mind while reading a story, one
+sentence at a time.
+
+Story so far:
+{story_context}
+
+Current sentence:
+{current_sentence}
+
+Relationships the reader has built so far:
+{triplets}
+
+Rate each relationship from 0 to 5 for how strongly it is in the reader's mind
+RIGHT AFTER reading the current sentence.
+
+5 - the current sentence states it or is directly about it.
+4 - not stated, but needed to understand the current sentence: the same event,
+    with the same participants in focus.
+3 - part of the ongoing scene, in the background.
+2 - weakly in mind: loosely connected, or something the reader inferred rather
+    than read.
+1 - fading: barely in mind and about to drop out.
+0 - no longer in mind. Also 0 if you are uncertain.
+
+A reader holds only a handful of things in mind at once. A relationship the
+story has not stated or needed for two or three sentences should be at 0 or 1,
+even if its characters are still in the story. Rate the RELATIONSHIP, not the
+character: "knight - rode through - forest" is not kept in mind merely because
+the knight is.
+
+Also say whether the CURRENT SENTENCE marks a context shift for the story as a
+whole: a new scene, time, topic or set of characters.
+
+Reply with JSON and nothing else, one entry per number:
+{{"scores": {{"1": 0-5, "2": 0-5}}, "context_shift": true/false,
+  "reasoning": "one short sentence"}}"""
+
 # -- 5. the persona's inference reader inferences ----------------------------------
 READER_INFERENCES = """You are modelling one specific reader.
 

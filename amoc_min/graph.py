@@ -64,6 +64,7 @@ class Edge:
         self.active = True
         self.source_sentence = source_sentence   # v5: created_at_sentence
         self.relevance = 2                  # v5 NARRATIVE_RELEVANCE: 0/1/2
+        self.strength = 5                   # --llm-score: the model's 0-5 rating
         # per-sentence flags, for the edge_status state machine
         self.forget_at_start = forget
         self.asserted_this_sentence = True
@@ -85,6 +86,21 @@ class Edge:
             self.reactivated_this_sentence = True
         else:
             self.asserted_this_sentence = True
+
+    def rate(self, score, edge_forget, asserted=False):
+        """--llm-score: the model's 0-5 rating is this edge's activation.
+
+        `forget` stays on its 0/1/2 scale so status() and the triplet log
+        read the same in every mode: 0 is inactive, 1-2 is decaying, and 3+
+        counts as held in mind (reported as reactivated).
+        """
+        self.strength = score
+        self.active = score > 0
+        self.forget = 0 if score == 0 else (1 if score <= 2 else edge_forget)
+        if asserted:
+            self.asserted_this_sentence = True
+        else:
+            self.reactivated_this_sentence = score >= 3
 
     def status(self, sentence, edge_forget):
         """v5 recorder.capture_sentence_edges's edge_status."""
@@ -218,10 +234,46 @@ class Graph:
         for e in self.edges:
             e.begin_sentence()
 
+    def can_deactivate(self, edge):
+        """False when switching this edge off would split the active graph.
+
+        v5's can_remove_edge()/has_alternative_path(). An edge is safe to
+        drop only if both endpoints keep an active edge AND they remain
+        reachable from one another without it.
+        """
+        adj = {}
+        for e in self.edges:
+            if e.active and e is not edge:
+                adj.setdefault(e.src, set()).add(e.dst)
+                adj.setdefault(e.dst, set()).add(e.src)
+        a, b = edge.src, edge.dst
+        if a not in adj or b not in adj:
+            return False                 # would strand an endpoint
+        seen, stack = {a}, [a]
+        while stack:
+            for y in adj[stack.pop()]:
+                if y not in seen:
+                    seen.add(y)
+                    stack.append(y)
+        return b in seen
+
+    def _protect(self, e):
+        """True when this edge must stay active to keep the graph in one piece.
+
+        LLM-RULE ONLY. The text rule is left exactly as it was: its active
+        graph already holds together (0 of 533 reader-sentences split), so
+        it needs no guard, and adding one would change which edges it drops
+        and therefore its matrices. The two ageing rules stay comparable
+        only if every brake here is confined to the LLM one.
+        """
+        return (C.RELATION_AGEING == C.AGEING_LLM
+                and C.PROTECT_BRIDGES and e.active and e.forget <= 1
+                and not self.can_deactivate(e))
+
     def fade_all(self, keep=()):
         """Tick decay. Edges in `keep` are exempt (just added this sentence)."""
         for e in self.edges:
-            if e.active and e not in keep:
+            if e.active and e not in keep and not self._protect(e):
                 e.fade()
 
     # -- activation ------------------------------------------------------
@@ -271,13 +323,26 @@ class Graph:
         # reference has it dead by S4.
         lemmas = set(sentence_lemmas)
         llm_rule = C.RELATION_AGEING == C.AGEING_LLM
+        def _touch(token):
+            """A relevance-2 judgement under the LLM rule.
+
+            LLM_AGE_RETAIN=0 zeroes the age (v5's behaviour, and amoc_min's
+            before this): the concept is as fresh as when first read, so it
+            can never decay while the model keeps saying yes. Any value above
+            0 keeps a fraction of the age, so sustained relevance SLOWS decay
+            instead of stopping it and the live set can fall again.
+            """
+            prev = self._last_stated.get(token, sentence)
+            age = max(0, sentence - prev)
+            self._last_stated[token] = sentence - int(age * C.LLM_AGE_RETAIN)
+
         for e in self.edges:
             key = N.relation_key(e.label)
             if llm_rule:
                 # The model still calls this relation CONTINUOUS, so it is
                 # still in mind however long ago its word last appeared.
                 if e.active and e.relevance >= 2:
-                    self._last_stated[key] = sentence
+                    _touch(key)
             elif key in lemmas:              # the text rule (default)
                 self._last_stated[key] = sentence
 
@@ -292,8 +357,8 @@ class Graph:
                 if not (e.active and e.relevance >= 2):
                     continue
                 for n in (e.src, e.dst):
-                    self._last_stated[n.lemma] = sentence
-                    n.last_stated = sentence
+                    _touch(n.lemma)
+                    n.last_stated = self._last_stated[n.lemma]
         dist = self.distances(stated_keys)
         out = {}
 
@@ -351,6 +416,41 @@ class Graph:
             key = N.relation_key(e.label)
             put(key, min(ds) if ds else None, history.get(key, [0.0])[-1],
                 source_sentence=e.source_sentence)
+
+        # v5's MAX_CARRYOVER_NODES. Without a ceiling the relevance rule has
+        # no equilibrium -- every sentence can add to the live set and none
+        # is obliged to remove from it. Stated concepts are never capped;
+        # the rest compete on activation minus seniority, as v5 ranks them.
+        if llm_rule and C.LLM_CARRYOVER_CAP:
+            carried = [k for k in out if k not in stated_now]
+            if len(carried) > C.LLM_CARRYOVER_CAP:
+                rank = sorted(
+                    carried,
+                    key=lambda k: out[k] - C.SENIORITY_WEIGHT *
+                    max(0, sentence - last.get(k, sentence)),
+                    reverse=True)
+                for k in rank[C.LLM_CARRYOVER_CAP:]:
+                    del out[k]
+        return out
+
+    def rated_activation(self, stated_keys):
+        """--llm-score: a matrix column read straight off the ratings.
+
+        A relationship's rating is the activation of its own row and of the
+        two concepts it joins; a concept takes its strongest relationship,
+        and whatever the sentence states is 5. Nothing else enters, so a
+        concept that is not stated is active only through a relationship the
+        model still rates above 0 -- it cannot be lit with no live edge.
+        """
+        out = {}
+        for e in self.edges:
+            if e.strength <= 0 or not str(e.label).strip():
+                continue
+            for k in (N.relation_key(e.label), e.src.lemma, e.dst.lemma):
+                out[k] = max(out.get(k, 0.0), float(e.strength))
+        for k in stated_keys:
+            if k in self.nodes:
+                out[self.nodes[k].lemma] = 5.0
         return out
 
     # -- prompt context (v4 feeds these to the LLM) ----------------------
