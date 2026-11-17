@@ -221,13 +221,16 @@ def _rate(llm, g, context_text, just_added, sentence_text="", persona=None):
     return explanations, bool(out.get("context_shift"))
 
 
-def analyze_story(llm, cache=None):
+def analyze_story(llm, cache=None, sentences=None):
     """Persona-free, so it runs once for the story and is shared by every
-    reader: what each sentence states, and what it a reader could infer."""
+    reader: what each sentence states, and what it a reader could infer.
+
+    `sentences` defaults to the knight story; run_texts.py passes the Keefe
+    and O'Brien texts through the same analysis."""
     if cache and os.path.exists(cache):
         return json.load(open(cache))
 
-    sentences = list(C.SENTENCES)
+    sentences = list(sentences or C.SENTENCES)
     if C.RESOLVE_PRONOUNS:
         joined = llm.ask(REPLACE_PRONOUNS.format(text=" ".join(sentences)))
         sentences = [s.text.strip() for s in N.nlp()(joined.strip()).sents] \

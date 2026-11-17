@@ -9,6 +9,7 @@
 #
 # Required from the caller:  MODEL, TP
 # Optional:  WORKERS (default 16)  LIMIT  TEMPERATURE  LLM_DECAY  LLM_SCORE  PERSONA_DECAY
+#            EXPERIMENT (keefe|obrien)  MAX_ITEMS
 #            STORY_ANALYSIS  RUN_OUTPUT_DIR  OUTPUT_ROOT
 #            FIX_KILLED  ALLOW_PERSONA_WORDS
 
@@ -73,6 +74,27 @@ curl -sf "${VLLM_URL}/health" > /dev/null || { echo "ERROR: vLLM unhealthy after
 MODELS_JSON="$(curl -sf "${VLLM_URL}/v1/models" || true)"
 [[ "${MODELS_JSON}" == *"\"${MODEL}\""* ]] || { echo "ERROR: ${MODEL} not served"; exit 4; }
 echo "vLLM ready"
+
+if [[ -n "${EXPERIMENT:-}" ]]; then
+  # Keefe & McDaniel / O'Brien et al.: the same readers and decay rules as
+  # the knight run, over many short texts. See amoc_min/run_texts.py.
+  echo "experiment: ${EXPERIMENT} (amoc_min.run_texts)"
+  AMOC_MIN_MODULE=amoc_min.run_texts OMP_NUM_THREADS=1 \
+    bash "${PROJECT_ROOT}/slurm_scripts/amoc-min-run.sh" \
+      --experiment "${EXPERIMENT}" \
+      --server-url "${VLLM_URL}" \
+      --model "${MODEL}" \
+      --personas "${PERSONA_FILES[@]}" \
+      --out "${RUN_OUTPUT_DIR}" \
+      --temperature "${TEMPERATURE:-0.0}" \
+      --workers "${WORKERS:-10}" \
+      ${LIMIT:+--limit ${LIMIT}} \
+      ${MAX_ITEMS:+--max-items ${MAX_ITEMS}} \
+      ${LLM_DECAY:+--llm-decay} \
+      ${LLM_SCORE:+--llm-score} \
+      ${PERSONA_DECAY:+--persona-decay}
+  exit $?
+fi
 
 OMP_NUM_THREADS=1 bash "${PROJECT_ROOT}/slurm_scripts/amoc-min-run.sh" \
     --server-url "${VLLM_URL}" \

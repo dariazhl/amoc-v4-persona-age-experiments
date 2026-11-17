@@ -9,6 +9,9 @@ SIF_IMAGE="/export/projects/nlp/containers/daria-vllm-updated.sif"
 PROJECT_ROOT="/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments"
 OUTPUT_DIR="${OUTPUT_DIR:-/export/projects/nlp/daria_amoc_output}"
 
+# AMOC_MIN_MODULE picks the entry point: amoc_min.run (the knight story,
+# default) or amoc_min.run_texts (Keefe / O'Brien). It selects a program,
+# not a parameter, so the no-env-defaults rule above still holds.
 [ -f "$SIF_IMAGE" ] || { echo "ERROR: container not found at $SIF_IMAGE"; exit 1; }
 mkdir -p "${OUTPUT_DIR}"
 
@@ -31,6 +34,7 @@ apptainer exec --nv \
     "$SIF_IMAGE" \
     bash -c '
         cd "$1" || exit 1
-        shift
-        exec python3 -m amoc_min.run "$@"
-    ' bash "${PROJECT_ROOT}" "$@"
+        module="$2"
+        shift 2
+        exec python3 -m "$module" "$@"
+    ' bash "${PROJECT_ROOT}" "${AMOC_MIN_MODULE:-amoc_min.run}" "$@"
