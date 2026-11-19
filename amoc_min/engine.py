@@ -38,13 +38,55 @@ from .prompts import (INFERENCE_NUDGE, INFER_OBJECTS,
 
 
 def _parse(text, default):
-    m = re.search(r"\{.*\}|\[.*\]", text or "", re.S)
-    if not m:
-        return default
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return default
+    """First JSON value in a reply. When the caller's default is a dict (every
+    caller here does .get on the result), only ever return a dict: some models
+    (Qwen3.8) answer a bare list, or prefix the object with a bracketed
+    aside, and the old 'earliest { or [' rule handed that list straight to
+    .get(). For a reply that opens with '{' the result is unchanged."""
+    text = text or ""
+    if not isinstance(default, dict):
+        m = re.search(r"\{.*\}|\[.*\]", text, re.S)
+        if not m:
+            return default
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return default
+
+    def as_dict(v):
+        if isinstance(v, dict):
+            return v
+        if isinstance(v, list) and len(v) == 1 and isinstance(v[0], dict):
+            return v[0]                     # [{...}] -> {...}
+        return None
+
+    m = re.search(r"\{.*\}", text, re.S)    # widest {...}: the old behaviour
+    if m:
+        try:
+            v = as_dict(json.loads(m.group(0)))
+            if v is not None:
+                return v
+        except json.JSONDecodeError:
+            pass
+    m = re.search(r"\[.*\]", text, re.S)
+    if m:
+        try:
+            v = as_dict(json.loads(m.group(0)))
+            if v is not None:
+                return v
+        except json.JSONDecodeError:
+            pass
+    dec = json.JSONDecoder()                # first well-formed {...} anywhere
+    for s in re.finditer(r"\{", text):
+        try:
+            v, _ = dec.raw_decode(text, s.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(v, dict):
+            return v
+    if text.strip():
+        logging.warning("unparseable reply, using default: %r", text[:200])
+    return default
 
 
 def _triplets(raw):
@@ -109,7 +151,28 @@ class LLM:
         req = urllib.request.Request(self.url, body,
                                      {"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=C.TIMEOUT) as r:
-            return json.load(r)["choices"][0]["message"]["content"]
+            raw = r.read().decode("utf-8", "replace")
+        # Fail with the server's actual reply, not a bare NoneType: a new model
+        # can answer 200 with no choices, or put everything in its reasoning
+        # channel and leave content null (a hybrid left in thinking mode).
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            data = None
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if not choices:
+            raise RuntimeError(f"{self.model}: no choices in server reply: "
+                               f"{raw[:500]!r}")
+        msg = choices[0].get("message") or {}
+        content = msg.get("content")
+        if content is None:
+            raise RuntimeError(
+                f"{self.model}: empty content (finish_reason="
+                f"{choices[0].get('finish_reason')!r}, reasoning chars="
+                f"{len(msg.get('reasoning_content') or msg.get('reasoning') or '')})"
+                f" -- if reasoning is non-zero the model is still thinking; "
+                f"check VLLM_EXTRA_ARGS / enable_thinking")
+        return re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
 
 
 def _validate(sentence, triplets, log=None, existing=()):

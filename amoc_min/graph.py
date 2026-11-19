@@ -338,12 +338,15 @@ class Graph:
 
         for e in self.edges:
             key = N.relation_key(e.label)
-            if llm_rule:
-                # The model still calls this relation CONTINUOUS, so it is
-                # still in mind however long ago its word last appeared.
-                if e.active and e.relevance >= 2:
-                    _touch(key)
-            elif key in lemmas:              # the text rule (default)
+            if llm_rule and e.active and e.relevance >= 2:
+                # The model still calls this relation CONTINUOUS: it may slow
+                # ageing (LLM_AGE_RETAIN < 1), never stop it.
+                _touch(key)
+            if key in lemmas:
+                # Its own word in the text resets its age under BOTH rules, as
+                # amoc-v5 resets seniority on an explicit re-mention. This used
+                # to be text-rule only; with LLM_AGE_RETAIN = 1.0 that left a
+                # restated relation ageing forever under --llm-decay.
                 self._last_stated[key] = sentence
 
         if llm_rule:

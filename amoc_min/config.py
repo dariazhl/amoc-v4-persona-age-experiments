@@ -169,8 +169,16 @@ PERSONA_IN_DECAY = False
 # The cap is what gives the live set a ceiling; without it no choice of the
 # other two bounds it on a long text.
 LLM_DROP_FADING     = True    # score 1 -> remove, as v5 does
-LLM_CARRYOVER_CAP   = 5       # v5 MAX_CARRYOVER_NODES
-LLM_AGE_RETAIN      = 0.5     # fraction of age kept on a relevance-2 reset
+# 2026-11-20: 5 -> 10 and 0.5 -> 1.0. With cap 5 the only carried tokens to
+# survive were fresh onset 5s, so every decaying value (3.5, 2.5, 2.0) was
+# zeroed and the --llm-decay matrix came out binary 0/5 (Llama-4-Scout run).
+# amoc-v5 uses MAX_CARRYOVER = 10 (amoc/config/constants.py) and ages a
+# concept from when it was first seen, resetting only on an explicit
+# re-mention -- relevance keeps a relation ACTIVE but never makes it fresh.
+# Offline (llama70b story analysis, every edge rated 2): old values {5, 3.5};
+# new values {5, 4, 3, 2.5, 2, 1.5}. Read only under --llm-decay.
+LLM_CARRYOVER_CAP   = 10      # v5 MAX_CARRYOVER
+LLM_AGE_RETAIN      = 1.0     # relevance-2 keeps the full age (v5 seniority)
 
 # Never deactivate an edge whose removal would split the active graph.
 # v5 pipeline/decay.py can_remove_edge()/has_alternative_path().

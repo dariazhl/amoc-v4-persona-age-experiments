@@ -55,11 +55,28 @@ def test_text_rule_ages_when_the_word_is_absent(ageing):
     assert ride_at_s3(relevance=2) == pytest.approx(3.0)
 
 
-def test_llm_rule_keeps_a_relation_the_model_still_calls_relevant(ageing):
+def test_llm_rule_relevance_keeps_a_relation_but_does_not_make_it_fresh(ageing):
     ageing(C.AGEING_LLM)
-    # the word is gone from the text, but the model still scores the edge 2,
-    # so it does not age at all -- the opposite of the text rule
-    assert ride_at_s3(relevance=2) == pytest.approx(5.0)
+    # amoc-v5 semantics (LLM_AGE_RETAIN = 1.0, 2026-11-20): the model scoring
+    # the edge 2 keeps it ACTIVE, but it still ages from its last mention --
+    # it used to be held at 5.0, which is what made --llm-decay matrices 0/5.
+    assert ride_at_s3(relevance=2) == pytest.approx(3.0)
+
+
+def test_llm_rule_resets_a_relation_its_own_word_restates(ageing):
+    """v5 resets seniority on an explicit re-mention, under either rule."""
+    ageing(C.AGEING_LLM)
+    g = Graph()
+    e = g.add("knight", "rode through", "forest", "text", 1)
+    e.relevance = 2
+    hist, col = {}, {}
+    for i, words in enumerate([["knight", "ride", "forest"],
+                               ["knight", "country"],
+                               ["knight", "ride"]], 1):   # S3 says `ride` again
+        col = g.activation([("knight",)], i, hist, sentence_lemmas=words)
+        for t in set(hist) | set(col):
+            hist.setdefault(t, []).append(col.get(t, 0.0))
+    assert col.get("ride", 0.0) == pytest.approx(5.0)
 
 
 def test_llm_rule_ages_a_relation_the_model_has_let_go(ageing):
@@ -70,12 +87,32 @@ def test_llm_rule_ages_a_relation_the_model_has_let_go(ageing):
 
 
 def test_the_two_rules_disagree(ageing):
-    """If they ever agree everywhere the flag is pointless, so pin it."""
-    out = {}
+    """If they ever agree everywhere the flag is pointless, so pin it.
+
+    Since ageing is shared (v5), the rules now differ in what the model's
+    judgement REMOVES: a FADING (1) edge is deactivated under --llm-decay, as
+    v5 decay.py does, and left alone under the text rule. A triangle, so no
+    edge is a bridge that PROTECT_BRIDGES would keep."""
+    import json
+    from .engine import _reactivate
+
+    class Fading:
+        def ask(self, prompt):
+            ns = [int(l.split(".")[0]) for l in prompt.splitlines()
+                  if l.strip()[:1].isdigit() and "." in l]
+            return json.dumps({"scores": [{"n": n, "score": 1} for n in ns]})
+
+    forget = {}
     for mode in (C.AGEING_TEXT, C.AGEING_LLM):
         ageing(mode)
-        out[mode] = ride_at_s3(relevance=2)
-    assert out[C.AGEING_TEXT] != out[C.AGEING_LLM], out
+        g = Graph()
+        e = g.add("knight", "rode through", "forest", "text", 1)
+        g.add("knight", "rides", "horse", "text", 1)
+        g.add("horse", "runs through", "forest", "text", 1)
+        _reactivate(Fading(), g, list(g.nodes.values()), "ctx", [],
+                    sentence_text="The knight met a dragon.")
+        forget[mode] = e.forget             # fade() steps it down by one
+    assert forget[C.AGEING_LLM] < forget[C.AGEING_TEXT], forget
 
 
 def test_flag_names_exist_for_run_py_to_select_between():
@@ -105,11 +142,15 @@ def forest_at_s3(relevance, mode):
     return col.get("forest", 0.0)
 
 
-def test_llm_rule_holds_a_concept_the_model_still_calls_relevant(ageing):
+def test_llm_rule_ages_a_concept_the_model_still_calls_relevant(ageing):
     ageing(C.AGEING_LLM)
-    # the model says the relation is still current, so the concept is too
-    # one hop from the stated `knight`, age held at 0: 5 - SCORE_PER_HOP*1
-    assert forest_at_s3(relevance=2, mode=C.AGEING_LLM) == pytest.approx(3.5)
+    # v5 semantics: relevance keeps the knight-forest edge traversable, but
+    # `forest` still ages from its last mention, exactly as under the text
+    # rule. (Pre-2026-11-20 it was held at 3.5, age 0, for as long as the
+    # model said yes.)
+    held = forest_at_s3(relevance=2, mode=C.AGEING_LLM)
+    assert held == pytest.approx(forest_at_s3(relevance=2, mode=C.AGEING_TEXT))
+    assert held < 3.5
 
 
 def test_llm_rule_lets_a_concept_go_when_the_model_does(ageing):
@@ -118,10 +159,11 @@ def test_llm_rule_lets_a_concept_go_when_the_model_does(ageing):
     assert forest_at_s3(relevance=1, mode=C.AGEING_LLM) < 5.0
 
 
-def test_the_flag_moves_concept_rows_not_only_relation_rows(ageing):
-    """The regression this fixes: the flag used to touch only the 7 relation
-    labels among the reference's 20 tokens, leaving every concept row scored
-    by surface mentions whichever rule was selected."""
+def test_a_partial_age_retain_still_moves_concept_rows(ageing, monkeypatch):
+    """The older regression, kept: whenever relevance is allowed to slow
+    ageing (LLM_AGE_RETAIN < 1), it must reach CONCEPT rows, not only the 7
+    relation labels among the reference's 20 tokens."""
+    monkeypatch.setattr(C, "LLM_AGE_RETAIN", 0.0)
     out = {}
     for mode in (C.AGEING_TEXT, C.AGEING_LLM):
         ageing(mode)
