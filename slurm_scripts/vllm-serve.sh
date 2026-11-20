@@ -25,6 +25,18 @@ mkdir -p "${COMPILE_CACHE}"/{vllm,triton,inductor}
 # Empty for every model that does not set it, so older callers are unchanged.
 read -r -a EXTRA_ARGS <<< "${VLLM_EXTRA_ARGS:-}"
 
+# Optional Python overlay: a folder of packages (pip install --target) put
+# AHEAD of the container's own site-packages. Gemma-4 needs transformers 5.x;
+# the container ships 4.57.6, but its vLLM 0.19.0 already has
+# Gemma4ForConditionalGeneration, so only transformers has to be newer.
+# Unset for every other model, which therefore keeps the container's stack.
+OVERLAY_ARGS=()
+if [[ -n "${PYTHON_OVERLAY:-}" ]]; then
+    [[ -d "${PYTHON_OVERLAY}" ]] || { echo "ERROR: PYTHON_OVERLAY ${PYTHON_OVERLAY} not found"; exit 1; }
+    OVERLAY_ARGS=(--env PYTHONPATH="${PYTHON_OVERLAY}" -B "${PYTHON_OVERLAY}:${PYTHON_OVERLAY}")
+    echo "python overlay: ${PYTHON_OVERLAY}"
+fi
+
 exec apptainer exec --nv \
     --env HF_HOME="${HF_HOME}" \
     --env HF_TOKEN_PATH="${HF_TOKEN_PATH}" \
@@ -36,6 +48,7 @@ exec apptainer exec --nv \
     -B "${HF_HOME}:${HF_HOME}" \
     -B "${HF_HUB_CACHE}:${HF_HUB_CACHE}" \
     -B "${COMPILE_CACHE}:${COMPILE_CACHE}" \
+    ${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"} \
     "$SIF_IMAGE" \
     python3 -m vllm.entrypoints.openai.api_server \
         --model "${MODEL}" \

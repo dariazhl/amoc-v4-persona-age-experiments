@@ -23,5 +23,12 @@ export TP=2
 export WORKERS="${WORKERS:-16}"
 export HF_HUB_CACHE="/export/projects/nlp/.cache/hub"
 export HF_HUB_OFFLINE=1
+# The container's transformers (4.57.6) does not know model_type `gemma4`
+# (checkpoint saved with 5.5.0.dev0); its vLLM 0.19.0 does have
+# Gemma4ForConditionalGeneration. A newer transformers is layered on top only
+# for this model -- see PYTHON_OVERLAY in vllm-serve.sh. Build it once with:
+#   apptainer exec /export/projects/nlp/containers/daria-vllm-updated.sif \
+#     pip install --target /export/projects/nlp/daria_pyoverlay "transformers>=5.5"
+export PYTHON_OVERLAY="${PYTHON_OVERLAY:-/export/projects/nlp/daria_pyoverlay}"
 
 exec bash "/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments/slurm_scripts/amoc-min-persona-modularity-body.sh"
