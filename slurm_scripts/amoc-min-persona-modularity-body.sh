@@ -31,14 +31,23 @@ export OUTPUT_DIR="${OUTPUT_ROOT}"
 # id. Two runs that differ only by the decay rule want names that say so.
 MODEL_SLUG="$(basename "${MODEL}" | tr '[:upper:]' '[:lower:]')"
 RUN_OUTPUT_DIR="${RUN_OUTPUT_DIR:-${OUTPUT_ROOT}/amoc_min/${MODEL_SLUG}/run_${SLURM_JOB_ID}}"
-mkdir -p "${RUN_OUTPUT_DIR}"
+# DECAY_RULES="llm_score llm_decay" runs several decay rules back to back in
+# THIS job, against one vLLM server: the first rule writes story_analysis.json
+# and every later rule reuses it, so the A/B differs by the decay rule only --
+# without a second job, a --dependency, or a second model load. Each rule
+# writes to ${RUN_OUTPUT_DIR}_<rule>. Unset = the old single-rule behaviour.
+# Rules: text | llm_decay | llm_score
+DECAY_RULES="${DECAY_RULES:-}"
+[[ -n "${DECAY_RULES}" ]] || mkdir -p "${RUN_OUTPUT_DIR}"
 
 mapfile -t PERSONA_FILES < <(ls "${CHUNKS_DIR}"/*.csv | sort)
 [[ ${#PERSONA_FILES[@]} -gt 0 ]] || { echo "ERROR: no persona CSVs in ${CHUNKS_DIR}"; exit 1; }
 
 echo "amoc_min | ${MODEL} | TP=${TP} | ${#PERSONA_FILES[@]} persona files"
 echo "workers: ${WORKERS:-16} | out: ${RUN_OUTPUT_DIR} | node $(hostname)"
-if [[ -n "${LLM_SCORE:-}" ]]; then
+if [[ -n "${DECAY_RULES}" ]]; then
+  echo "relation ageing: ${DECAY_RULES} -- in sequence, one shared story analysis"
+elif [[ -n "${LLM_SCORE:-}" ]]; then
   echo "relation ageing: llm_score -- the model's 0-5 rating is the activation (--llm-score)"
 elif [[ -n "${LLM_DECAY:-}" ]]; then
   echo "relation ageing: llm -- from NARRATIVE_RELEVANCE score 2 (--llm-decay)"
@@ -96,19 +105,50 @@ if [[ -n "${EXPERIMENT:-}" ]]; then
   exit $?
 fi
 
-OMP_NUM_THREADS=1 bash "${PROJECT_ROOT}/slurm_scripts/amoc-min-run.sh" \
-    --server-url "${VLLM_URL}" \
-    --model "${MODEL}" \
-    --personas "${PERSONA_FILES[@]}" \
-    --out "${RUN_OUTPUT_DIR}" \
-    --temperature "${TEMPERATURE:-0.0}" \
-    --graphs \
-    --workers "${WORKERS:-16}" \
-    ${LIMIT:+--limit ${LIMIT}} \
-    ${FIX_KILLED:+--fix-killed} \
-    ${ALLOW_PERSONA_WORDS:+--allow-persona-words} \
-    ${LLM_DECAY:+--llm-decay} \
-    ${LLM_SCORE:+--llm-score} \
-    ${PERSONA_DECAY:+--persona-decay} \
-    ${STORY_ANALYSIS:+--story-analysis "${STORY_ANALYSIS}"} \
-    --score
+# One knight-story pass. Args: out_dir llm_decay(0/1) llm_score(0/1) [story_analysis]
+run_knight() {
+    local out="$1" use_decay="$2" use_score="$3" story="${4:-}"
+    local flags=()
+    [[ "${use_decay}" == 1 ]] && flags+=(--llm-decay)
+    [[ "${use_score}" == 1 ]] && flags+=(--llm-score)
+    [[ -n "${story}" ]] && flags+=(--story-analysis "${story}")
+    mkdir -p "${out}"
+    OMP_NUM_THREADS=1 bash "${PROJECT_ROOT}/slurm_scripts/amoc-min-run.sh" \
+        --server-url "${VLLM_URL}" \
+        --model "${MODEL}" \
+        --personas "${PERSONA_FILES[@]}" \
+        --out "${out}" \
+        --temperature "${TEMPERATURE:-0.0}" \
+        --graphs \
+        --workers "${WORKERS:-16}" \
+        ${LIMIT:+--limit ${LIMIT}} \
+        ${FIX_KILLED:+--fix-killed} \
+        ${ALLOW_PERSONA_WORDS:+--allow-persona-words} \
+        ${PERSONA_DECAY:+--persona-decay} \
+        ${flags[@]+"${flags[@]}"} \
+        --score
+}
+
+if [[ -z "${DECAY_RULES}" ]]; then
+    run_knight "${RUN_OUTPUT_DIR}" \
+        "$([[ -n "${LLM_DECAY:-}" ]] && echo 1 || echo 0)" \
+        "$([[ -n "${LLM_SCORE:-}" ]] && echo 1 || echo 0)" \
+        "${STORY_ANALYSIS:-}"
+    exit $?
+fi
+
+# Several rules, one job. The first rule builds the story analysis (unless
+# STORY_ANALYSIS points at an existing one); every later rule reuses it.
+SHARED_STORY="${STORY_ANALYSIS:-}"
+for rule in ${DECAY_RULES}; do
+    out="${RUN_OUTPUT_DIR}_${rule}"
+    case "${rule}" in
+        text)      d=0; s=0 ;;
+        llm_decay) d=1; s=0 ;;
+        llm_score) d=0; s=1 ;;
+        *) echo "ERROR: unknown decay rule '${rule}' (text|llm_decay|llm_score)"; exit 5 ;;
+    esac
+    echo "==== decay rule: ${rule} -> ${out} (story analysis: ${SHARED_STORY:-built here})"
+    run_knight "${out}" "${d}" "${s}" "${SHARED_STORY}"
+    SHARED_STORY="${SHARED_STORY:-${out}/story_analysis.json}"
+done
