@@ -18,7 +18,14 @@
 #   RULES="llm_score llm_decay" bash slurm_scripts/submit_keefe_models.sh
 #   LIMIT=1 MAX_ITEMS=6 TAG=smoke bash slurm_scripts/submit_keefe_models.sh   # smoke test
 #   DRY_RUN=1 bash slurm_scripts/submit_keefe_models.sh             # print, submit nothing
+#
+# EXPERIMENT=obrien runs O'Brien et al. (1998) through the same path instead;
+# submit_obrien_models.sh is that, ready-made. Jobs and folders are named
+# after the experiment: <experiment>_<model>_<rule>, <experiment>_<TAG>_<rule>.
 set -euo pipefail
+
+EXPERIMENT="${EXPERIMENT:-keefe}"
+case "${EXPERIMENT}" in keefe|obrien) ;; *) echo "ERROR: EXPERIMENT must be keefe or obrien"; exit 1 ;; esac
 
 PROJECT_ROOT="/export/home/acs/stud/a/ana_daria.zahaleanu/to_transfer/amoc-v4-persona-age-experiments"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/export/projects/nlp/daria_amoc_output}"
@@ -53,14 +60,15 @@ for m in ${MODELS}; do
             llm_decay) flags=(LLM_DECAY=1) ;;
             *) echo "ERROR: unknown rule '${rule}' (text|llm_score|llm_decay)"; exit 1 ;;
         esac
-        out="${OUTPUT_ROOT}/amoc_min/${slug}/keefe_${TAG}_${rule}"
-        envs=(EXPERIMENT=keefe RUN_OUTPUT_DIR="${out}" LIMIT="${LIMIT}" WORKERS="${WORKERS}"
+        out="${OUTPUT_ROOT}/amoc_min/${slug}/${EXPERIMENT}_${TAG}_${rule}"
+        name="${EXPERIMENT}_${m}_${rule}"
+        envs=(EXPERIMENT="${EXPERIMENT}" RUN_OUTPUT_DIR="${out}" LIMIT="${LIMIT}" WORKERS="${WORKERS}"
               ${MAX_ITEMS:+MAX_ITEMS="${MAX_ITEMS}"} ${flags[@]+"${flags[@]}"})
         if [[ -n "${DRY_RUN:-}" ]]; then
-            echo "[dry] env ${envs[*]} sbatch --job-name=keefe_${m}_${rule} ${script}"
+            echo "[dry] env ${envs[*]} sbatch --job-name=${name} ${script}"
             continue
         fi
-        job_id=$(env "${envs[@]}" sbatch --parsable --job-name="keefe_${m}_${rule}" "${script}")
-        echo "${m} ${rule}: job=${job_id} -> ${out}"
+        job_id=$(env "${envs[@]}" sbatch --parsable --job-name="${name}" "${script}")
+        echo "${EXPERIMENT} ${m} ${rule}: job=${job_id} -> ${out}"
     done
 done
