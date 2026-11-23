@@ -331,6 +331,25 @@ that is not in the text, or is about something the text does not concern.
 Reply with JSON and nothing else, one entry per number:
 {{"judgements": [{{"n": <number>, "inferable": true/false}}]}}"""
 
+# The same judge with a lower bar (--loose-license): "plausible given the text"
+# instead of "necessarily or very probably true". Still persona-free, and it
+# still rejects contradictions and unrelated content.
+NEUTRAL_LICENSE_LOOSE = """You are checking whether candidate inferences are plausible given a text.
+
+Text so far: "{context}"
+Current sentence: "{sentence}"
+
+Candidate inferred relationships:
+{candidates}
+
+For each one, say whether a reader could plausibly infer it from the text
+above: it fits what the text states, even if the text does not make it certain
+or very probable, and nothing in the text contradicts it. Mark it false only if
+the text contradicts it, or it is about something the text does not concern.
+
+Reply with JSON and nothing else, one entry per number:
+{{"judgements": [{{"n": <number>, "inferable": true/false}}]}}"""
+
 # Step 4: a stricter selection. Unlike READER_INFERENCES it does not present
 # the list as already supported by the text, and it states that readers miss
 # connections -- without saying which readers, so it does not build the

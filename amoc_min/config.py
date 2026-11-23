@@ -173,11 +173,16 @@ PERSONA_IN_DECAY = False
 #                       that must be stated and justified in the paper.
 #   PERSONA_IN_DECAY    step 6: above, --persona-decay.
 #
+#   LOOSE_LICENSE       step 3: the judge keeps what is PLAUSIBLE given the text
+#                       (NEUTRAL_LICENSE_LOOSE) rather than necessarily or very
+#                       probably true. Only matters with PERSONA_GENERATES.
+#
 # --persona-strong turns on PERSONA_GENERATES, READER_CAPACITY and
-# PERSONA_IN_DECAY; --strict-selection is separate.
+# PERSONA_IN_DECAY; --strict-selection and --loose-license are separate.
 PERSONA_GENERATES = False
 STRICT_SELECTION  = False
 READER_CAPACITY   = False
+LOOSE_LICENSE     = False
 
 # Share of the default working-memory capacity a reader of each regime has.
 # Scales MAX_CARRYOVER_NODES (what the prompt shows as still held in mind),
@@ -200,11 +205,12 @@ def capacity_for(regime):
 def apply_persona_cfg(cfg):
     """Re-apply the persona switches in a spawned worker, which re-imports
     this module at its defaults."""
-    global PERSONA_IN_DECAY, PERSONA_GENERATES, STRICT_SELECTION, READER_CAPACITY
+    global PERSONA_IN_DECAY, PERSONA_GENERATES, STRICT_SELECTION, READER_CAPACITY, LOOSE_LICENSE
     PERSONA_IN_DECAY = bool(cfg.get("persona_decay", PERSONA_IN_DECAY))
     PERSONA_GENERATES = bool(cfg.get("persona_generates", PERSONA_GENERATES))
     STRICT_SELECTION = bool(cfg.get("strict_selection", STRICT_SELECTION))
     READER_CAPACITY = bool(cfg.get("reader_capacity", READER_CAPACITY))
+    LOOSE_LICENSE = bool(cfg.get("loose_license", LOOSE_LICENSE))
 
 # --- the LLM rule as a STANDALONE mode -------------------------------------
 # On its own the relevance rule has no equilibrium: a score of 2 keeps an edge

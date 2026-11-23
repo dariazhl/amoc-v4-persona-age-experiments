@@ -13,7 +13,7 @@
 #            STORY_ANALYSIS  RUN_OUTPUT_DIR  OUTPUT_ROOT
 #            FIX_KILLED  ALLOW_PERSONA_WORDS
 #            PERSONA_STRONG (= PERSONA_GENERATES + READER_CAPACITY + PERSONA_DECAY)
-#            PERSONA_GENERATES  READER_CAPACITY  STRICT_SELECTION
+#            PERSONA_GENERATES  READER_CAPACITY  STRICT_SELECTION  LOOSE_LICENSE
 
 set -euo pipefail
 
@@ -47,7 +47,7 @@ mapfile -t PERSONA_FILES < <(ls "${CHUNKS_DIR}"/*.csv | sort)
 
 echo "amoc_min | ${MODEL} | TP=${TP} | ${#PERSONA_FILES[@]} persona files"
 echo "workers: ${WORKERS:-16} | out: ${RUN_OUTPUT_DIR} | node $(hostname)"
-echo "persona: strong=${PERSONA_STRONG:-0} generates=${PERSONA_GENERATES:-0} capacity=${READER_CAPACITY:-0} strict_selection=${STRICT_SELECTION:-0} decay=${PERSONA_DECAY:-0}"
+echo "persona: strong=${PERSONA_STRONG:-0} generates=${PERSONA_GENERATES:-0} capacity=${READER_CAPACITY:-0} strict_selection=${STRICT_SELECTION:-0} loose_license=${LOOSE_LICENSE:-0} decay=${PERSONA_DECAY:-0}"
 if [[ -n "${DECAY_RULES}" ]]; then
   echo "relation ageing: ${DECAY_RULES} -- in sequence, one shared story analysis"
 elif [[ -n "${LLM_SCORE:-}" ]]; then
@@ -108,7 +108,8 @@ if [[ -n "${EXPERIMENT:-}" ]]; then
       ${PERSONA_STRONG:+--persona-strong} \
       ${PERSONA_GENERATES:+--persona-generates} \
       ${READER_CAPACITY:+--reader-capacity} \
-      ${STRICT_SELECTION:+--strict-selection}
+      ${STRICT_SELECTION:+--strict-selection} \
+      ${LOOSE_LICENSE:+--loose-license}
   exit $?
 fi
 
@@ -136,6 +137,7 @@ run_knight() {
         ${PERSONA_GENERATES:+--persona-generates} \
         ${READER_CAPACITY:+--reader-capacity} \
         ${STRICT_SELECTION:+--strict-selection} \
+        ${LOOSE_LICENSE:+--loose-license} \
         ${flags[@]+"${flags[@]}"} \
         --score
 }

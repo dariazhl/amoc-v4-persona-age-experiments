@@ -35,6 +35,7 @@ from .prompts import (INFERENCE_NUDGE, INFER_OBJECTS,
                       RELATIONSHIPS_FIRST, REPLACE_PRONOUNS,
                       NARRATIVE_RELEVANCE, ACTIVATION_RATING,
                       READER_FRAME, READER_GENERATE_FRAME, NEUTRAL_LICENSE,
+                      NEUTRAL_LICENSE_LOOSE,
                       READER_INFERENCES_STRICT)
 
 
@@ -432,7 +433,8 @@ def _reader_generates(llm, g, persona, step, first, seen, banned):
     prompts the shared analysis uses, with the reader put in front. Then the
     two persona-free checks of step 3 that do not need a model: the
     persona-word ban and the structural validation. The neutral judge is
-    _neutral_license. Returns (candidates, n_proposed, n_banned)."""
+    _neutral_license. Returns (candidates, log): the log has one entry per
+    proposal, with status banned / invalid / valid."""
     words, sent = step["words"], step["sentence"]
     nft = _nodes_from_text(words)
     active = g.active_nodes()               # the reader's OWN graph, inferences included
@@ -463,16 +465,18 @@ def _reader_generates(llm, g, persona, step, first, seen, banned):
     # description but nowhere in the text came from the persona, not the text
     kept = [c for c in proposed
             if not (_content_lemmas(c["triplet"][0]) | _content_lemmas(c["triplet"][2])) & banned]
-    n_banned = len(proposed) - len(kept)
     valid = {tuple(t) for t in _validate(
         sent, [c["triplet"] for c in kept], None,
         existing=[(x.src.lemma, x.label, x.dst.lemma) for x in g.edges])}
-    out = []
-    for c in kept:
+    out, log = [], []
+    for c in proposed:
         key = tuple(normalize(x) for x in c["triplet"])
-        if key in valid:
+        status = ("banned" if not any(c is k for k in kept) else
+                  "valid" if key in valid else "invalid")
+        log.append({"triplet": list(key), "status": status})
+        if status == "valid":
             out.append({"triplet": list(key), "from": [normalize(p) for p in c["from"]]})
-    return out, len(proposed), n_banned
+    return out, log
 
 
 def _neutral_license(llm, context, sentence, candidates):
@@ -485,7 +489,8 @@ def _neutral_license(llm, context, sentence, candidates):
         return [], False
     lines = [f"{i}. {s} -- {r} -> {o}" for i, (s, r, o) in
              enumerate(c["triplet"] for c in candidates)]
-    out = _parse(llm.ask(NEUTRAL_LICENSE.format(
+    tmpl = NEUTRAL_LICENSE_LOOSE if C.LOOSE_LICENSE else NEUTRAL_LICENSE
+    out = _parse(llm.ask(tmpl.format(
         context=context, sentence=sentence, candidates="\n".join(lines))), {})
     judged = [j for j in (out.get("judgements") or []) if isinstance(j, dict)]
     if not judged:
@@ -554,11 +559,12 @@ def read(passes, llm=None, persona=None, allow_persona_words=False,
             # steps 2-3: the reader proposes, the persona-word ban and the
             # neutral judge decide what counts as an inference from the text
             g.refresh_scores([tuple(k) for k in step["stated"]])
-            own, n_prop, n_ban = _reader_generates(llm, g, persona, step, i == 1,
-                                                   seen, banned)
+            own, plog = _reader_generates(llm, g, persona, step, i == 1, seen, banned)
             context = " ".join(p["sentence"] for p in passes[:i])
             licensed, failed = _neutral_license(llm, context, step["sentence"], own)
-            gen = {"proposed": n_prop, "banned": n_ban, "valid": len(own),
+            gen = {"proposed": len(plog),
+                   "banned": sum(p["status"] == "banned" for p in plog),
+                   "valid": len(own),
                    "licensed": len(licensed), "license_failed": failed}
             candidates = _attaching(licensed, main)
         else:
@@ -588,6 +594,16 @@ def read(passes, llm=None, persona=None, allow_persona_words=False,
                     seen.append(x)
         counts.append({"candidates": len(candidates), "drawn": len(drawn),
                        "stranded": stranded, "said": said, **gen})
+
+        if generates:                         # what became of every proposal
+            lic = {tuple(c["triplet"]) for c in licensed}
+            got = {tuple(c["triplet"]) for c in added}
+            for p in plog:
+                if p["status"] == "valid":
+                    k = tuple(p["triplet"])
+                    p["status"] = ("drawn" if k in got else
+                                   "licensed_not_drawn" if k in lic else "rejected")
+            counts[-1]["proposals"] = plog
 
         stated_keys = [tuple(k) for k in step["stated"]]
         g.refresh_scores(stated_keys)

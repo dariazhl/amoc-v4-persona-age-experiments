@@ -64,6 +64,16 @@ def score(columns, ref, order):
     return out
 
 
+def write_proposals(path, rows):
+    """Every inference the readers proposed and what became of it (banned,
+    invalid, rejected by the judge, licensed_not_drawn, drawn)."""
+    if rows:
+        with open(path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0]))
+            w.writeheader()
+            w.writerows(rows)
+
+
 def _one_reader(args):
     """One reader, start to finish. Module level and taking only plain data,
     so it can run in a worker process.
@@ -114,6 +124,11 @@ def _one_reader(args):
         with open(os.path.join(cfg["out"], "graphs", f"{r['tag']}.json"), "w") as f:
             json.dump(snaps, f, indent=1)
     rec = {k: r[k] for k in ("tag", "regime", "idx")}
+    write_proposals(os.path.join(cfg["out"], f"proposals_{r['tag']}.csv"), [
+        {"tag": r["tag"], "regime": r["regime"], "sentence": i,
+         "source": p["triplet"][0], "verb": p["triplet"][1],
+         "object": p["triplet"][2], "status": p["status"]}
+        for i, c in enumerate(counts, 1) for p in c.pop("proposals", [])])
     rec["reader inferences"] = counts
     rec["n_candidates"] = sum(c["candidates"] for c in counts)
     rec["n_inferred"] = sum(c["drawn"] for c in counts)
@@ -211,6 +226,9 @@ def main():
     ap.add_argument("--strict-selection", action="store_true",
                     help="selection prompt that does not present candidates "
                          "as already supported by the text (step 4)")
+    ap.add_argument("--loose-license", action="store_true",
+                    help="the neutral judge accepts what is plausible given "
+                         "the text (needs --persona-generates)")
     ap.add_argument("--reader-capacity", action="store_true",
                     help="working-memory capacity by regime "
                          "(config.READER_CAPACITY_BY_REGIME, step 5)")
@@ -223,6 +241,8 @@ def main():
     a = ap.parse_args()
     if a.persona_strong:
         a.persona_generates = a.reader_capacity = a.persona_decay = True
+    if a.loose_license and not a.persona_generates:
+        ap.error("--loose-license only applies with --persona-generates")
 
     os.makedirs(a.out, exist_ok=True)
     # Set before anything builds a graph: graph.activation reads it per edge.
@@ -238,7 +258,8 @@ def main():
           f" persona_decay={a.persona_decay}"
           f" persona_generates={a.persona_generates}"
           f" strict_selection={a.strict_selection}"
-          f" reader_capacity={a.reader_capacity}", flush=True)
+          f" reader_capacity={a.reader_capacity}"
+          f" loose_license={a.loose_license}", flush=True)
     # The reference matrix is only needed for --score. Load it lazily and
     # degrade to generation-only if it is missing, rather than throwing away
     # a 90-second model load over an optional file.
@@ -273,7 +294,8 @@ def main():
             "server_url", "temperature")}
     cfg["relation_ageing"] = C.RELATION_AGEING
     cfg["persona_decay"] = a.persona_decay
-    for k in ("persona_generates", "strict_selection", "reader_capacity"):
+    for k in ("persona_generates", "strict_selection", "reader_capacity",
+              "loose_license"):
         cfg[k] = getattr(a, k)
     tasks = [(r, cfg, passes, ref, order) for r in runs]
 
@@ -313,7 +335,8 @@ def main():
         rec["relation_ageing"] = C.RELATION_AGEING
         rec["llm_decay"] = bool(a.llm_decay)
         rec["persona_decay"] = bool(a.persona_decay)
-        for k in ("persona_generates", "strict_selection", "reader_capacity"):
+        for k in ("persona_generates", "strict_selection", "reader_capacity",
+              "loose_license"):
             rec[k] = bool(getattr(a, k))
         rec["capacity"] = C.READER_CAPACITY_BY_REGIME.get(rec.get("regime"), 1.0) \
             if a.reader_capacity and rec.get("tag") != "baseline" else 1.0

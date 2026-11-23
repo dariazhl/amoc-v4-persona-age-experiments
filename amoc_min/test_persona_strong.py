@@ -41,7 +41,7 @@ class Fake:
 
     def ask(self, p):
         self.prompts.append(p)
-        if "checking whether candidate inferences follow" in p:        # NEUTRAL_LICENSE
+        if "checking whether candidate inferences" in p:        # NEUTRAL_LICENSE
             n = p.count(" -- ")
             return json.dumps({"judgements": [{"n": i, "inferable": self.license_ok}
                                               for i in range(n)]})
@@ -61,7 +61,8 @@ class Fake:
 
 @pytest.fixture
 def switches(monkeypatch):
-    for k in ("PERSONA_GENERATES", "STRICT_SELECTION", "READER_CAPACITY", "PERSONA_IN_DECAY"):
+    for k in ("PERSONA_GENERATES", "STRICT_SELECTION", "READER_CAPACITY", "PERSONA_IN_DECAY",
+              "LOOSE_LICENSE"):
         monkeypatch.setattr(C, k, False)
     return lambda **kw: [monkeypatch.setattr(C, k, v) for k, v in kw.items()]
 
@@ -160,3 +161,28 @@ def test_apply_persona_cfg_reaches_a_fresh_worker(switches):
                          "strict_selection": False, "persona_decay": True})
     assert C.PERSONA_GENERATES and C.READER_CAPACITY and C.PERSONA_IN_DECAY
     assert not C.STRICT_SELECTION
+
+
+def test_loose_license_swaps_the_judge_prompt_and_stays_persona_free(switches):
+    for loose in (False, True):
+        switches(PERSONA_GENERATES=True, LOOSE_LICENSE=loose)
+        llm = Fake()
+        read(passes(), llm=llm, persona=PERSONA)
+        lic = [p for p in llm.prompts if "checking whether candidate inferences" in p]
+        assert lic and all(("plausible given a text" in p) == loose for p in lic)
+        assert not any(PERSONA in p for p in lic)
+    C.apply_persona_cfg({"loose_license": True})
+    assert C.LOOSE_LICENSE
+
+
+@pytest.mark.parametrize("ok,status", [(True, "drawn"), (False, "rejected")])
+def test_every_proposal_is_logged_with_its_outcome(switches, ok, status):
+    switches(PERSONA_GENERATES=True)
+    _, counts, _, _ = read(passes(), llm=Fake(license_ok=ok), persona=PERSONA)
+    log = {p["triplet"][2]: p["status"] for p in counts[0]["proposals"]}
+    assert log == {"horse": status, "youtube": "banned"}
+
+
+def test_reader_without_generation_logs_no_proposals(switches):
+    _, counts, _, _ = read(passes(), llm=Fake(), persona=PERSONA)
+    assert all("proposals" not in c for c in counts)

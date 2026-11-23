@@ -34,7 +34,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from . import config as C
 from . import nlp as N
 from .engine import LLM, analyze_story, read, resolve
-from .run import load_personas
+from .run import load_personas, write_proposals
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ITEMS = {"keefe": os.path.join(ROOT, "amoc", "keefe_exp", "keefe_ready.json"),
@@ -153,7 +153,7 @@ def _analyse(args):
 def _one_reader(args):
     r, cfg, texts, analyses = args
     llm = _apply(cfg)
-    rows = []
+    rows, proposals = [], []
     for t in texts:
         passes = analyses.get(t["text_id"])
         if not passes:
@@ -174,9 +174,17 @@ def _one_reader(args):
                      "persona_generates": cfg.get("persona_generates", False),
                      "strict_selection": cfg.get("strict_selection", False),
                      "reader_capacity": cfg.get("reader_capacity", False),
+                     "loose_license": cfg.get("loose_license", False),
                      "n_drawn": sum(c["drawn"] for c in counts),
                      "n_proposed": sum(c.get("proposed", 0) for c in counts),
                      "n_licensed": sum(c.get("licensed", 0) for c in counts)})
+        proposals += [
+            {"tag": r["tag"], "regime": r["regime"], "item_id": t["item_id"],
+             "condition": t["condition"], "sentence": i,
+             "source": p["triplet"][0], "verb": p["triplet"][1],
+             "object": p["triplet"][2], "status": p["status"]}
+            for i, c in enumerate(counts, 1) for p in c.get("proposals", [])]
+    write_proposals(os.path.join(cfg["out"], f"proposals_{r['tag']}.csv"), proposals)
     return r["tag"], rows
 
 
@@ -216,17 +224,22 @@ def main():
     ap.add_argument("--persona-decay", action="store_true")
     ap.add_argument("--persona-generates", action="store_true")
     ap.add_argument("--strict-selection", action="store_true")
+    ap.add_argument("--loose-license", action="store_true",
+                    help="the neutral judge accepts what is plausible given "
+                         "the text (needs --persona-generates)")
     ap.add_argument("--reader-capacity", action="store_true")
     ap.add_argument("--persona-strong", action="store_true",
                     help="= --persona-generates --reader-capacity --persona-decay")
     a = ap.parse_args()
     if a.persona_strong:
         a.persona_generates = a.reader_capacity = a.persona_decay = True
+    if a.loose_license and not a.persona_generates:
+        ap.error("--loose-license only applies with --persona-generates")
     if a.llm_decay and a.llm_score:
         ap.error("--llm-decay and --llm-score are different rules; pick one")
 
     os.makedirs(a.out, exist_ok=True)
-    cfg = {"experiment": a.experiment, "server_url": a.server_url, "model": a.model,
+    cfg = {"experiment": a.experiment, "out": a.out, "loose_license": a.loose_license, "server_url": a.server_url, "model": a.model,
            "temperature": a.temperature, "persona_decay": a.persona_decay,
            "persona_generates": a.persona_generates,
            "strict_selection": a.strict_selection, "reader_capacity": a.reader_capacity,
@@ -236,7 +249,7 @@ def main():
     texts = texts_of(a.experiment, items[:a.max_items] if a.max_items else items)
     print(f"{a.experiment}: {len(texts)} texts | relation_ageing={cfg['relation_ageing']} "
           f"persona_decay={a.persona_decay} persona_generates={a.persona_generates} "
-          f"strict_selection={a.strict_selection} reader_capacity={a.reader_capacity} "
+          f"loose_license={a.loose_license} strict_selection={a.strict_selection} reader_capacity={a.reader_capacity} "
           f"| model={a.model}", flush=True)
 
     # 1. persona-free analysis of every text, once, shared by every reader
