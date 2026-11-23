@@ -12,6 +12,8 @@
 #            EXPERIMENT (keefe|obrien)  MAX_ITEMS
 #            STORY_ANALYSIS  RUN_OUTPUT_DIR  OUTPUT_ROOT
 #            FIX_KILLED  ALLOW_PERSONA_WORDS
+#            PERSONA_STRONG (= PERSONA_GENERATES + READER_CAPACITY + PERSONA_DECAY)
+#            PERSONA_GENERATES  READER_CAPACITY  STRICT_SELECTION
 
 set -euo pipefail
 
@@ -45,6 +47,7 @@ mapfile -t PERSONA_FILES < <(ls "${CHUNKS_DIR}"/*.csv | sort)
 
 echo "amoc_min | ${MODEL} | TP=${TP} | ${#PERSONA_FILES[@]} persona files"
 echo "workers: ${WORKERS:-16} | out: ${RUN_OUTPUT_DIR} | node $(hostname)"
+echo "persona: strong=${PERSONA_STRONG:-0} generates=${PERSONA_GENERATES:-0} capacity=${READER_CAPACITY:-0} strict_selection=${STRICT_SELECTION:-0} decay=${PERSONA_DECAY:-0}"
 if [[ -n "${DECAY_RULES}" ]]; then
   echo "relation ageing: ${DECAY_RULES} -- in sequence, one shared story analysis"
 elif [[ -n "${LLM_SCORE:-}" ]]; then
@@ -101,7 +104,11 @@ if [[ -n "${EXPERIMENT:-}" ]]; then
       ${MAX_ITEMS:+--max-items ${MAX_ITEMS}} \
       ${LLM_DECAY:+--llm-decay} \
       ${LLM_SCORE:+--llm-score} \
-      ${PERSONA_DECAY:+--persona-decay}
+      ${PERSONA_DECAY:+--persona-decay} \
+      ${PERSONA_STRONG:+--persona-strong} \
+      ${PERSONA_GENERATES:+--persona-generates} \
+      ${READER_CAPACITY:+--reader-capacity} \
+      ${STRICT_SELECTION:+--strict-selection}
   exit $?
 fi
 
@@ -125,6 +132,10 @@ run_knight() {
         ${FIX_KILLED:+--fix-killed} \
         ${ALLOW_PERSONA_WORDS:+--allow-persona-words} \
         ${PERSONA_DECAY:+--persona-decay} \
+        ${PERSONA_STRONG:+--persona-strong} \
+        ${PERSONA_GENERATES:+--persona-generates} \
+        ${READER_CAPACITY:+--reader-capacity} \
+        ${STRICT_SELECTION:+--strict-selection} \
         ${flags[@]+"${flags[@]}"} \
         --score
 }

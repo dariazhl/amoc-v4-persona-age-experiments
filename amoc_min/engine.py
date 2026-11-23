@@ -34,7 +34,8 @@ from .prompts import (INFERENCE_NUDGE, INFER_OBJECTS,
                       READER_INFERENCES, RELATIONSHIPS,
                       RELATIONSHIPS_FIRST, REPLACE_PRONOUNS,
                       NARRATIVE_RELEVANCE, ACTIVATION_RATING,
-                      READER_FRAME)
+                      READER_FRAME, READER_GENERATE_FRAME, NEUTRAL_LICENSE,
+                      READER_INFERENCES_STRICT)
 
 
 def _parse(text, default):
@@ -404,7 +405,8 @@ def _select_reader_inferences(llm, persona, sentence, candidates, allow_persona_
         return [], None
     lines = [f"{i}. {s} -- {r} -> {o}" for i, (s, r, o) in
              enumerate(c["triplet"] for c in candidates)]
-    out = _parse(llm.ask(READER_INFERENCES.format(
+    tmpl = READER_INFERENCES_STRICT if C.STRICT_SELECTION else READER_INFERENCES
+    out = _parse(llm.ask(tmpl.format(
         persona=persona, sentence=sentence,
         candidates=chr(10).join(lines))), {})
     picked = []
@@ -420,8 +422,88 @@ def _select_reader_inferences(llm, persona, sentence, candidates, allow_persona_
     return picked, len(picked)
 
 
+def _content_lemmas(text):
+    """Content-word lemmas of a string (persona-word ban)."""
+    return {lem for _, key, _ in N.content_words(str(text)) for lem in key}
+
+
+def _reader_generates(llm, g, persona, step, first, seen, banned):
+    """Step 2: THIS reader proposes its own inferences, through the same two
+    prompts the shared analysis uses, with the reader put in front. Then the
+    two persona-free checks of step 3 that do not need a model: the
+    persona-word ban and the structural validation. The neutral judge is
+    _neutral_license. Returns (candidates, n_proposed, n_banned)."""
+    words, sent = step["words"], step["sentence"]
+    nft = _nodes_from_text(words)
+    active = g.active_nodes()               # the reader's OWN graph, inferences included
+    frame = READER_GENERATE_FRAME.format(persona=persona)
+    tmpl = INFER_OBJECTS_FIRST if first else INFER_OBJECTS
+    prompt = frame + tmpl.format(
+        nodes_from_text=nft, text=sent,
+        inferred_so_far=", ".join(seen) or "(none yet)",
+        nodes_from_graph=g.nodes_str(active), edges_from_graph=g.edges_str(active)[0])
+    obj = _parse(llm.ask(prompt), {})
+    if not (_strs(obj.get("concepts")) or _strs(obj.get("properties"))):
+        obj = _parse(llm.ask(prompt + INFERENCE_NUDGE.format(
+            previous=json.dumps(obj)[:200])), {})
+    tmpl = INFER_RELATIONSHIPS_FIRST if first else INFER_RELATIONSHIPS
+    raw = _parse(llm.ask(frame + tmpl.format(
+        nodes_from_text=nft, text=sent,
+        concepts=json.dumps(_strs(obj.get("concepts"))),
+        properties=json.dumps(_strs(obj.get("properties"))),
+        nodes_from_graph=g.nodes_str(active), edges_from_graph=g.edges_str(active)[0])), {})
+
+    proposed = []
+    for item in (raw.get("inferences") or []):
+        if isinstance(item, dict):
+            tri = _triplets([item.get("triplet")])
+            if tri:
+                proposed.append({"triplet": tri[0], "from": _strs(item.get("from"))})
+    # persona leakage: a concept built from words that occur in the persona
+    # description but nowhere in the text came from the persona, not the text
+    kept = [c for c in proposed
+            if not (_content_lemmas(c["triplet"][0]) | _content_lemmas(c["triplet"][2])) & banned]
+    n_banned = len(proposed) - len(kept)
+    valid = {tuple(t) for t in _validate(
+        sent, [c["triplet"] for c in kept], None,
+        existing=[(x.src.lemma, x.label, x.dst.lemma) for x in g.edges])}
+    out = []
+    for c in kept:
+        key = tuple(normalize(x) for x in c["triplet"])
+        if key in valid:
+            out.append({"triplet": list(key), "from": [normalize(p) for p in c["from"]]})
+    return out, len(proposed), n_banned
+
+
+def _neutral_license(llm, context, sentence, candidates):
+    """Step 3, the neutral judge: keeps only candidates that follow from the
+    text. Persona-free, so it is the same test for every reader. If the reply
+    cannot be read, every candidate is kept (they already passed the
+    structural checks) and the failure is reported, rather than leaving this
+    reader with no inferences for the sentence. Returns (kept, failed)."""
+    if not candidates:
+        return [], False
+    lines = [f"{i}. {s} -- {r} -> {o}" for i, (s, r, o) in
+             enumerate(c["triplet"] for c in candidates)]
+    out = _parse(llm.ask(NEUTRAL_LICENSE.format(
+        context=context, sentence=sentence, candidates="\n".join(lines))), {})
+    judged = [j for j in (out.get("judgements") or []) if isinstance(j, dict)]
+    if not judged:
+        logging.warning("neutral license unreadable; keeping %d candidates", len(candidates))
+        return list(candidates), True
+    keep = []
+    for j in judged:
+        try:
+            i = int(j.get("n"))
+        except (TypeError, ValueError):
+            continue
+        if j.get("inferable") and 0 <= i < len(candidates) and candidates[i] not in keep:
+            keep.append(candidates[i])
+    return keep, False
+
+
 def read(passes, llm=None, persona=None, allow_persona_words=False,
-         snapshots=None, on_sentence=None, meta=None):
+         snapshots=None, on_sentence=None, meta=None, capacity=1.0):
     """One reader's pass. Returns (columns, reader inferences, triplet records, graph).
 
     persona=None draws the full candidate inferred relationships: the ideal reader the Landscape
@@ -429,9 +511,14 @@ def read(passes, llm=None, persona=None, allow_persona_words=False,
     was drawn by THIS reader, so inference depth is persona-dependent.
     """
     snapshots = [] if snapshots is None else snapshots
-    g = Graph()
+    g = Graph(capacity=capacity)
     columns, counts, records, history = [], [], [], {}
     drawn_ever = set()
+    generates = bool(C.PERSONA_GENERATES and persona and llm is not None)
+    seen, banned = [], set()
+    if generates and not allow_persona_words:
+        story = {lem for st in passes for _, key, _ in st["words"] for lem in key}
+        banned = _content_lemmas(persona) - story
 
     for i, step in enumerate(passes, 1):
         g.begin_sentence()
@@ -462,9 +549,24 @@ def read(passes, llm=None, persona=None, allow_persona_words=False,
         # .813 over the 13 sentences).
         comps = g.components()
         main = {n.key for n in comps[0]} if comps else set()
-        candidates = _attaching(step["inferred"], main)
+        gen = {}
+        if generates:
+            # steps 2-3: the reader proposes, the persona-word ban and the
+            # neutral judge decide what counts as an inference from the text
+            g.refresh_scores([tuple(k) for k in step["stated"]])
+            own, n_prop, n_ban = _reader_generates(llm, g, persona, step, i == 1,
+                                                   seen, banned)
+            context = " ".join(p["sentence"] for p in passes[:i])
+            licensed, failed = _neutral_license(llm, context, step["sentence"], own)
+            gen = {"proposed": n_prop, "banned": n_ban, "valid": len(own),
+                   "licensed": len(licensed), "license_failed": failed}
+            candidates = _attaching(licensed, main)
+        else:
+            candidates = _attaching(step["inferred"], main)
         if persona is None:
             drawn, said = candidates, None
+        elif generates and not C.STRICT_SELECTION:
+            drawn, said = candidates, None    # step 4 optional: the reader already chose
         else:
             drawn, said = _select_reader_inferences(llm, persona, step["sentence"], candidates,
                                  allow_persona_words)
@@ -480,8 +582,12 @@ def read(passes, llm=None, persona=None, allow_persona_words=False,
             if e:
                 just_added.append(e)
             drawn_ever.update((s.lower(), o.lower()))
+            for x in (s, o):                  # the reader's own inferred-so-far list
+                if generates and x not in seen and x.lower() not in {
+                        w.lower() for w, _, _ in step["words"]}:
+                    seen.append(x)
         counts.append({"candidates": len(candidates), "drawn": len(drawn),
-                       "stranded": stranded, "said": said})
+                       "stranded": stranded, "said": said, **gen})
 
         stated_keys = [tuple(k) for k in step["stated"]]
         g.refresh_scores(stated_keys)

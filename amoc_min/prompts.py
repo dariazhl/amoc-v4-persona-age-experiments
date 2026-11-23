@@ -294,3 +294,62 @@ the text. The text is:
 {text}
 
 Reply with the rewritten text and nothing else."""
+
+# -- 7. a stronger persona (branch feature/persona-effect-stronger) --------
+# Step 2: the reader proposes its own inferences. Put in front of
+# INFER_OBJECTS[_FIRST] and INFER_RELATIONSHIPS[_FIRST]; the rules of those
+# prompts (only what the text supports, nothing that contradicts it) still
+# apply. It names no direction -- it does not tell a younger reader to infer
+# less -- so any regime difference is the model's, not the prompt's.
+READER_GENERATE_FRAME = """You are modelling one specific reader as they read this sentence.
+
+Reader: {persona}
+
+Answer as THIS reader would: name the inferences this particular reader would
+actually draw, given their age, education, vocabulary and background
+knowledge. Different readers draw different inferences from the same
+sentence. Everything you name must still follow from the text.
+
+"""
+
+# Step 3: the neutral judge. Deliberately persona-FREE: it decides whether an
+# inference counts as an inference from the text, the same way for every
+# reader, so a persona cannot smuggle in concepts that come from itself.
+NEUTRAL_LICENSE = """You are checking whether candidate inferences follow from a text.
+
+Text so far: "{context}"
+Current sentence: "{sentence}"
+
+Candidate inferred relationships:
+{candidates}
+
+For each one, say whether a reader could reasonably infer it from the text
+above: it is necessarily or very probably true given what the text states, and
+nothing in the text contradicts it. Mark it false if it relies on information
+that is not in the text, or is about something the text does not concern.
+
+Reply with JSON and nothing else, one entry per number:
+{{"judgements": [{{"n": <number>, "inferable": true/false}}]}}"""
+
+# Step 4: a stricter selection. Unlike READER_INFERENCES it does not present
+# the list as already supported by the text, and it states that readers miss
+# connections -- without saying which readers, so it does not build the
+# expected age effect into the prompt.
+READER_INFERENCES_STRICT = """You are modelling one specific reader.
+
+Reader: {persona}
+
+Current sentence: "{sentence}"
+
+Below are connections that SOME readers make at this point. Readers differ:
+a connection one reader makes immediately, another does not make at all.
+
+{candidates}
+
+For each one, decide whether THIS reader would actually make that connection
+while reading this sentence -- not whether it is true, and not whether some
+reader could make it. Judge from this reader's age, education, vocabulary and
+background knowledge. Mark false every connection this reader would not make.
+
+Reply with JSON and nothing else, one entry per number:
+{{"judgements": [{{"n": <number>, "makes": true/false}}]}}"""

@@ -76,7 +76,7 @@ def _one_reader(args):
     # A spawned process re-imports config at its default, so the ageing rule
     # has to be re-applied here or every worker would silently run `text`.
     C.RELATION_AGEING = cfg["relation_ageing"]
-    C.PERSONA_IN_DECAY = cfg["persona_decay"]
+    C.apply_persona_cfg(cfg)
     llm = LLM(cfg["server_url"], cfg["model"], cfg["temperature"])
     snaps = []
     plotter = None
@@ -95,7 +95,8 @@ def _one_reader(args):
               "age_refined": r.get("age") or -1,
               "regime": r.get("regime", ""),
               "persona_text": r.get("persona") or "",
-              "model_name": cfg["model"]})
+              "model_name": cfg["model"]},
+        capacity=C.capacity_for(r.get("regime") if r.get("persona") else None))
     with open(os.path.join(cfg["out"], f"matrix_{r['tag']}.csv"), "w") as f:
         f.write(to_matrix(cols))
     if order:                            # v4-style: query the 20 reference
@@ -116,6 +117,10 @@ def _one_reader(args):
     rec["reader inferences"] = counts
     rec["n_candidates"] = sum(c["candidates"] for c in counts)
     rec["n_inferred"] = sum(c["drawn"] for c in counts)
+    if any("proposed" in c for c in counts):   # --persona-generates diagnostics
+        for k in ("proposed", "banned", "valid", "licensed"):
+            rec[f"n_{k}"] = sum(c.get(k, 0) for c in counts)
+        rec["n_license_failed"] = sum(bool(c.get("license_failed")) for c in counts)
     inferred_nodes = {n["lemma"] for n in graph.snapshot()["nodes"]
                       if n["source"] == "inferred"}
     rec["n_inferred_nodes"] = len(inferred_nodes)
@@ -198,11 +203,26 @@ def main():
                          "the same for everyone and the persona only chooses "
                          "inferences. Works with every ageing rule; the "
                          "baseline reader is never affected.")
+    ap.add_argument("--persona-generates", action="store_true",
+                    help="each reader proposes its OWN inferences (step 2), "
+                         "checked by the persona-word ban and a persona-free "
+                         "judge (step 3). Selection is then skipped unless "
+                         "--strict-selection.")
+    ap.add_argument("--strict-selection", action="store_true",
+                    help="selection prompt that does not present candidates "
+                         "as already supported by the text (step 4)")
+    ap.add_argument("--reader-capacity", action="store_true",
+                    help="working-memory capacity by regime "
+                         "(config.READER_CAPACITY_BY_REGIME, step 5)")
+    ap.add_argument("--persona-strong", action="store_true",
+                    help="= --persona-generates --reader-capacity --persona-decay")
     ap.add_argument("--allow-persona-words", action="store_true",
                     help="let readers reword concepts. OFF by default: 10 of the "
                          "20 reference tokens match by exact string only, so "
                          "rewording zeroes those rows in Study 1 scoring.")
     a = ap.parse_args()
+    if a.persona_strong:
+        a.persona_generates = a.reader_capacity = a.persona_decay = True
 
     os.makedirs(a.out, exist_ok=True)
     # Set before anything builds a graph: graph.activation reads it per edge.
@@ -215,7 +235,10 @@ def main():
           f"relation_ageing={C.RELATION_AGEING}"
           f"{' (--llm-decay)' if a.llm_decay else ''}"
           f"{' (--llm-score)' if a.llm_score else ''}"
-          f" persona_decay={a.persona_decay}", flush=True)
+          f" persona_decay={a.persona_decay}"
+          f" persona_generates={a.persona_generates}"
+          f" strict_selection={a.strict_selection}"
+          f" reader_capacity={a.reader_capacity}", flush=True)
     # The reference matrix is only needed for --score. Load it lazily and
     # degrade to generation-only if it is missing, rather than throwing away
     # a 90-second model load over an optional file.
@@ -250,6 +273,8 @@ def main():
             "server_url", "temperature")}
     cfg["relation_ageing"] = C.RELATION_AGEING
     cfg["persona_decay"] = a.persona_decay
+    for k in ("persona_generates", "strict_selection", "reader_capacity"):
+        cfg[k] = getattr(a, k)
     tasks = [(r, cfg, passes, ref, order) for r in runs]
 
     summary = []
@@ -288,6 +313,10 @@ def main():
         rec["relation_ageing"] = C.RELATION_AGEING
         rec["llm_decay"] = bool(a.llm_decay)
         rec["persona_decay"] = bool(a.persona_decay)
+        for k in ("persona_generates", "strict_selection", "reader_capacity"):
+            rec[k] = bool(getattr(a, k))
+        rec["capacity"] = C.READER_CAPACITY_BY_REGIME.get(rec.get("regime"), 1.0) \
+            if a.reader_capacity and rec.get("tag") != "baseline" else 1.0
     with open(os.path.join(a.out, "summary.json"), "w") as f:
         json.dump(summary, f, indent=1)
     print(f"\nwrote {len(runs)} matrices to {a.out}")

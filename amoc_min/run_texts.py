@@ -139,7 +139,7 @@ SCORERS = {"keefe": score_keefe, "obrien": score_obrien}
 def _apply(cfg):
     """A spawned process re-imports config at its defaults."""
     C.RELATION_AGEING = cfg["relation_ageing"]
-    C.PERSONA_IN_DECAY = cfg["persona_decay"]
+    C.apply_persona_cfg(cfg)
     return LLM(cfg["server_url"], cfg["model"], cfg["temperature"])
 
 
@@ -159,7 +159,8 @@ def _one_reader(args):
         if not passes:
             continue
         try:
-            cols, _, _, g = read(passes, llm=llm, persona=r["persona"])
+            cols, counts, _, g = read(passes, llm=llm, persona=r["persona"],
+                                      capacity=C.capacity_for(r["regime"] if r["persona"] else None))
             measured = SCORERS[cfg["experiment"]](llm, g, cols[-1], t["target"])
         except Exception as exc:              # one text must not sink the reader
             print(f"FAILED {r['tag']} {t['text_id']}: {exc}", flush=True)
@@ -169,7 +170,13 @@ def _one_reader(args):
                      "persona_text": r["persona"] or "baseline",
                      "item_id": t["item_id"], "condition": t["condition"],
                      **measured, "relation_ageing": cfg["relation_ageing"],
-                     "persona_decay": cfg["persona_decay"]})
+                     "persona_decay": cfg["persona_decay"],
+                     "persona_generates": cfg.get("persona_generates", False),
+                     "strict_selection": cfg.get("strict_selection", False),
+                     "reader_capacity": cfg.get("reader_capacity", False),
+                     "n_drawn": sum(c["drawn"] for c in counts),
+                     "n_proposed": sum(c.get("proposed", 0) for c in counts),
+                     "n_licensed": sum(c.get("licensed", 0) for c in counts)})
     return r["tag"], rows
 
 
@@ -207,19 +214,30 @@ def main():
     ap.add_argument("--llm-decay", action="store_true")
     ap.add_argument("--llm-score", action="store_true")
     ap.add_argument("--persona-decay", action="store_true")
+    ap.add_argument("--persona-generates", action="store_true")
+    ap.add_argument("--strict-selection", action="store_true")
+    ap.add_argument("--reader-capacity", action="store_true")
+    ap.add_argument("--persona-strong", action="store_true",
+                    help="= --persona-generates --reader-capacity --persona-decay")
     a = ap.parse_args()
+    if a.persona_strong:
+        a.persona_generates = a.reader_capacity = a.persona_decay = True
     if a.llm_decay and a.llm_score:
         ap.error("--llm-decay and --llm-score are different rules; pick one")
 
     os.makedirs(a.out, exist_ok=True)
     cfg = {"experiment": a.experiment, "server_url": a.server_url, "model": a.model,
            "temperature": a.temperature, "persona_decay": a.persona_decay,
+           "persona_generates": a.persona_generates,
+           "strict_selection": a.strict_selection, "reader_capacity": a.reader_capacity,
            "relation_ageing": (C.AGEING_SCORE if a.llm_score else
                                C.AGEING_LLM if a.llm_decay else C.AGEING_TEXT)}
     items = json.load(open(a.items or ITEMS[a.experiment], encoding="utf-8"))
     texts = texts_of(a.experiment, items[:a.max_items] if a.max_items else items)
     print(f"{a.experiment}: {len(texts)} texts | relation_ageing={cfg['relation_ageing']} "
-          f"persona_decay={a.persona_decay} | model={a.model}", flush=True)
+          f"persona_decay={a.persona_decay} persona_generates={a.persona_generates} "
+          f"strict_selection={a.strict_selection} reader_capacity={a.reader_capacity} "
+          f"| model={a.model}", flush=True)
 
     # 1. persona-free analysis of every text, once, shared by every reader
     cache = os.path.join(a.out, "text_analysis.json")

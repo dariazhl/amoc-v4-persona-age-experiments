@@ -147,6 +147,65 @@ AGEING_SCORE = "llm_score"
 # and is never affected.
 PERSONA_IN_DECAY = False
 
+# --- a stronger persona (branch feature/persona-effect-stronger) ------------
+# By default the persona enters at ONE point: it accepts or rejects a shared,
+# persona-free list of inference candidates. On Gemma-4's Keefe run that left
+# 0.0% of the rating variance to the persona. These switches give it the room
+# AMoC v5's own Step 2 describes, while what the text STATES, whether an
+# inference is VALID and how a result is MEASURED stay identical for every
+# reader. All are off by default, so existing runs are unchanged.
+#
+#   PERSONA_GENERATES   step 2: each reader proposes its own inferences
+#                       (INFER_OBJECTS / INFER_RELATIONSHIPS with the reader in
+#                       front) instead of picking from the shared list.
+#                       Always followed by step 3:
+#                         - persona-word ban: a concept whose words occur in
+#                           the persona description but nowhere in the text is
+#                           dropped (persona leakage), unless allow_persona_words;
+#                         - NEUTRAL_LICENSE: a persona-FREE judge keeps only
+#                           what can be inferred from the text.
+#   STRICT_SELECTION    step 4: the selection prompt no longer presents the
+#                       candidates as already supported by the text.
+#                       (With PERSONA_GENERATES selection is skipped -- the
+#                       reader already chose -- unless this is also set.)
+#   READER_CAPACITY     step 5: working-memory capacity depends on the reader
+#                       (READER_CAPACITY_BY_REGIME). A MODELLING ASSUMPTION
+#                       that must be stated and justified in the paper.
+#   PERSONA_IN_DECAY    step 6: above, --persona-decay.
+#
+# --persona-strong turns on PERSONA_GENERATES, READER_CAPACITY and
+# PERSONA_IN_DECAY; --strict-selection is separate.
+PERSONA_GENERATES = False
+STRICT_SELECTION  = False
+READER_CAPACITY   = False
+
+# Share of the default working-memory capacity a reader of each regime has.
+# Scales MAX_CARRYOVER_NODES (what the prompt shows as still held in mind),
+# CARRYOVER_DECAY (how much of last sentence's activation is kept) and
+# LLM_CARRYOVER_CAP. University = 1.0 reproduces the default exactly.
+# Monotone in schooling, as working-memory span is in the developmental
+# literature; the exact values are NOT fitted -- treat them as a sensitivity
+# parameter.
+READER_CAPACITY_BY_REGIME = {"primary": 0.6, "secondary": 0.75,
+                             "highschool": 0.9, "university": 1.0}
+
+
+def capacity_for(regime):
+    """1.0 unless READER_CAPACITY is on; the baseline reader is always 1.0."""
+    if not READER_CAPACITY or not regime:
+        return 1.0
+    return READER_CAPACITY_BY_REGIME.get(str(regime).lower(), 1.0)
+
+
+def apply_persona_cfg(cfg):
+    """Re-apply the persona switches in a spawned worker, which re-imports
+    this module at its defaults."""
+    global PERSONA_IN_DECAY, PERSONA_GENERATES, STRICT_SELECTION, READER_CAPACITY
+    PERSONA_IN_DECAY = bool(cfg.get("persona_decay", PERSONA_IN_DECAY))
+    PERSONA_GENERATES = bool(cfg.get("persona_generates", PERSONA_GENERATES))
+    STRICT_SELECTION = bool(cfg.get("strict_selection", STRICT_SELECTION))
+    READER_CAPACITY = bool(cfg.get("reader_capacity", READER_CAPACITY))
+
 # --- the LLM rule as a STANDALONE mode -------------------------------------
 # On its own the relevance rule has no equilibrium: a score of 2 keeps an edge
 # alive AND zeroes its age AND makes it cost one hop, so the same judgement

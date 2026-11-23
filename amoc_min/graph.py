@@ -125,11 +125,20 @@ class Edge:
 
 
 class Graph:
-    def __init__(self, edge_forget=None):
+    def __init__(self, edge_forget=None, capacity=1.0):
         self._last_stated = {}
         self.nodes = {}                     # key tuple -> Node
         self.edges = []
         self.edge_forget = C.EDGE_FORGET if edge_forget is None else edge_forget
+        # Working-memory capacity of THIS reader (C.capacity_for). 1.0 is the
+        # default model exactly; below 1 the reader carries fewer concepts
+        # into the next sentence and keeps less of their activation.
+        self.capacity = float(capacity)
+        self.max_carryover = (max(1, round(C.MAX_CARRYOVER_NODES * self.capacity))
+                              if C.MAX_CARRYOVER_NODES else 0)
+        self.carryover_decay = C.CARRYOVER_DECAY * self.capacity
+        self.llm_carryover_cap = (max(1, round(C.LLM_CARRYOVER_CAP * self.capacity))
+                                  if C.LLM_CARRYOVER_CAP else 0)
 
     # -- construction ----------------------------------------------------
     def node(self, surface, source, sentence, node_type=None):
@@ -395,7 +404,7 @@ class Graph:
                     fresh = min(fresh, C.INFERRED_ACTIVATION)
             # What the reader still holds from last sentence. This is what
             # keeps `knight` alive through "Suddenly, a dragon appeared."
-            carry = prev * C.CARRYOVER_DECAY
+            carry = prev * self.carryover_decay
             if carry < C.CARRYOVER_FLOOR:
                 carry = 0.0
             score = max(fresh, carry)
@@ -424,15 +433,15 @@ class Graph:
         # no equilibrium -- every sentence can add to the live set and none
         # is obliged to remove from it. Stated concepts are never capped;
         # the rest compete on activation minus seniority, as v5 ranks them.
-        if llm_rule and C.LLM_CARRYOVER_CAP:
+        if llm_rule and self.llm_carryover_cap:
             carried = [k for k in out if k not in stated_now]
-            if len(carried) > C.LLM_CARRYOVER_CAP:
+            if len(carried) > self.llm_carryover_cap:
                 rank = sorted(
                     carried,
                     key=lambda k: out[k] - C.SENIORITY_WEIGHT *
                     max(0, sentence - last.get(k, sentence)),
                     reverse=True)
-                for k in rank[C.LLM_CARRYOVER_CAP:]:
+                for k in rank[self.llm_carryover_cap:]:
                     del out[k]
         return out
 
@@ -474,7 +483,7 @@ class Graph:
         sc = self._last_scores or {}
         near = [n for n, s in sorted(sc.items(), key=lambda kv: kv[1])
                 if s <= t and (not only_text or n.source == "text")]
-        if not C.MAX_CARRYOVER_NODES:
+        if not self.max_carryover:
             return near
         seen = set(near)
         pool = [n for n in self.nodes.values()
@@ -483,7 +492,7 @@ class Graph:
         # with CARRYOVER_SENIORITY_WEIGHT; recency then degree is the same
         # order and needs no extra constant.
         pool.sort(key=lambda n: (-n.last_stated, -len(n.edges), n.lemma))
-        return near + pool[:C.MAX_CARRYOVER_NODES]
+        return near + pool[:self.max_carryover]
 
     _last_scores = None
     _last_stated = None
