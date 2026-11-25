@@ -11,7 +11,7 @@
 # Optional:  WORKERS (default 16)  LIMIT  TEMPERATURE  LLM_DECAY  LLM_SCORE  PERSONA_DECAY
 #            EXPERIMENT (keefe|obrien)  MAX_ITEMS
 #            STORY_ANALYSIS  RUN_OUTPUT_DIR  OUTPUT_ROOT
-#            FIX_KILLED  ALLOW_PERSONA_WORDS
+#            FIX_KILLED
 #            PERSONA_STRONG (= PERSONA_GENERATES + READER_CAPACITY + PERSONA_DECAY)
 #            PERSONA_GENERATES  READER_CAPACITY  STRICT_SELECTION  LOOSE_LICENSE
 
@@ -131,7 +131,6 @@ run_knight() {
         --workers "${WORKERS:-16}" \
         ${LIMIT:+--limit ${LIMIT}} \
         ${FIX_KILLED:+--fix-killed} \
-        ${ALLOW_PERSONA_WORDS:+--allow-persona-words} \
         ${PERSONA_DECAY:+--persona-decay} \
         ${PERSONA_STRONG:+--persona-strong} \
         ${PERSONA_GENERATES:+--persona-generates} \

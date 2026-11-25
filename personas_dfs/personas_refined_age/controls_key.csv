@@ -1,0 +1,37 @@
+tag,arm,pair,regime,age,words,pool_file,pool_row,in_80,persona_text
+primary_R114691,relevant,primary_1,primary,5.0,9,primary_000.csv,41,False,A kindergartener who enjoys stories about knights and castles
+primary_G170391,generic,primary_1,primary,5.0,15,primary_000.csv,16,False,a 5-year-old child who loves to watch cooking shows and pretend to be a chef.
+primary_P170391,placebo,primary_1,primary,5.0,15,primary_000.csv,16,False,5-year-old pretend and to to child who cooking shows loves a chef be watch a
+primary_R188617,relevant,primary_2,primary,11.0,14,primary_000.csv,22,False,An 11-year-old kid who can't get enough of the 'Phoebe and Her Unicorn' series.
+primary_G137880,generic,primary_2,primary,11.0,6,primary_001.csv,5,True,An 11-year-old child obsessed with astronomy
+primary_P137880,placebo,primary_2,primary,11.0,6,primary_001.csv,5,True,astronomy obsessed An child 11-year-old with
+primary_R183033,relevant,primary_3,primary,11.0,13,primary_001.csv,14,False,A curious and engaged 5th grader who loves hearing stories about historical figures
+primary_G37956,generic,primary_3,primary,11.0,14,primary_001.csv,33,False,A compassionate student who volunteers to disinfect the classroom to protect the child's health
+primary_P37956,placebo,primary_3,primary,11.0,14,primary_001.csv,33,False,who the compassionate protect disinfect to A the student health classroom volunteers child's to
+secondary_R134631,relevant,secondary_1,secondary,12.0,12,secondary_000.csv,49,False,A curious middle school student fascinated by the tales of King Arthur
+secondary_G17374,generic,secondary_1,secondary,12.0,12,secondary_000.csv,3,True,A curious middle school student who is fascinated by rocks and minerals
+secondary_P17374,placebo,secondary_1,secondary,12.0,12,secondary_000.csv,3,True,curious and rocks A middle student by fascinated school minerals is who
+secondary_R69806,relevant,secondary_2,secondary,12.0,14,secondary_001.csv,2,True,A middle schooler who loves exploring their town's history through geocaching and local legends
+secondary_G90719,generic,secondary_2,secondary,12.0,18,secondary_000.csv,31,False,A curious middle school student who loves learning about aerodynamics and helps their grandparent with building model airplanes
+secondary_P90719,placebo,secondary_2,secondary,12.0,18,secondary_000.csv,31,False,and airplanes building grandparent student loves with about helps curious model school who learning aerodynamics A their middle
+secondary_R111683,relevant,secondary_3,secondary,13.0,17,secondary_001.csv,6,True,An ambitious 8th grader with a penchant for documentary filmmaking and a keen interest in local legends
+secondary_G26653,generic,secondary_3,secondary,12.0,13,secondary_000.csv,8,True,An ambitious 7th grade student who loves to learn but struggles with dyscalculia
+secondary_P26653,placebo,secondary_3,secondary,12.0,13,secondary_000.csv,8,True,but loves grade 7th struggles An dyscalculia with student ambitious to learn who
+highschool_R40356,relevant,highschool_1,highschool,16,18,highschool_001.csv,21,False,A high school student who is an avid fantasy book reader and loves hanging out in quiet spots
+highschool_G22234,generic,highschool_1,highschool,16,16,highschool_000.csv,34,False,"A high school student with a passion for astronomy, looking for reliable sources to learn from"
+highschool_P22234,placebo,highschool_1,highschool,16,16,highschool_000.csv,34,False,"astronomy, learn school A for reliable to with student sources a passion from high for looking"
+highschool_R9781,relevant,highschool_2,highschool,16,19,highschool_000.csv,18,False,"A high school student who relies on their grandmother's resources for school project, with a soft spot for mythology"
+highschool_G23635,generic,highschool_2,highschool,16,17,highschool_000.csv,36,False,A high school student who relies on these videos to understand and excel in their chemistry class
+highschool_P23635,placebo,highschool_2,highschool,16,17,highschool_000.csv,36,False,videos to student in who relies these on their A and class excel understand high school chemistry
+highschool_R26780,relevant,highschool_3,highschool,16,16,highschool_000.csv,38,False,A shy high school student who borrows courage from his favorite comic book heroes in cosplay
+highschool_G28768,generic,highschool_3,highschool,16,12,highschool_000.csv,44,False,A high school senior struggling with calculus but excelling in creative arts
+highschool_P28768,placebo,highschool_3,highschool,16,12,highschool_000.csv,44,False,but with high A school excelling arts struggling calculus in creative senior
+university_R72382,relevant,university_1,university,18.0,19,university_000.csv,30,False,a freshman in university who is passionate about fencing and is planning to participate in future World Fencing Championship
+university_G41919,generic,university_1,university,18.0,15,university_000.csv,46,False,"A freshman student who is excited about joining an ""Ultimate Frisbee"" club at the University."
+university_P41919,placebo,university_1,university,18.0,15,university_000.csv,46,False,"the University about student freshman club an is A at who excited Frisbee"" ""Ultimate joining"
+university_R29065,relevant,university_2,university,18.0,16,university_001.csv,5,True,A college freshman enrolled in an archaeology course and inspired by the stories of past civilizations
+university_G29158,generic,university_2,university,18.0,8,university_000.csv,0,True,A college freshman interested in studying automobile engineering
+university_P29158,placebo,university_2,university,18.0,8,university_000.csv,0,True,interested in freshman college studying A engineering automobile
+university_R161077,relevant,university_3,university,18.0,14,university_000.csv,49,False,A freshman student at Southern Illinois University Carbondale who is passionate about heritage conservation
+university_G64610,generic,university_3,university,18.0,14,university_000.csv,43,False,A freshman at Oklahoma State University who is eagerly anticipating participating in student government.
+university_P64610,placebo,university_3,university,18.0,14,university_000.csv,43,False,at Oklahoma State who in University is government freshman student eagerly participating anticipating A

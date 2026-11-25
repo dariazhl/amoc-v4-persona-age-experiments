@@ -91,11 +91,13 @@ def test_generating_reader_proposes_its_own_inferences(switches):
     assert counts[0]["proposed"] == 2
 
 
-def test_persona_word_ban_drops_concepts_from_the_persona(switches):
+def test_persona_words_are_not_banned_the_judge_decides(switches):
     switches(PERSONA_GENERATES=True)
     _, counts, _, g = read(passes(), llm=Fake(), persona=PERSONA)
-    assert "youtube" not in {t[2] for t in inferred_edges(g)}         # 'youtube' is only in the persona
-    assert counts[0]["banned"] == 1
+    assert "youtube" in {t[2] for t in inferred_edges(g)}             # 'youtube' is only in the persona
+    assert "banned" not in counts[0]
+    _, _, _, g = read(passes(), llm=Fake(license_ok=False), persona=PERSONA)
+    assert "youtube" not in {t[2] for t in inferred_edges(g)}
 
 
 def test_neutral_judge_never_sees_the_persona_and_can_veto(switches):
@@ -180,7 +182,7 @@ def test_every_proposal_is_logged_with_its_outcome(switches, ok, status):
     switches(PERSONA_GENERATES=True)
     _, counts, _, _ = read(passes(), llm=Fake(license_ok=ok), persona=PERSONA)
     log = {p["triplet"][2]: p["status"] for p in counts[0]["proposals"]}
-    assert log == {"horse": status, "youtube": "banned"}
+    assert log == {"horse": status, "youtube": status}
 
 
 def test_reader_without_generation_logs_no_proposals(switches):

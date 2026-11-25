@@ -65,8 +65,8 @@ def score(columns, ref, order):
 
 
 def write_proposals(path, rows):
-    """Every inference the readers proposed and what became of it (banned,
-    invalid, rejected by the judge, licensed_not_drawn, drawn)."""
+    """Every inference the readers proposed and what became of it (invalid,
+    rejected by the judge, licensed_not_drawn, drawn)."""
     if rows:
         with open(path, "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=list(rows[0]))
@@ -99,7 +99,6 @@ def _one_reader(args):
                                age=r.get("age"))
     cols, counts, records, graph = read(
         passes, llm=llm, persona=r["persona"],
-        allow_persona_words=cfg["allow_persona_words"],
         snapshots=snaps, on_sentence=plotter,
         meta={"original_index": r.get("idx", -1),
               "age_refined": r.get("age") or -1,
@@ -133,7 +132,7 @@ def _one_reader(args):
     rec["n_candidates"] = sum(c["candidates"] for c in counts)
     rec["n_inferred"] = sum(c["drawn"] for c in counts)
     if any("proposed" in c for c in counts):   # --persona-generates diagnostics
-        for k in ("proposed", "banned", "valid", "licensed"):
+        for k in ("proposed", "valid", "licensed"):
             rec[f"n_{k}"] = sum(c.get(k, 0) for c in counts)
         rec["n_license_failed"] = sum(bool(c.get("license_failed")) for c in counts)
     inferred_nodes = {n["lemma"] for n in graph.snapshot()["nodes"]
@@ -220,8 +219,7 @@ def main():
                          "baseline reader is never affected.")
     ap.add_argument("--persona-generates", action="store_true",
                     help="each reader proposes its OWN inferences (step 2), "
-                         "checked by the persona-word ban and a persona-free "
-                         "judge (step 3). Selection is then skipped unless "
+                         "checked by a persona-free judge (step 3). Selection is then skipped unless "
                          "--strict-selection.")
     ap.add_argument("--strict-selection", action="store_true",
                     help="selection prompt that does not present candidates "
@@ -234,10 +232,6 @@ def main():
                          "(config.READER_CAPACITY_BY_REGIME, step 5)")
     ap.add_argument("--persona-strong", action="store_true",
                     help="= --persona-generates --reader-capacity --persona-decay")
-    ap.add_argument("--allow-persona-words", action="store_true",
-                    help="let readers reword concepts. OFF by default: 10 of the "
-                         "20 reference tokens match by exact string only, so "
-                         "rewording zeroes those rows in Study 1 scoring.")
     a = ap.parse_args()
     if a.persona_strong:
         a.persona_generates = a.reader_capacity = a.persona_decay = True
@@ -290,7 +284,7 @@ def main():
                  for p in load_personas(a.personas, a.limit)]
 
     cfg = {k: getattr(a, k) for k in
-           ("graphs", "model", "out", "allow_persona_words", "score",
+           ("graphs", "model", "out", "score",
             "server_url", "temperature")}
     cfg["relation_ageing"] = C.RELATION_AGEING
     cfg["persona_decay"] = a.persona_decay

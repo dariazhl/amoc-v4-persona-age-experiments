@@ -159,9 +159,6 @@ PERSONA_IN_DECAY = False
 #                       (INFER_OBJECTS / INFER_RELATIONSHIPS with the reader in
 #                       front) instead of picking from the shared list.
 #                       Always followed by step 3:
-#                         - persona-word ban: a concept whose words occur in
-#                           the persona description but nowhere in the text is
-#                           dropped (persona leakage), unless allow_persona_words;
 #                         - NEUTRAL_LICENSE: a persona-FREE judge keeps only
 #                           what can be inferred from the text.
 #   STRICT_SELECTION    step 4: the selection prompt no longer presents the
